@@ -1,0 +1,168 @@
+import { useState } from "react";
+import { Link } from "wouter";
+import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { Microscope, UserPlus, CheckCircle } from "lucide-react";
+
+const DESIGNATIONS = [
+  { value: "veterinarian", label: "Veterinarian" },
+  { value: "lab_assistant", label: "Lab Assistant" },
+  { value: "intern", label: "Intern" },
+  { value: "student", label: "Student" },
+];
+
+export default function SignupPage() {
+  const { signup } = useAuth();
+  const { toast } = useToast();
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const [fullName, setFullName] = useState("");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullName || !address || !phone || !email || !designation || !username || !password) {
+      toast({ title: "Please fill in all required fields", variant: "destructive" });
+      return;
+    }
+    if (password.length < 6) {
+      toast({ title: "Password must be at least 6 characters", variant: "destructive" });
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast({ title: "Passwords do not match", variant: "destructive" });
+      return;
+    }
+
+    setLoading(true);
+    const result = await signup({ fullName, address, phone, email, designation, username, password });
+    setLoading(false);
+
+    if (result.success) {
+      setSubmitted(true);
+    } else {
+      toast({ title: result.message, variant: "destructive" });
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <div className="w-full max-w-md text-center space-y-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/30">
+            <CheckCircle className="w-8 h-8 text-emerald-600" />
+          </div>
+          <h2 className="text-lg font-semibold" data-testid="text-signup-success">Account Created</h2>
+          <p className="text-sm text-muted-foreground">
+            Your account has been submitted for approval. An administrator will review your request.
+            You'll be able to log in once approved.
+          </p>
+          <Link href="/login">
+            <Button variant="outline" className="mt-4" data-testid="button-back-to-login">Back to Login</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 py-8">
+      <div className="w-full max-w-lg space-y-6">
+        {/* Logo */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mb-2">
+            <Microscope className="w-7 h-7 text-primary" />
+          </div>
+          <h1 className="text-xl font-semibold" data-testid="text-signup-title">Create Account</h1>
+          <p className="text-sm text-muted-foreground">Join the VTH AST Report System</p>
+        </div>
+
+        <Card>
+          <CardContent className="pt-6">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="fullName">Full Name <span className="text-destructive">*</span></Label>
+                  <Input id="fullName" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your full name" data-testid="input-signup-name" />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="address">Address <span className="text-destructive">*</span></Label>
+                  <Input id="address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Your address" data-testid="input-signup-address" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="phone">Phone Number <span className="text-destructive">*</span></Label>
+                  <Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="e.g. 98XXXXXXXX" data-testid="input-signup-phone" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
+                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="your@email.com" data-testid="input-signup-email" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Designation <span className="text-destructive">*</span></Label>
+                  <Select value={designation} onValueChange={setDesignation}>
+                    <SelectTrigger data-testid="select-signup-designation">
+                      <SelectValue placeholder="Select your role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DESIGNATIONS.map((d) => (
+                        <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="username">Username <span className="text-destructive">*</span></Label>
+                  <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Choose a username" data-testid="input-signup-username" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="password">Password <span className="text-destructive">*</span></Label>
+                  <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min 6 characters" data-testid="input-signup-password" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirmPassword">Confirm Password <span className="text-destructive">*</span></Label>
+                  <Input id="confirmPassword" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Repeat password" data-testid="input-signup-confirm-password" />
+                </div>
+              </div>
+
+              {designation === "student" && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 rounded-md p-2">
+                  Student accounts can view cases but cannot register new ones or download data without admin approval.
+                </p>
+              )}
+
+              <Button type="submit" className="w-full gap-2" disabled={loading} data-testid="button-signup">
+                <UserPlus className="w-4 h-4" />
+                {loading ? "Creating Account..." : "Create Account"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <p className="text-center text-sm text-muted-foreground">
+          Already have an account?{" "}
+          <Link href="/login" className="text-primary font-medium hover:underline" data-testid="link-login">
+            Sign in
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}
