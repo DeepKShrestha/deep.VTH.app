@@ -12,13 +12,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd } from "@/lib/nepali-date";
-import { ArrowLeft, Download, FileSpreadsheet, FileText, Clock, CheckCircle, XCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  FileText,
+  Clock,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import type { DownloadRequest } from "@shared/schema";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
 export default function ExportDataPage() {
-  const { user, isStudent, canDownload } = useAuth();
+  const { user, isStudent } = useAuth();
   const { toast } = useToast();
   const today = getTodayBsAd();
 
@@ -28,7 +35,6 @@ export default function ExportDataPage() {
   const [dateToAd, setDateToAd] = useState(today.ad);
   const [reason, setReason] = useState("");
 
-  // Student's download requests
   const { data: myRequests = [] } = useQuery<DownloadRequest[]>({
     queryKey: ["/api/download-requests/mine"],
     enabled: isStudent,
@@ -45,46 +51,61 @@ export default function ExportDataPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/download-requests/mine"] });
-      toast({ title: "Download request submitted. Waiting for admin approval." });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/download-requests/mine"],
+      });
+      toast({
+        title: "Download request submitted. Waiting for admin approval.",
+      });
       setReason("");
     },
     onError: () => {
-      toast({ title: "Failed to submit request", variant: "destructive" });
+      toast({
+        title: "Failed to submit request",
+        variant: "destructive",
+      });
     },
   });
 
-  const handleDownload = (format: "xlsx" | "csv") => {
-    const params = new URLSearchParams();
-    if (dateFrom) params.set("dateFrom", dateFrom);
-    if (dateTo) params.set("dateTo", dateTo);
-    params.set("format", format);
+  const handleDownload = () => {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("dateFrom", dateFrom);
+  if (dateTo) params.set("dateTo", dateTo);
 
-    const token = getAuthToken();
-    const url = `${API_BASE}/api/export/cases?${params.toString()}`;
+  const token = getAuthToken();
+  const url = `${API_BASE}/api/export/cases?${params.toString()}`;
 
-    // Use fetch with auth header, then trigger download
-    fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+  fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error("Download failed");
+      }
+      return res.blob();
     })
-      .then((res) => {
-        if (!res.ok) throw new Error("Download failed");
-        return res.blob();
-      })
-      .then((blob) => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `ast-cases.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        toast({ title: `Downloaded as ${format.toUpperCase()}` });
-      })
-      .catch(() => {
-        toast({ title: "Download failed. You may not have permission.", variant: "destructive" });
+    .then((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "ast-cases.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      toast({ title: "CSV download started" });
+
+      // NEW: refresh "My Download Requests"
+      queryClient.invalidateQueries({
+        queryKey: ["/api/download-requests/mine"],
       });
-  };
+    })
+    .catch(() => {
+      toast({
+        title: "Download failed. You may not have permission.",
+        variant: "destructive",
+      });
+    });
+};
 
   const showDownloadButtons = !isStudent || hasApprovedRequest;
 
@@ -97,28 +118,43 @@ export default function ExportDataPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-lg font-semibold" data-testid="text-export-title">Export Data</h1>
-          <p className="text-sm text-muted-foreground">Download case data for research and analysis</p>
+          <h1
+            className="text-lg font-semibold"
+            data-testid="text-export-title"
+          >
+            Export Data
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Download case data for research and analysis
+          </p>
         </div>
       </div>
 
-      {/* Date Range Filter */}
       <Card>
         <CardHeader className="pb-4">
           <CardTitle className="text-base">Date Range (BS)</CardTitle>
-          <p className="text-xs text-muted-foreground">Filter data by BS date. Leave "from" empty to include all past records.</p>
+          <p className="text-xs text-muted-foreground">
+            Filter data by BS date. Leave &quot;from&quot; empty to include all
+            past records.
+          </p>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <BsDateInput
               value={dateFrom}
-              onChange={(bs, ad) => { setDateFrom(bs); setDateFromAd(ad); }}
+              onChange={(bs, ad) => {
+                setDateFrom(bs);
+                setDateFromAd(ad);
+              }}
               label="From"
               testIdPrefix="export-from"
             />
             <BsDateInput
               value={dateTo}
-              onChange={(bs, ad) => { setDateTo(bs); setDateToAd(ad); }}
+              onChange={(bs, ad) => {
+                setDateTo(bs);
+                setDateToAd(ad);
+              }}
               label="To"
               testIdPrefix="export-to"
             />
@@ -126,29 +162,19 @@ export default function ExportDataPage() {
         </CardContent>
       </Card>
 
-      {/* Download Buttons (for admin/staff or students with approved request) */}
       {showDownloadButtons && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Download</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Excel (.xlsx) is recommended for research — supports filtering, formulas, and pivot tables.
-              CSV is a lightweight alternative compatible with any software.
+              CSV is compatible with Excel, Google Sheets, and most statistical
+              software.
             </p>
           </CardHeader>
           <CardContent>
             <div className="flex gap-3">
               <Button
-                onClick={() => handleDownload("xlsx")}
-                className="gap-2 flex-1"
-                data-testid="button-download-xlsx"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Download Excel (.xlsx)
-              </Button>
-              <Button
-                onClick={() => handleDownload("csv")}
-                variant="outline"
+                onClick={handleDownload}
                 className="gap-2 flex-1"
                 data-testid="button-download-csv"
               >
@@ -160,7 +186,6 @@ export default function ExportDataPage() {
         </Card>
       )}
 
-      {/* Student: Request Access */}
       {isStudent && !hasApprovedRequest && (
         <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <CardHeader className="pb-4">
@@ -169,7 +194,8 @@ export default function ExportDataPage() {
               Request Download Access
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              As a student, you need admin approval to download data. Submit a request below.
+              As a student, you need admin approval to download data. Submit a
+              request below.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -197,7 +223,6 @@ export default function ExportDataPage() {
         </Card>
       )}
 
-      {/* Student: My Requests */}
       {isStudent && myRequests.length > 0 && (
         <Card>
           <CardHeader className="pb-4">
@@ -205,13 +230,21 @@ export default function ExportDataPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {myRequests.map((r) => (
-              <div key={r.id} className="flex items-center justify-between text-sm border-b border-border last:border-0 pb-2 last:pb-0">
+              <div
+                key={r.id}
+                className="flex items-center justify-between text-sm border-b border-border last:border-0 pb-2 last:pb-0"
+              >
                 <div>
                   <div className="text-xs text-muted-foreground">
-                    {r.dateFrom && `From: ${r.dateFrom}`} {r.dateTo && `To: ${r.dateTo}`}
+                    {r.dateFrom && `From: ${r.dateFrom}`}{" "}
+                    {r.dateTo && `To: ${r.dateTo}`}
                     {!r.dateFrom && !r.dateTo && "All dates"}
                   </div>
-                  {r.reason && <div className="text-xs text-muted-foreground">{r.reason}</div>}
+                  {r.reason && (
+                    <div className="text-xs text-muted-foreground">
+                      {r.reason}
+                    </div>
+                  )}
                 </div>
                 <div>
                   {r.status === "pending" && (
@@ -229,6 +262,11 @@ export default function ExportDataPage() {
                       <XCircle className="w-3 h-3" /> Rejected
                     </Badge>
                   )}
+                  {r.status === "downloaded" && (
+  <Badge className="bg-emerald-100 text-emerald-800 border-0 text-xs gap-1">
+    <CheckCircle className="w-3 h-3" /> Downloaded
+  </Badge>
+)}
                 </div>
               </div>
             ))}

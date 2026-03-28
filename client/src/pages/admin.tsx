@@ -348,36 +348,40 @@ export default function AdminPanel() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {r.status === "pending" ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
-                            onClick={() => resolveDlMutation.mutate({ id: r.id, status: "approved" })}
-                            data-testid={`button-approve-dl-${r.id}`}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
-                            onClick={() => resolveDlMutation.mutate({ id: r.id, status: "rejected" })}
-                            data-testid={`button-reject-dl-${r.id}`}
-                          >
-                            Reject
-                          </Button>
-                        </>
-                      ) : (
-                        <Badge className={`border-0 text-xs ${
-                          r.status === "approved"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-red-100 text-red-800"
-                        }`}>
-                          {r.status}
-                        </Badge>
-                      )}
+                     {r.status === "pending" ? (
+  <>
+    <Button
+      size="sm"
+      variant="outline"
+      className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+      onClick={() => resolveDlMutation.mutate({ id: r.id, status: "approved" })}
+      data-testid={`button-approve-dl-${r.id}`}
+    >
+      Approve
+    </Button>
+    <Button
+      size="sm"
+      variant="outline"
+      className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
+      onClick={() => resolveDlMutation.mutate({ id: r.id, status: "rejected" })}
+      data-testid={`button-reject-dl-${r.id}`}
+    >
+      Reject
+    </Button>
+  </>
+) : (
+  <Badge
+    className={`border-0 text-xs ${
+      r.status === "approved" || r.status === "downloaded"
+        ? "bg-emerald-100 text-emerald-800"
+        : "bg-red-100 text-red-800"
+    }`}
+  >
+    {r.status === "approved" && "Approved"}
+    {r.status === "downloaded" && "Downloaded"}
+    {r.status === "rejected" && "Rejected"}
+  </Badge>
+)}
                     </div>
                   </div>
                 </CardContent>

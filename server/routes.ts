@@ -78,12 +78,23 @@ function canRegister(req: Request, res: Response, next: NextFunction) {
 function canDownload(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).currentUser;
   if (!user) return res.status(401).json({ message: "Not authenticated" });
+
+  // Admin/staff always allowed
   if (isAdminRole(user.role) || user.role === "staff") return next();
-  // Students need an approved download request
+
+  // Students need an approved download request (one-time use)
   const requests = storage.getDownloadRequestsByUser(user.id);
-  const hasApproved = requests.some((r) => r.status === "approved");
-  if (hasApproved) return next();
-  return res.status(403).json({ message: "Download access not approved. Please submit a download request." });
+  const approved = requests.find((r) => r.status === "approved");
+  if (!approved) {
+    return res.status(403).json({
+      message:
+        "Download access not approved or already used. Please submit a new download request.",
+    });
+  }
+
+  // Attach the approved request to the request object so export route can mark it used
+  (req as any).approvedDownloadRequest = approved;
+  return next();
 }
 
 const SEED_BREAKPOINTS = [
@@ -602,16 +613,27 @@ app.patch("/api/cases/:id", requireAuth, canRegister, (req, res) => {
 
   // ===================== EXPORT ROUTES =====================
 
-  app.get("/api/export/cases", requireAuth, canDownload, (req: Request, res: Response) => {
-    const { dateFrom, dateTo, format } = req.query as { dateFrom?: string; dateTo?: string; format?: string };
+app.get(
+  "/api/export/cases",
+  requireAuth,
+  canDownload,
+  (req: Request, res: Response) => {
+    const { dateFrom, dateTo } = req.query as {
+      dateFrom?: string;
+      dateTo?: string;
+    };
     const casesData = storage.getCasesByDateRange(dateFrom, dateTo);
 
     // Flatten cases for export
     const rows = casesData.map((c) => {
       let astData: any[] = [];
-      try { astData = JSON.parse(c.astResults || "[]"); } catch {}
+      try {
+        astData = JSON.parse(c.astResults || "[]");
+      } catch {}
 
-      const antibiotics = astData.map((a: any) => `${a.antibiotic} (${a.symbol})`).join("; ");
+      const antibiotics = astData
+        .map((a: any) => `${a.antibiotic} (${a.symbol})`)
+        .join("; ");
       const zoneSizes = astData.map((a: any) => a.zoneSize).join("; ");
       const sensitivities = astData.map((a: any) => a.sensitivity).join("; ");
 
@@ -623,13 +645,13 @@ app.patch("/api/cases/:id", requireAuth, canRegister, (req, res) => {
         "Daily #": c.dailyNumber || "",
         "Monthly #": c.monthlyNumber || "",
         "Owner Name": c.ownerName,
-        "Address": c.ownerAddress,
-        "Phone": c.ownerPhone,
-        "Species": c.species,
-        "Breed": c.breed,
+        Address: c.ownerAddress,
+        Phone: c.ownerPhone,
+        Species: c.species,
+        Breed: c.breed,
         "Animal Name": c.animalName || "",
-        "Age": c.age || "",
-        "Sex": c.sex || "",
+        Age: c.age || "",
+        Sex: c.sex || "",
         "Sample Type": c.sampleType || "",
         "Sample Date (BS)": c.sampleDate || "",
         "Sample Date (AD)": c.sampleDateAd || "",
@@ -637,48 +659,49 @@ app.patch("/api/cases/:id", requireAuth, canRegister, (req, res) => {
         "Antibiotics Tested": antibiotics,
         "Zone Sizes (mm)": zoneSizes,
         "Sensitivity Results": sensitivities,
-        "Remarks": c.remarks || "",
+        Remarks: c.remarks || "",
       };
     });
 
-    if (format === "csv") {
-      // Generate CSV
-      if (rows.length === 0) {
-        res.setHeader("Content-Type", "text/csv");
-        res.setHeader("Content-Disposition", "attachment; filename=ast-cases.csv");
-        return res.send("No data");
-      }
-      const headers = Object.keys(rows[0]);
-      const csvLines = [
-        headers.join(","),
-        ...rows.map((row) =>
-          headers.map((h) => {
-            const val = String((row as any)[h]).replace(/"/g, '""');
-            return `"${val}"`;
-          }).join(",")
-        ),
-      ];
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=ast-cases.csv");
-      return res.send(csvLines.join("\n"));
+    // Always return CSV
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=ast-cases.csv"
+    );
+
+    if (rows.length === 0) {
+      return res.send("No data");
     }
 
-    // Default: Excel
-    try {
-      const XLSX = require("xlsx");
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(rows);
-      // Set column widths
-      ws["!cols"] = Object.keys(rows[0] || {}).map(() => ({ wch: 18 }));
-      XLSX.utils.book_append_sheet(wb, ws, "AST Cases");
-      const buffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", "attachment; filename=ast-cases.xlsx");
-      return res.send(buffer);
-    } catch (err) {
-      return res.status(500).json({ message: "Failed to generate Excel file" });
+        const headers = Object.keys(rows[0]);
+    const csvLines = [
+      headers.join(","),
+      ...rows.map((row) =>
+        headers
+          .map((h) => {
+            const val = String((row as any)[h] ?? "").replace(/"/g, '""');
+            return `"${val}"`;
+          })
+          .join(",")
+      ),
+    ];
+
+    const csvContent = csvLines.join("\n");
+
+    // For students: mark their approved request as used after a successful export
+    const approvedReq = (req as any).approvedDownloadRequest as
+      | { id: number; status: string }
+      | undefined;
+
+    if (approvedReq) {
+      // e.g. mark it as "downloaded" with note "Used once"
+      storage.resolveDownloadRequest(approvedReq.id, "downloaded", "Download used");
     }
-  });
+
+    return res.send(csvContent);
+  }
+);
 
   // ===================== BREAKPOINT ROUTES =====================
 

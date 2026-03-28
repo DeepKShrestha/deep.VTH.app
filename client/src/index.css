@@ -151,20 +151,31 @@
 
 /* Print styles for AST report */
 @media print {
+  @page {
+    size: A4;
+    margin: 10mm; /* was 15mm, reduces top/bottom space a bit */
+  }
+
   body {
     background: white !important;
     color: black !important;
-    font-size: 11pt !important;
+    font-size: 10pt !important; /* was 11pt */
   }
+
+  #print-root {
+    width: 100%;
+    max-width: 210mm;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding: 6mm;            /* smaller than the current 8–12mm */
+  }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
-  }
-  @page {
-    margin: 15mm;
-    size: A4;
   }
 }
 

@@ -1,12 +1,20 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { apiRequest } from "@/lib/queryClient";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  type ReactNode,
+} from "react";
 import type { SafeUser } from "@shared/schema";
 
 interface AuthContextType {
   user: SafeUser | null;
   token: string | null;
   isLoading: boolean;
-  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; message: string }>;
+  login: (
+    usernameOrEmail: string,
+    password: string
+  ) => Promise<{ success: boolean; message: string }>;
   signup: (data: SignupData) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   isSuperAdmin: boolean;
@@ -29,7 +37,7 @@ interface SignupData {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Store token in a module-level variable (no localStorage in sandboxed iframe)
+// Simple in‑memory token (lost on reload, but stable during a session)
 let storedToken: string | null = null;
 
 export function getAuthToken(): string | null {
@@ -39,7 +47,7 @@ export function getAuthToken(): string | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SafeUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading] = useState(false); // always false in this simple version
 
   const setAuth = useCallback((t: string | null, u: SafeUser | null) => {
     storedToken = t;
@@ -47,21 +55,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
   }, []);
 
-  const login = useCallback(async (usernameOrEmail: string, password: string) => {
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernameOrEmail, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) return { success: false, message: data.message || "Login failed" };
-      setAuth(data.token, data.user);
-      return { success: true, message: "Login successful" };
-    } catch {
-      return { success: false, message: "Network error" };
-    }
-  }, [setAuth]);
+  const login = useCallback(
+    async (usernameOrEmail: string, password: string) => {
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ usernameOrEmail, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            success: false,
+            message: data.message || "Login failed",
+          };
+        }
+        setAuth(data.token, data.user);
+        return { success: true, message: "Login successful" };
+      } catch {
+        return { success: false, message: "Network error" };
+      }
+    },
+    [setAuth]
+  );
 
   const signup = useCallback(async (data: SignupData) => {
     try {
@@ -71,7 +87,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(data),
       });
       const result = await res.json();
-      if (!res.ok) return { success: false, message: result.message || "Signup failed" };
+      if (!res.ok) {
+        return {
+          success: false,
+          message: result.message || "Signup failed",
+        };
+      }
       return { success: true, message: result.message };
     } catch {
       return { success: false, message: "Network error" };
@@ -93,16 +114,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isStaff = user?.role === "staff";
   const isStudent = user?.role === "student";
   const canRegisterCase = isAdmin || isStaff;
-  const canDownload = isAdmin || isStaff; // Students need to request
+  const canDownload = isAdmin || isStaff; // students must request
 
-  return (
-    <AuthContext.Provider value={{
-      user, token, isLoading, login, signup, logout,
-      isSuperAdmin, isAdmin, isStaff, isStudent, canRegisterCase, canDownload,
-    }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value: AuthContextType = {
+    user,
+    token,
+    isLoading,
+    login,
+    signup,
+    logout,
+    isSuperAdmin,
+    isAdmin,
+    isStaff,
+    isStudent,
+    canRegisterCase,
+    canDownload,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

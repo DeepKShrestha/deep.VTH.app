@@ -18,10 +18,10 @@ import NotFound from "@/pages/not-found";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import ProfilePage from "./pages/profile";
 
-
 function ProtectedRoutes() {
   const { user, isAdmin, canRegisterCase } = useAuth();
 
+  // If not logged in, always send to login/signup
   if (!user) {
     return (
       <Switch>
@@ -34,6 +34,7 @@ function ProtectedRoutes() {
     );
   }
 
+  // Logged-in routes
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1">
@@ -57,12 +58,12 @@ function ProtectedRoutes() {
         </Switch>
       </main>
       <footer className="no-print border-t border-border py-3 text-center text-xs text-muted-foreground space-y-1">
-  <DeepASTAttribution />
-  <div>
-    © {new Date().getFullYear()} Deep Kumar Shrestha, B.V.Sc &amp; AH, 9th Batch. All rights reserved.
-  </div>
-</footer>
-      <Toaster />
+        <DeepASTAttribution />
+        <div>
+          © {new Date().getFullYear()} Deep Kumar Shrestha, B.V.Sc &amp; AH, 9th
+          Batch. All rights reserved.
+        </div>
+      </footer>
     </div>
   );
 }
