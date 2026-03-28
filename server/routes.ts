@@ -133,16 +133,24 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     created_at TEXT NOT NULL
   )`);
 
-  db.run(sql`CREATE TABLE IF NOT EXISTS download_requests (
+   // Ensure breakpoints table has the new is_preset column; if not, drop and recreate
+  try {
+    db.run(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
+  } catch {
+    db.run(sql`DROP TABLE IF EXISTS breakpoints`);
+  }
+
+  db.run(sql`CREATE TABLE IF NOT EXISTS breakpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    date_from TEXT,
-    date_to TEXT,
-    reason TEXT,
-    admin_note TEXT,
-    created_at TEXT NOT NULL,
-    resolved_at TEXT
+    antibiotic TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sensitive_min INTEGER NOT NULL,
+    intermediate_low INTEGER,
+    intermediate_high INTEGER,
+    resistant_max INTEGER NOT NULL,
+    primary_targets TEXT,
+    is_preset INTEGER NOT NULL DEFAULT 0
   )`);
 
   db.run(sql`CREATE TABLE IF NOT EXISTS cases (
