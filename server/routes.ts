@@ -153,33 +153,48 @@ export async function registerRoutes(httpServer: Server, app: Express) {
     is_preset INTEGER NOT NULL DEFAULT 0
   )`);
 
+    // Ensure cases table has last_updated_by_name; if not, drop and recreate
+  try {
+    db.run(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
+  } catch {
+    db.run(sql`DROP TABLE IF EXISTS cases`);
+  }
+
+    // Ensure cases table has last_updated_by_name; if not, drop and recreate
+  try {
+    db.run(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
+  } catch {
+    db.run(sql`DROP TABLE IF EXISTS cases`);
+  }
+
   db.run(sql`CREATE TABLE IF NOT EXISTS cases (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  case_number TEXT NOT NULL,
-  bill_number TEXT,
-  daily_number INTEGER,
-  monthly_number INTEGER,
-  date TEXT NOT NULL,
-  date_ad TEXT,
-  owner_name TEXT NOT NULL,
-  owner_address TEXT NOT NULL,
-  owner_phone TEXT NOT NULL,
-  species TEXT NOT NULL,
-  breed TEXT NOT NULL,
-  animal_name TEXT,
-  age TEXT,
-  sex TEXT,
-  sample_type TEXT,
-  sample_date TEXT,
-  sample_date_ad TEXT,
-  culture_result TEXT,
-  ast_results TEXT,
-  remarks TEXT,
-  registered_by INTEGER,
-  created_at TEXT NOT NULL,
-  last_updated_by INTEGER,
-  updated_at TEXT
-)`);
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_number TEXT NOT NULL,
+    bill_number TEXT,
+    daily_number INTEGER,
+    monthly_number INTEGER,
+    date TEXT NOT NULL,
+    date_ad TEXT,
+    owner_name TEXT NOT NULL,
+    owner_address TEXT NOT NULL,
+    owner_phone TEXT NOT NULL,
+    species TEXT NOT NULL,
+    breed TEXT NOT NULL,
+    animal_name TEXT,
+    age TEXT,
+    sex TEXT,
+    sample_type TEXT,
+    sample_date TEXT,
+    sample_date_ad TEXT,
+    culture_result TEXT,
+    ast_results TEXT,
+    remarks TEXT,
+    registered_by INTEGER,
+    created_at TEXT NOT NULL,
+    last_updated_by INTEGER,
+    last_updated_by_name TEXT,
+    updated_at TEXT
+  )`);
 
   db.run(sql`CREATE TABLE IF NOT EXISTS breakpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
