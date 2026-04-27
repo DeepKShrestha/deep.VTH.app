@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,11 @@ export default function LoginPage() {
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotIdentifier, setForgotIdentifier] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotReason, setForgotReason] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,6 +32,38 @@ export default function LoginPage() {
     setLoading(false);
     if (!result.success) {
       toast({ title: result.message, variant: "destructive" });
+    }
+  };
+
+  const submitForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotIdentifier || !forgotNewPassword) {
+      toast({
+        title: "Please provide username/email and new password",
+        variant: "destructive",
+      });
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/password-reset-requests", {
+        usernameOrEmail: forgotIdentifier,
+        newPassword: forgotNewPassword,
+        reason: forgotReason || null,
+      });
+      const body = await res.json();
+      toast({ title: body?.message || "Password reset request submitted" });
+      setForgotIdentifier("");
+      setForgotNewPassword("");
+      setForgotReason("");
+      setShowForgot(false);
+    } catch (error: unknown) {
+      toast({
+        title: error instanceof Error ? error.message : "Failed to submit request",
+        variant: "destructive",
+      });
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -70,7 +108,54 @@ export default function LoginPage() {
                 <LogIn className="w-4 h-4" />
                 {loading ? "Signing in..." : "Sign In"}
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full text-primary hover:text-primary/80"
+                onClick={() => setShowForgot((v) => !v)}
+              >
+                Forgot password?
+              </Button>
             </form>
+            {showForgot && (
+              <form onSubmit={submitForgotPassword} className="mt-4 space-y-3 border-t pt-4">
+                <p className="text-xs text-muted-foreground">
+                  Submit a reset request. Admin can approve non-admin requests, and
+                  superadmin can approve admin requests.
+                </p>
+                <div className="space-y-1.5">
+                  <Label htmlFor="forgotIdentifier">Username or Email</Label>
+                  <Input
+                    id="forgotIdentifier"
+                    value={forgotIdentifier}
+                    onChange={(e) => setForgotIdentifier(e.target.value)}
+                    placeholder="Enter your username or email"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="forgotNewPassword">New Password</Label>
+                  <Input
+                    id="forgotNewPassword"
+                    type="password"
+                    value={forgotNewPassword}
+                    onChange={(e) => setForgotNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="forgotReason">Reason (optional)</Label>
+                  <Input
+                    id="forgotReason"
+                    value={forgotReason}
+                    onChange={(e) => setForgotReason(e.target.value)}
+                    placeholder="Why you need reset"
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={forgotLoading}>
+                  {forgotLoading ? "Submitting..." : "Submit Reset Request"}
+                </Button>
+              </form>
+            )}
           </CardContent>
         </Card>
 

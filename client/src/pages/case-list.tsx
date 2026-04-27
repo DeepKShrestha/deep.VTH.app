@@ -144,7 +144,7 @@ export default function CaseList() {
                 <AlertDialogTrigger asChild>
                   <Button
                     variant="outline"
-                    size="xs"
+                    size="sm"
                     className="gap-1.5 text-destructive hover:text-destructive"
                     disabled={selectedIds.length === 0}
                   >

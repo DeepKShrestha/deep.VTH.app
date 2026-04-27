@@ -30,6 +30,19 @@ export const downloadRequests = sqliteTable("download_requests", {
   resolvedAt: text("resolved_at"),
 });
 
+export const passwordResetRequests = sqliteTable("password_reset_requests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  requestedByRole: text("requested_by_role").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  reason: text("reason"),
+  status: text("status").notNull().default("pending"), // pending, approved, rejected
+  resolvedBy: integer("resolved_by"),
+  resolverNote: text("resolver_note"),
+  createdAt: text("created_at").notNull(),
+  resolvedAt: text("resolved_at"),
+});
+
 // ---- Cases ----
 export const cases = sqliteTable("cases", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -121,6 +134,17 @@ export const insertDownloadRequestSchema = createInsertSchema(downloadRequests).
   resolvedAt: true,
 });
 
+export const insertPasswordResetRequestSchema = createInsertSchema(
+  passwordResetRequests,
+).omit({
+  id: true,
+  status: true,
+  resolvedBy: true,
+  resolverNote: true,
+  createdAt: true,
+  resolvedAt: true,
+});
+
 // ---- Types ----
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -130,6 +154,10 @@ export type InsertBreakpoint = z.infer<typeof insertBreakpointSchema>;
 export type Breakpoint = typeof breakpoints.$inferSelect;
 export type DownloadRequest = typeof downloadRequests.$inferSelect;
 export type InsertDownloadRequest = z.infer<typeof insertDownloadRequestSchema>;
+export type PasswordResetRequest = typeof passwordResetRequests.$inferSelect;
+export type InsertPasswordResetRequest = z.infer<
+  typeof insertPasswordResetRequestSchema
+>;
 
 // Safe user type (without password hash) for frontend
 export type SafeUser = Omit<User, "passwordHash">;

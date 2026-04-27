@@ -2,6 +2,7 @@ import {
   cases,
   users,
   downloadRequests,
+  passwordResetRequests,
   breakpoints,
   type Case,
   type InsertCase,
@@ -10,10 +11,12 @@ import {
   type InsertBreakpoint,
   type DownloadRequest,
   type SafeUser,
+  type PasswordResetRequest,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, like, gte, lte, or } from "drizzle-orm";
 import NepaliDateImport from "nepali-date-converter";
+import { sql } from "drizzle-orm";
 // Handle both ESM default export and CJS module.exports
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
 function getNepaliDateClass() {
@@ -32,6 +35,10 @@ export interface IStorage {
   getUserByEmail(email: string): User | undefined;
   getUserById(id: number): User | undefined;
   getUsers(): User[];
+  getUsersPage(limit: number, offset: number, approved?: boolean): {
+    items: User[];
+    total: number;
+  };
   getPendingUsers(): User[];
   approveUser(id: number, role: string): User | undefined;
   rejectUser(id: number): void;
@@ -42,15 +49,27 @@ export interface IStorage {
   // Download requests
   createDownloadRequest(data: { userId: number; dateFrom?: string | null; dateTo?: string | null; reason?: string | null }): DownloadRequest;
   getDownloadRequests(): DownloadRequest[];
+  getDownloadRequestsPage(limit: number, offset: number): {
+    items: DownloadRequest[];
+    total: number;
+  };
   getPendingDownloadRequests(): DownloadRequest[];
   getDownloadRequestsByUser(userId: number): DownloadRequest[];
   resolveDownloadRequest(id: number, status: string, adminNote?: string): DownloadRequest | undefined;
+  createPasswordResetRequest(data: { userId: number; requestedByRole: string; passwordHash: string; reason?: string | null }): PasswordResetRequest;
+  getPasswordResetRequests(): PasswordResetRequest[];
+  getPasswordResetRequestsPage(limit: number, offset: number): {
+    items: PasswordResetRequest[];
+    total: number;
+  };
+  resolvePasswordResetRequest(id: number, status: string, resolvedBy: number, resolverNote?: string): PasswordResetRequest | undefined;
 
   // Cases
   getCases(): Case[];
+  getCasesPage(limit: number, offset: number): { items: Case[]; total: number };
   getCase(id: number): Case | undefined;
-  createCase(data: InsertCase): Case;
-  updateCase(id: number, data: Partial<InsertCase>): Case | undefined;
+  createCase(data: InsertCase & Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>): Case;
+  updateCase(id: number, data: Partial<InsertCase> & Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>): Case | undefined;
   deleteCase(id: number): void;
   getNextCaseNumber(): string;
   getDailyNumber(date: string): number;
@@ -89,6 +108,41 @@ export class DatabaseStorage implements IStorage {
 
   getUsers(): User[] {
     return db.select().from(users).orderBy(desc(users.createdAt)).all();
+  }
+
+  getUsersPage(limit: number, offset: number, approved?: boolean): {
+    items: User[];
+    total: number;
+  } {
+    const whereClause =
+      typeof approved === "boolean" ? eq(users.approved, approved) : undefined;
+
+    const items = whereClause
+      ? db
+          .select()
+          .from(users)
+          .where(whereClause)
+          .orderBy(desc(users.createdAt))
+          .limit(limit)
+          .offset(offset)
+          .all()
+      : db
+          .select()
+          .from(users)
+          .orderBy(desc(users.createdAt))
+          .limit(limit)
+          .offset(offset)
+          .all();
+
+    const totalRow = whereClause
+      ? db
+          .select({ count: sql<number>`count(*)` })
+          .from(users)
+          .where(whereClause)
+          .get()
+      : db.select({ count: sql<number>`count(*)` }).from(users).get();
+
+    return { items, total: Number(totalRow?.count ?? 0) };
   }
 
   getPendingUsers(): User[] {
@@ -151,6 +205,24 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(downloadRequests).orderBy(desc(downloadRequests.createdAt)).all();
   }
 
+  getDownloadRequestsPage(limit: number, offset: number): {
+    items: DownloadRequest[];
+    total: number;
+  } {
+    const items = db
+      .select()
+      .from(downloadRequests)
+      .orderBy(desc(downloadRequests.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
+    const totalRow = db
+      .select({ count: sql<number>`count(*)` })
+      .from(downloadRequests)
+      .get();
+    return { items, total: Number(totalRow?.count ?? 0) };
+  }
+
   getPendingDownloadRequests(): DownloadRequest[] {
     return db.select().from(downloadRequests).where(eq(downloadRequests.status, "pending")).all();
   }
@@ -170,16 +242,101 @@ export class DatabaseStorage implements IStorage {
       .get();
   }
 
+  createPasswordResetRequest(data: {
+    userId: number;
+    requestedByRole: string;
+    passwordHash: string;
+    reason?: string | null;
+  }): PasswordResetRequest {
+    return db
+      .insert(passwordResetRequests)
+      .values({
+        ...data,
+        reason: data.reason || null,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+      .returning()
+      .get();
+  }
+
+  getPasswordResetRequests(): PasswordResetRequest[] {
+    return db
+      .select()
+      .from(passwordResetRequests)
+      .orderBy(desc(passwordResetRequests.createdAt))
+      .all();
+  }
+
+  getPasswordResetRequestsPage(limit: number, offset: number): {
+    items: PasswordResetRequest[];
+    total: number;
+  } {
+    const items = db
+      .select()
+      .from(passwordResetRequests)
+      .orderBy(desc(passwordResetRequests.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
+    const totalRow = db
+      .select({ count: sql<number>`count(*)` })
+      .from(passwordResetRequests)
+      .get();
+    return { items, total: Number(totalRow?.count ?? 0) };
+  }
+
+  resolvePasswordResetRequest(
+    id: number,
+    status: string,
+    resolvedBy: number,
+    resolverNote?: string,
+  ): PasswordResetRequest | undefined {
+    const existing = db
+      .select()
+      .from(passwordResetRequests)
+      .where(eq(passwordResetRequests.id, id))
+      .get();
+    if (!existing) return undefined;
+
+    return db
+      .update(passwordResetRequests)
+      .set({
+        status,
+        resolvedBy,
+        resolverNote: resolverNote || null,
+        resolvedAt: new Date().toISOString(),
+      })
+      .where(eq(passwordResetRequests.id, id))
+      .returning()
+      .get();
+  }
+
   // ---- Cases ----
   getCases(): Case[] {
     return db.select().from(cases).orderBy(desc(cases.createdAt)).all();
+  }
+
+  getCasesPage(limit: number, offset: number): { items: Case[]; total: number } {
+    const items = db
+      .select()
+      .from(cases)
+      .orderBy(desc(cases.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
+    const totalRow = db.select({ count: sql<number>`count(*)` }).from(cases).get();
+    return { items, total: Number(totalRow?.count ?? 0) };
   }
 
   getCase(id: number): Case | undefined {
     return db.select().from(cases).where(eq(cases.id, id)).get();
   }
 
-  createCase(data: InsertCase): Case {
+  createCase(
+    data: InsertCase &
+      Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>
+  ): Case {
     return db
       .insert(cases)
       .values({ ...data, createdAt: new Date().toISOString() })
@@ -187,7 +344,11 @@ export class DatabaseStorage implements IStorage {
       .get();
   }
 
-  updateCase(id: number, data: Partial<InsertCase>): Case | undefined {
+  updateCase(
+    id: number,
+    data: Partial<InsertCase> &
+      Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>
+  ): Case | undefined {
     const existing = this.getCase(id);
     if (!existing) return undefined;
     return db

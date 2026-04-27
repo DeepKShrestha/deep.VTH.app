@@ -129,14 +129,29 @@ export default function RegisterCase() {
   };
 
 
-  // When the preset toggle is turned ON, load the preset rows
+  // Keep AST rows in sync with preset toggle state
   useEffect(() => {
     if (usePresetAntibiotics) {
       const rows = buildPresetRows();
       if (rows.length > 0) {
         setAstRows(rows);
       }
+      return;
     }
+
+    // Turning presets off should clear preset-selected rows
+    setAstRows([
+      {
+        breakpointId: null,
+        antibiotic: "",
+        symbol: "",
+        discContent: "",
+        zoneSize: "",
+        sensitivity: "",
+        autoSensitivity: "",
+        manualOverride: false,
+      },
+    ]);
   }, [usePresetAntibiotics, breakpointsData]);
 
   const addRow = () => {

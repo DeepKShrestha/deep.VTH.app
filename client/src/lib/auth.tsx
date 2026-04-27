@@ -3,6 +3,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   type ReactNode,
 } from "react";
 import type { SafeUser } from "@shared/schema";
@@ -17,9 +18,11 @@ interface AuthContextType {
   ) => Promise<{ success: boolean; message: string }>;
   signup: (data: SignupData) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
+  updateCurrentUser: (nextUser: SafeUser) => void;
   isSuperAdmin: boolean;
   isAdmin: boolean;
   isStaff: boolean;
+  isIntern: boolean;
   isStudent: boolean;
   canRegisterCase: boolean;
   canDownload: boolean;
@@ -39,6 +42,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 // Simple in‑memory token (lost on reload, but stable during a session)
 let storedToken: string | null = null;
+const TOKEN_STORAGE_KEY = "auth_token";
 
 export function getAuthToken(): string | null {
   return storedToken;
@@ -46,14 +50,53 @@ export function getAuthToken(): string | null {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SafeUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading] = useState(false); // always false in this simple version
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
+  });
 
   const setAuth = useCallback((t: string | null, u: SafeUser | null) => {
     storedToken = t;
+    if (t) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, t);
+    } else {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
     setToken(t);
     setUser(u);
   }, []);
+
+  useEffect(() => {
+    storedToken = token;
+  }, [token]);
+
+  useEffect(() => {
+    const bootstrapAuth = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          setAuth(null, null);
+          return;
+        }
+        const safeUser = (await res.json()) as SafeUser;
+        setAuth(token, safeUser);
+      } catch {
+        setAuth(null, null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void bootstrapAuth();
+    if (!token) {
+      setIsLoading(false);
+    }
+  }, [token, setAuth]);
 
   const login = useCallback(
     async (usernameOrEmail: string, password: string) => {
@@ -109,12 +152,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuth(null, null);
   }, [setAuth]);
 
+  const updateCurrentUser = useCallback(
+    (nextUser: SafeUser) => {
+      setUser(nextUser);
+    },
+    [setUser],
+  );
+
   const isSuperAdmin = user?.role === "superadmin";
   const isAdmin = user?.role === "admin" || isSuperAdmin;
   const isStaff = user?.role === "staff";
+  const isIntern = user?.role === "intern";
   const isStudent = user?.role === "student";
-  const canRegisterCase = isAdmin || isStaff;
-  const canDownload = isAdmin || isStaff; // students must request
+  const canRegisterCase = isAdmin || isStaff || isIntern;
+  const canDownload = isAdmin || isStaff || isIntern; // students must request
 
   const value: AuthContextType = {
     user,
@@ -123,9 +174,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     signup,
     logout,
+    updateCurrentUser,
     isSuperAdmin,
     isAdmin,
     isStaff,
+    isIntern,
     isStudent,
     canRegisterCase,
     canDownload,

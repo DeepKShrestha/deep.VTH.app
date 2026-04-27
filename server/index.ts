@@ -2,6 +2,12 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { DB_FILE, DB_PROVIDER } from "./db";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
+import crypto from "crypto";
 
 const app = express();
 const httpServer = createServer(app);
@@ -11,16 +17,56 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+declare module "express-serve-static-core" {
+  interface Request {
+    requestId?: string;
+  }
+}
 
 app.use(
   express.json({
+    limit: "1mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
+app.use((req, res, next) => {
+  const incoming = req.header("x-request-id");
+  const requestId =
+    typeof incoming === "string" && incoming.trim()
+      ? incoming.trim()
+      : crypto.randomUUID();
+  req.requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+  next();
+});
+
 app.use(express.urlencoded({ extended: false }));
+if (process.env.NODE_ENV === "production") {
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: false,
+    }),
+  );
+} else {
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: false,
+    }),
+  );
+}
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -33,10 +79,18 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+function logJson(
+  entry: Record<string, unknown>,
+  source = "express",
+): void {
+  const payload = { source, timestamp: new Date().toISOString(), ...entry };
+  console.log(JSON.stringify(payload));
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedJsonResponse: unknown = undefined;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
@@ -47,16 +101,48 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      logJson({
+        type: "api_request",
+        requestId: req.requestId,
+        method: req.method,
+        path,
+        statusCode: res.statusCode,
+        durationMs: duration,
+        responseBody:
+          capturedJsonResponse && process.env.LOG_RESPONSE_BODIES === "true"
+            ? capturedJsonResponse
+            : undefined,
+      });
     }
   });
 
   next();
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "vet-ast-app",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/api/ready", (_req, res) => {
+  try {
+    db.get(sql`SELECT 1 as ready`);
+    res.json({
+      status: "ready",
+      database: DB_FILE,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "not_ready",
+      message: "Database unavailable",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
 });
 
 (async () => {
@@ -66,13 +152,21 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    logJson({
+      type: "api_error",
+      requestId: _req.requestId,
+      status,
+      message,
+      stack: err instanceof Error ? err.stack : undefined,
+      path: _req.path,
+      method: _req.method,
+    });
 
     if (res.headersSent) {
       return next(err);
     }
 
-    return res.status(status).json({ message });
+    return res.status(status).json({ message, requestId: _req.requestId });
   });
 
   // importantly only setup vite in development and after
@@ -97,6 +191,8 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      log(`db provider: ${DB_PROVIDER}`);
+      log(`using database: ${DB_FILE}`);
     },
   );
 })();

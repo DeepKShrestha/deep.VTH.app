@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowLeft, UserCheck, UserX, Download, Shield, Users, Clock } from "lucide-react";
-import type { SafeUser, DownloadRequest } from "@shared/schema";
+import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 
 function designationLabel(d: string) {
   const map: Record<string, string> = {
@@ -35,6 +35,7 @@ function roleBadge(role: string) {
     superadmin: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
     admin: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
     staff: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    intern: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
     student: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
     pending: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
   };
@@ -42,6 +43,7 @@ function roleBadge(role: string) {
     superadmin: "Super Admin",
     admin: "Admin",
     staff: "Staff",
+    intern: "Intern",
     student: "Student",
     pending: "Pending",
   };
@@ -53,6 +55,7 @@ export default function AdminPanel() {
   const { user: currentUser } = useAuth();
 
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
+  const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -69,10 +72,25 @@ export default function AdminPanel() {
   const { data: downloadRequests = [] } = useQuery<(DownloadRequest & { userName: string; userDesignation: string })[]>({
     queryKey: ["/api/admin/download-requests"],
   });
+  const {
+    data: passwordResetRequests = [],
+    error: passwordResetError,
+  } = useQuery<
+    (PasswordResetRequest & {
+      userName: string;
+      userUsername: string;
+      userRole: string;
+    })[]
+  >({
+    queryKey: ["/api/admin/password-reset-requests"],
+  });
 
   const pendingUsers = allUsers.filter((u) => !u.approved);
   const approvedUsers = allUsers.filter((u) => u.approved);
   const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending");
+  const pendingPasswordResets = passwordResetRequests.filter(
+    (r) => r.status === "pending",
+  );
 
   const approveMutation = useMutation({
     mutationFn: async ({ id, role }: { id: number; role: string }) => {
@@ -139,6 +157,29 @@ export default function AdminPanel() {
       toast({ title: "Request resolved" });
     },
   });
+  const resolvePasswordResetMutation = useMutation({
+    mutationFn: async ({
+      id,
+      status,
+      resolverNote,
+    }: {
+      id: number;
+      status: string;
+      resolverNote?: string;
+    }) => {
+      await apiRequest("POST", `/api/admin/password-reset-requests/${id}/resolve`, {
+        status,
+        resolverNote: resolverNote || null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/password-reset-requests"],
+      });
+      toast({ title: "Password reset request resolved" });
+      setPasswordResetNotes({});
+    },
+  });
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
@@ -180,7 +221,7 @@ export default function AdminPanel() {
       </div>
 
       <Tabs defaultValue="pending">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="pending" data-testid="tab-pending">
             Pending ({pendingUsers.length})
           </TabsTrigger>
@@ -189,6 +230,9 @@ export default function AdminPanel() {
           </TabsTrigger>
           <TabsTrigger value="downloads" data-testid="tab-downloads">
             Downloads ({pendingDlRequests.length})
+          </TabsTrigger>
+          <TabsTrigger value="password-resets" data-testid="tab-password-resets">
+            Password Resets ({pendingPasswordResets.length})
           </TabsTrigger>
         </TabsList>
 
@@ -216,7 +260,12 @@ export default function AdminPanel() {
                         variant="outline"
                         className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                         onClick={() => {
-                          const role = u.designation === "student" ? "student" : "staff";
+                          const role =
+                            u.designation === "student"
+                              ? "student"
+                              : u.designation === "intern"
+                                ? "intern"
+                                : "staff";
                           approveMutation.mutate({ id: u.id, role });
                         }}
                         data-testid={`button-approve-${u.id}`}
@@ -297,6 +346,7 @@ export default function AdminPanel() {
                               </>
                             )}
                             <SelectItem value="staff">Staff</SelectItem>
+                            <SelectItem value="intern">Intern</SelectItem>
                             <SelectItem value="student">Student</SelectItem>
                           </SelectContent>
                         </Select>
@@ -382,6 +432,110 @@ export default function AdminPanel() {
     {r.status === "rejected" && "Rejected"}
   </Badge>
 )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </TabsContent>
+
+        {/* Password Reset Requests */}
+        <TabsContent value="password-resets" className="space-y-3 mt-4">
+          {passwordResetError && (
+            <Card>
+              <CardContent className="pt-4 pb-3 text-sm text-red-600">
+                Failed to load password reset requests.
+              </CardContent>
+            </Card>
+          )}
+          {passwordResetRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No password reset requests
+            </p>
+          ) : (
+            passwordResetRequests.map((r) => (
+              <Card key={r.id}>
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">
+                        {r.userName} (@{r.userUsername})
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Role: {r.userRole}
+                      </div>
+                      {r.reason && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Reason: {r.reason}
+                        </div>
+                      )}
+                      {r.status === "pending" ? (
+                        <div className="mt-2 space-y-1.5">
+                          <Label htmlFor={`reset-note-${r.id}`} className="text-xs">
+                            Resolver note (optional)
+                          </Label>
+                          <Input
+                            id={`reset-note-${r.id}`}
+                            value={passwordResetNotes[r.id] || ""}
+                            onChange={(e) =>
+                              setPasswordResetNotes((prev) => ({
+                                ...prev,
+                                [r.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Reason for approve/reject action"
+                          />
+                        </div>
+                      ) : r.resolverNote ? (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Resolver note: {r.resolverNote}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {r.status === "pending" ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                            onClick={() =>
+                              resolvePasswordResetMutation.mutate({
+                                id: r.id,
+                                status: "approved",
+                                resolverNote: passwordResetNotes[r.id],
+                              })
+                            }
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
+                            onClick={() =>
+                              resolvePasswordResetMutation.mutate({
+                                id: r.id,
+                                status: "rejected",
+                                resolverNote: passwordResetNotes[r.id],
+                              })
+                            }
+                          >
+                            Reject
+                          </Button>
+                        </>
+                      ) : (
+                        <Badge
+                          className={`border-0 text-xs ${
+                            r.status === "approved"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-red-100 text-red-800"
+                          }`}
+                        >
+                          {r.status === "approved" ? "Approved" : "Rejected"}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 </CardContent>

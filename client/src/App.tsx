@@ -19,7 +19,15 @@ import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import ProfilePage from "./pages/profile";
 
 function ProtectedRoutes() {
-  const { user, isAdmin, canRegisterCase } = useAuth();
+  const { user, isAdmin, canRegisterCase, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+        Restoring session...
+      </div>
+    );
+  }
 
   // If not logged in, always send to login/signup
   if (!user) {

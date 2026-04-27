@@ -10,13 +10,16 @@ import { Input } from "../components/ui/input";
 import { ArrowLeft, User as UserIcon } from "lucide-react";
 
 export default function ProfilePage() {
-  const { user, setUser } = useAuth() as any;
+  const { user, isSuperAdmin, updateCurrentUser } = useAuth();
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
   const [fullName, setFullName] = useState("");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [designation, setDesignation] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -27,6 +30,9 @@ export default function ProfilePage() {
     setFullName(user.fullName || "");
     setAddress(user.address || "");
     setPhone(user.phone || "");
+    setEmail(user.email || "");
+    setUsername(user.username || "");
+    setDesignation(user.designation || "");
   }, [user]);
 
   if (!user) {
@@ -40,6 +46,13 @@ export default function ProfilePage() {
     if (!fullName.trim() || !address.trim() || !phone.trim()) {
       toast({
         title: "Please fill in all required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (isSuperAdmin && (!email.trim() || !username.trim() || !designation.trim())) {
+      toast({
+        title: "Please fill in all superadmin fields",
         variant: "destructive",
       });
       return;
@@ -69,41 +82,57 @@ export default function ProfilePage() {
       }
     }
 
-    const payload: any = {
+    const payload: {
+      fullName: string;
+      address: string;
+      phone: string;
+      email?: string;
+      username?: string;
+      designation?: string;
+      currentPassword?: string;
+      newPassword?: string;
+    } = {
       fullName: fullName.trim(),
       address: address.trim(),
       phone: phone.trim(),
     };
+    if (isSuperAdmin) {
+      payload.email = email.trim();
+      payload.username = username.trim();
+      payload.designation = designation.trim();
+    }
 
     if (newPassword) {
       payload.currentPassword = currentPassword;
       payload.newPassword = newPassword;
     }
-              try {
+    try {
       setLoading(true);
-      const res = await apiRequest<"PATCH", any>(
+      const res = await apiRequest(
         "PATCH",
-        "api/users/me",
+        "/api/users/me",
         payload
       );
+      const body = await res.json();
 
       // Treat any non-throwing response as success and use res.user if present
-      const updatedUser = (res as any)?.user ?? res;
+      const updatedUser = body?.user ?? body;
       if (updatedUser) {
-        setUser?.(updatedUser);
+        updateCurrentUser(updatedUser);
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
         toast({ title: "Profile updated" });
       } else {
         toast({
-          title: (res as any)?.message || "Failed to update profile",
+          title: body?.message || "Failed to update profile",
           variant: "destructive",
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to update profile";
       toast({
-        title: err?.message || "Failed to update profile",
+        title: message,
         variant: "destructive",
       });
     } finally {
@@ -175,6 +204,47 @@ export default function ProfilePage() {
               />
             </div>
 
+            {isSuperAdmin && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">
+                    Email <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="superadmin@email.com"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="username">
+                    Username <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Username"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="designation">
+                    Designation <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="designation"
+                    value={designation}
+                    onChange={(e) => setDesignation(e.target.value)}
+                    placeholder="e.g. veterinarian"
+                  />
+                </div>
+              </>
+            )}
+
             <div className="pt-4 border-t border-border space-y-3">
               <p className="text-sm font-medium">Change password (optional)</p>
 
@@ -211,9 +281,11 @@ export default function ProfilePage() {
                 />
               </div>
 
-              <p className="text-xs text-muted-foreground">
-                You cannot change your username, email, or designation here.
-              </p>
+              {!isSuperAdmin && (
+                <p className="text-xs text-muted-foreground">
+                  Only superadmin can edit username, email, and designation here.
+                </p>
+              )}
             </div>
 
             <div className="pt-2 flex justify-end">

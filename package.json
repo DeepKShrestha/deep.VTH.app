@@ -5,12 +5,21 @@
   "license": "MIT",
   "main": "main.js",
   "scripts": {
-    "dev": "cross-env PORT=5001 NODE_ENV=development tsx server/index.ts",
+    "dev": "cross-env DB_PROVIDER=sqlite DB_FILE=./data.db PORT=5001 NODE_ENV=development tsx server/index.ts",
     "app": "electron .",
     "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "cross-env DB_PROVIDER=sqlite DB_FILE=./data.db NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "db:push": "drizzle-kit push"
+    "test": "vitest run",
+    "verify": "npm run test && npm run check && npm run build",
+    "backup:db": "cross-env DB_FILE=./data.db tsx script/backup-db.ts",
+    "restore:db": "cross-env DB_FILE=./data.db tsx script/restore-db.ts",
+    "check:pg": "tsx script/check-postgres.ts",
+    "smoke:pg:auth": "tsx script/smoke-pg-auth.ts",
+    "audit:deps": "npm audit",
+    "db:push": "drizzle-kit push",
+    "db:push:sqlite": "drizzle-kit push --config drizzle.config.ts",
+    "db:push:pg": "drizzle-kit push --config drizzle.config.pg.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -54,8 +63,10 @@
     "drizzle-zod": "^0.7.0",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.0.1",
+    "express-rate-limit": "^8.4.1",
     "express-session": "^1.18.1",
     "framer-motion": "^11.13.1",
+    "helmet": "^8.1.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
@@ -63,6 +74,7 @@
     "next-themes": "^0.4.6",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "pg": "^8.16.3",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -90,6 +102,7 @@
     "@types/node": "20.19.27",
     "@types/passport": "^1.0.16",
     "@types/passport-local": "^1.0.38",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
@@ -102,7 +115,8 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.20.5",
     "typescript": "5.6.3",
-    "vite": "^7.3.0"
+    "vite": "^7.3.0",
+    "vitest": "^4.1.5"
   },
   "overrides": {
     "drizzle-kit": {

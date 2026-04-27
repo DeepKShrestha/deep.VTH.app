@@ -1,0 +1,335 @@
+import type { NextFunction, Request, Response } from "express";
+import { storage } from "../storage";
+import NepaliDateImport from "nepali-date-converter";
+import type { AuthenticatedRequest, CurrentUser } from "./types";
+import { MESSAGES } from "./messages";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
+import crypto from "crypto";
+import { authSessionRepo } from "../auth-session-repo";
+
+const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
+
+function getNepaliDateClass() {
+  return NepaliDateClass;
+}
+
+export function getTodayBs(): string {
+  const NepaliDate = getNepaliDateClass();
+  const nd = new NepaliDate();
+  return nd.format("YYYY-MM-DD");
+}
+
+db.run(sql`CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+)`);
+
+export const sessions = {
+  async set(token: string, userId: number) {
+    await authSessionRepo.setSession(token, userId);
+  },
+  async get(token: string) {
+    return authSessionRepo.getSessionUserId(token);
+  },
+  async delete(token: string) {
+    await authSessionRepo.deleteSession(token);
+  },
+  async clear() {
+    await authSessionRepo.clearSessions();
+  },
+};
+
+export function generateToken(): string {
+  return crypto.randomBytes(48).toString("hex");
+}
+
+export async function getCurrentUser(req: Request) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const token = authHeader.substring(7);
+  const userId = await sessions.get(token);
+  if (!userId) return null;
+  const user = await authSessionRepo.getUserById(userId);
+  if (!user) return null;
+  return {
+    id: user.id,
+    role: user.role,
+    approved: user.approved,
+    designation: user.designation,
+  };
+}
+
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  const user = await getCurrentUser(req);
+  if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+  if (!user.approved)
+    return res.status(403).json({ message: MESSAGES.ACCOUNT_NOT_APPROVED });
+  (req as AuthenticatedRequest).currentUser = user as CurrentUser;
+  next();
+}
+
+export function requireRole(...roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+    if (!roles.includes(user.role))
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    next();
+  };
+}
+
+export function isAdminRole(role: string): boolean {
+  return role === "superadmin" || role === "admin";
+}
+
+export function getIdParam(req: Request): number {
+  const rawId = req.params.id;
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  return Number.parseInt(id, 10);
+}
+
+export function getPaginationParams(
+  req: Request,
+  defaults: { page: number; pageSize: number; maxPageSize?: number } = {
+    page: 1,
+    pageSize: 50,
+    maxPageSize: 200,
+  },
+) {
+  const rawPage = Array.isArray(req.query.page) ? req.query.page[0] : req.query.page;
+  const rawPageSize = Array.isArray(req.query.pageSize)
+    ? req.query.pageSize[0]
+    : req.query.pageSize;
+  const page = Math.max(
+    1,
+    Number.parseInt(String(rawPage ?? defaults.page), 10) || defaults.page,
+  );
+  const pageSize = Math.min(
+    defaults.maxPageSize ?? 200,
+    Math.max(
+      1,
+      Number.parseInt(String(rawPageSize ?? defaults.pageSize), 10) ||
+        defaults.pageSize,
+    ),
+  );
+  return {
+    page,
+    pageSize,
+    offset: (page - 1) * pageSize,
+    shouldPaginate:
+      rawPage !== undefined ||
+      rawPageSize !== undefined ||
+      req.query.paginated === "true",
+  };
+}
+
+export function canRegister(req: Request, res: Response, next: NextFunction) {
+  const user = (req as AuthenticatedRequest).currentUser;
+  if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+  if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
+    return next();
+  }
+  return res.status(403).json({ message: "Students cannot register cases" });
+}
+
+export function canDownload(req: Request, res: Response, next: NextFunction) {
+  const user = (req as AuthenticatedRequest).currentUser;
+  if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+
+  if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
+    return next();
+  }
+
+  const requests = storage.getDownloadRequestsByUser(user.id);
+  const approved = requests.find((r) => r.status === "approved");
+  if (!approved) {
+    return res.status(403).json({
+      message:
+        "Download access not approved or already used. Please submit a new download request.",
+    });
+  }
+
+  (req as AuthenticatedRequest).approvedDownloadRequest = approved;
+  return next();
+}
+
+export const SEED_BREAKPOINTS = [
+  {
+    antibiotic: "Amikacin",
+    symbol: "AK",
+    content: "30 µg",
+    sensitiveMin: 17,
+    intermediateLow: 15,
+    intermediateHigh: 16,
+    resistantMax: 14,
+    primaryTargets: "Gram-negative bacilli (e.g., Pseudomonas spp.)",
+  },
+  {
+    antibiotic: "Amoxicillin",
+    symbol: "AML",
+    content: "25 µg",
+    sensitiveMin: 19,
+    intermediateLow: 16,
+    intermediateHigh: 18,
+    resistantMax: 15,
+    primaryTargets: "Enterobacteriaceae, Streptococci",
+  },
+  {
+    antibiotic: "Amoxicillin",
+    symbol: "AML",
+    content: "10 µg",
+    sensitiveMin: 17,
+    intermediateLow: 14,
+    intermediateHigh: 16,
+    resistantMax: 13,
+    primaryTargets: "Enterobacteriaceae, Streptococci",
+  },
+  {
+    antibiotic: "Azithromycin",
+    symbol: "AZM",
+    content: "15 µg",
+    sensitiveMin: 18,
+    intermediateLow: 14,
+    intermediateHigh: 17,
+    resistantMax: 13,
+    primaryTargets: "Respiratory pathogens",
+  },
+  {
+    antibiotic: "Azithromycin (S. typhi)",
+    symbol: "AZM",
+    content: "15 µg",
+    sensitiveMin: 13,
+    intermediateLow: null,
+    intermediateHigh: null,
+    resistantMax: 12,
+    primaryTargets: "Salmonella typhi",
+  },
+  {
+    antibiotic: "Cefalexin",
+    symbol: "LEX",
+    content: "30 µg",
+    sensitiveMin: 18,
+    intermediateLow: 15,
+    intermediateHigh: 17,
+    resistantMax: 14,
+    primaryTargets: "Staphylococci",
+  },
+  {
+    antibiotic: "Chloramphenicol",
+    symbol: "C",
+    content: "30 µg",
+    sensitiveMin: 18,
+    intermediateLow: 13,
+    intermediateHigh: 17,
+    resistantMax: 12,
+    primaryTargets: "Anaerobes, Actinobacillus spp.",
+  },
+  {
+    antibiotic: "Ciprofloxacin",
+    symbol: "CIP",
+    content: "5 µg",
+    sensitiveMin: 25,
+    intermediateLow: 22,
+    intermediateHigh: 24,
+    resistantMax: 21,
+    primaryTargets: "Enterobacteriaceae",
+  },
+  {
+    antibiotic: "Doxycycline",
+    symbol: "DO",
+    content: "30 µg",
+    sensitiveMin: 16,
+    intermediateLow: 13,
+    intermediateHigh: 15,
+    resistantMax: 12,
+    primaryTargets: "Pasteurella spp., E. coli",
+  },
+  {
+    antibiotic: "Enrofloxacin",
+    symbol: "ENR",
+    content: "5 µg",
+    sensitiveMin: 22,
+    intermediateLow: 18,
+    intermediateHigh: 21,
+    resistantMax: 17,
+    primaryTargets: "Enterobacteriaceae",
+  },
+  {
+    antibiotic: "Enrofloxacin",
+    symbol: "ENR",
+    content: "10 µg",
+    sensitiveMin: 25,
+    intermediateLow: 21,
+    intermediateHigh: 24,
+    resistantMax: 20,
+    primaryTargets: "Pseudomonas spp.",
+  },
+  {
+    antibiotic: "Florfenicol",
+    symbol: "FFC",
+    content: "30 µg",
+    sensitiveMin: 19,
+    intermediateLow: 16,
+    intermediateHigh: 18,
+    resistantMax: 15,
+    primaryTargets: "BRD pathogens (e.g. Mannheimia haemolytica)",
+  },
+  {
+    antibiotic: "Gentamicin",
+    symbol: "GEN",
+    content: "10 µg",
+    sensitiveMin: 15,
+    intermediateLow: 13,
+    intermediateHigh: 14,
+    resistantMax: 12,
+    primaryTargets: "Gram-negative bacilli",
+  },
+  {
+    antibiotic: "Levofloxacin",
+    symbol: "LEV",
+    content: "5 µg",
+    sensitiveMin: 20,
+    intermediateLow: 17,
+    intermediateHigh: 19,
+    resistantMax: 16,
+    primaryTargets: "Respiratory & UTI pathogens",
+  },
+  {
+    antibiotic: "Neomycin",
+    symbol: "N",
+    content: "30 µg",
+    sensitiveMin: 17,
+    intermediateLow: 14,
+    intermediateHigh: 16,
+    resistantMax: 13,
+    primaryTargets: "Enterobacteriaceae",
+  },
+  {
+    antibiotic: "Tetracycline",
+    symbol: "TE",
+    content: "30 µg",
+    sensitiveMin: 15,
+    intermediateLow: 12,
+    intermediateHigh: 14,
+    resistantMax: 11,
+    primaryTargets: "Broad-spectrum",
+  },
+  {
+    antibiotic: "Trimethoprim",
+    symbol: "TR",
+    content: "5 µg",
+    sensitiveMin: 16,
+    intermediateLow: 11,
+    intermediateHigh: 15,
+    resistantMax: 10,
+    primaryTargets: "Urinary pathogens",
+  },
+] as const;
+
