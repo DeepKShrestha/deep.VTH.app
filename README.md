@@ -322,6 +322,12 @@ Recommended:
 - monitor `/api/health` and `/api/ready`
 - schedule DB backups
 
+Official server baseline:
+
+- Prefer managed Postgres for long-term production data durability and backup/restore workflows.
+- Do not rely on ephemeral filesystem SQLite for official deployment.
+- `npm start` no longer hard-forces SQLite; production provider is now controlled by environment variables.
+
 Server runtime hardening included:
 
 - `trust proxy` enabled for reverse-proxy deployments

@@ -377,18 +377,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       process.env.NODE_ENV !== "production" ||
       process.env.ALLOW_DEFAULT_ADMIN === "true";
     if (shouldSeedAdmin) {
-      const hash = bcrypt.hashSync("admin123", 10);
-      storage.createUser({
-        fullName: "Super Admin",
-        address: "VTH",
-        phone: "0000000000",
-        email: "admin@vth.edu.np",
-        designation: "veterinarian",
-        username: "admin",
-        passwordHash: hash,
-        role: "superadmin",
-        approved: true,
-      });
+    const hash = bcrypt.hashSync("admin123", 10);
+    storage.createUser({
+      fullName: "Super Admin",
+      address: "VTH",
+      phone: "0000000000",
+      email: "admin@vth.edu.np",
+      designation: "veterinarian",
+      username: "admin",
+      passwordHash: hash,
+      role: "superadmin",
+      approved: true,
+    });
     }
   } else {
     const hasSuperAdmin = existingUsers.some((u) => u.role === "superadmin");

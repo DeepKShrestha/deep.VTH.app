@@ -41,6 +41,7 @@ export default function Welcome() {
   } = useAuth();
 
   const { data: notificationData } = useQuery<{
+    pendingSignupRequests: Array<{ id: number }>;
     pendingDownloadRequests: Array<{ id: number }>;
     pendingPasswordResets: Array<{ id: number }>;
     recentFormChanges: Array<{ id: number }>;
@@ -49,22 +50,31 @@ export default function Welcome() {
     queryFn: async () => {
       if (!isAdmin) {
         return {
+          pendingSignupRequests: [],
           pendingDownloadRequests: [],
           pendingPasswordResets: [],
           recentFormChanges: [],
         };
       }
-      const [downloadsRes, resetsRes, formLogsRes] = await Promise.allSettled([
+      const [pendingUsersRes, downloadsRes, resetsRes, formLogsRes] = await Promise.allSettled([
+        apiRequest("GET", "/api/admin/users/pending"),
         apiRequest("GET", "/api/admin/download-requests"),
         apiRequest("GET", "/api/admin/password-reset-requests"),
         apiRequest("GET", "/api/admin/form-edit-logs"),
       ]);
+      const pendingUsersRaw =
+        pendingUsersRes.status === "fulfilled" ? await pendingUsersRes.value.json() : [];
       const downloadsRaw =
         downloadsRes.status === "fulfilled" ? await downloadsRes.value.json() : [];
       const resetsRaw =
         resetsRes.status === "fulfilled" ? await resetsRes.value.json() : [];
       const formLogsRaw =
         formLogsRes.status === "fulfilled" ? await formLogsRes.value.json() : [];
+      const pendingUsers = Array.isArray(pendingUsersRaw)
+        ? pendingUsersRaw
+        : Array.isArray(pendingUsersRaw?.items)
+          ? pendingUsersRaw.items
+          : [];
       const downloads = Array.isArray(downloadsRaw)
         ? downloadsRaw
         : Array.isArray(downloadsRaw?.items)
@@ -82,6 +92,10 @@ export default function Welcome() {
           : [];
       const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
       return {
+        pendingSignupRequests: pendingUsers
+          .filter((u: unknown) => !(u as { approved?: boolean } | null)?.approved)
+          .map((u: unknown) => ({ id: Number((u as { id?: number }).id) }))
+          .filter((u: { id: number }) => Number.isFinite(u.id)),
         pendingDownloadRequests: downloads
           .filter((d: unknown) => (d as { status?: string; id?: number } | null)?.status === "pending")
           .map((d: unknown) => ({ id: Number((d as { id?: number }).id) }))
@@ -129,6 +143,15 @@ export default function Welcome() {
 
   const notifications = useMemo(() => {
     const items: Array<{ key: string; title: string; href: string; read: boolean }> = [];
+    for (const u of notificationData?.pendingSignupRequests ?? []) {
+      const key = `pending_signup:${u.id}`;
+      items.push({
+        key,
+        title: `Signup approval pending #${u.id}`,
+        href: "/admin?tab=pending",
+        read: Boolean(stateMap.get(key)?.isRead),
+      });
+    }
     for (const r of notificationData?.pendingPasswordResets ?? []) {
       const key = `password_reset:${r.id}`;
       items.push({
@@ -240,10 +263,10 @@ export default function Welcome() {
               user.role === "superadmin"
                 ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
                 : user.role === "admin"
-                  ? "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
-                  : user.role === "staff"
-                    ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
-                    : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                ? "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300"
+                : user.role === "staff"
+                ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+                : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
             }`}>
               {user.role === "superadmin" ? "Super Admin" : user.role}
             </Badge>
@@ -360,12 +383,12 @@ export default function Welcome() {
               </Link>
             </>
           )}
-          <Link href="/profile">
+            <Link href="/profile">
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" data-testid="button-profile">
-              <User className="w-3.5 h-3.5" />
-              Profile
-            </Button>
-          </Link>
+      <User className="w-3.5 h-3.5" />
+      Profile
+    </Button>
+  </Link>
           <Button variant="ghost" size="sm" className="gap-1.5 text-red-500 hover:text-red-700" onClick={handleLogout} data-testid="button-logout">
             <LogOut className="w-3.5 h-3.5" />
             Logout

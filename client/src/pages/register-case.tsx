@@ -528,7 +528,7 @@ export default function RegisterCase() {
     const required = q.required;
     const options = q.options ?? [];
     if (q.inputType === "singleSelect") {
-      return (
+  return (
         <div className="space-y-1.5" key={q.key}>
           <Label>
             {q.label} {required && <span className="text-destructive">*</span>}
@@ -750,209 +750,209 @@ export default function RegisterCase() {
             const astIsRequired = Boolean(astQuestion?.required);
             return (
               <div key={section.key} className="space-y-6">
-                <Card>
-                  <CardHeader className="pb-4">
+        <Card>
+          <CardHeader className="pb-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                       <CardTitle className="text-base">
                         Antibiotic Sensitivity Test Results{" "}
                         {astIsRequired && <span className="text-destructive">*</span>}
                       </CardTitle>
                       <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-                        <div className="flex items-center gap-2">
-                          <Label
-                            htmlFor="preset-antibiotics"
-                            className="text-xs text-muted-foreground cursor-pointer"
-                          >
-                            Use preset panel
-                          </Label>
-                          <Switch
-                            id="preset-antibiotics"
-                            checked={usePresetAntibiotics}
-                            onCheckedChange={setUsePresetAntibiotics}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor="preset-antibiotics"
+                    className="text-xs text-muted-foreground cursor-pointer"
+                  >
+                    Use preset panel
+                  </Label>
+                  <Switch
+                    id="preset-antibiotics"
+                    checked={usePresetAntibiotics}
+                    onCheckedChange={setUsePresetAntibiotics}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
                           <Label
                             htmlFor="auto-mode"
                             className="text-xs text-muted-foreground cursor-pointer"
                           >
-                            Auto-interpret
-                          </Label>
-                          <Switch
-                            id="auto-mode"
-                            checked={autoMode}
-                            onCheckedChange={setAutoMode}
-                            data-testid="switch-auto-mode"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    {autoMode && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                        <Info className="w-3 h-3" />
-                        Zone sizes are auto-interpreted using breakpoint data. Toggle off or override per row for manual entry.
-                      </p>
-                    )}
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {astRows.map((row, index) => (
-                      <div key={index} className="border border-border rounded-lg p-3 space-y-3">
+                    Auto-interpret
+                  </Label>
+                  <Switch
+                    id="auto-mode"
+                    checked={autoMode}
+                    onCheckedChange={setAutoMode}
+                    data-testid="switch-auto-mode"
+                  />
+                </div>
+              </div>
+            </div>
+            {autoMode && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                <Info className="w-3 h-3" />
+                Zone sizes are auto-interpreted using breakpoint data. Toggle off or override per row for manual entry.
+              </p>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {astRows.map((row, index) => (
+              <div key={index} className="border border-border rounded-lg p-3 space-y-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-muted-foreground">Antibiotic #{index + 1}</span>
+                  <span className="text-xs font-medium text-muted-foreground">Antibiotic #{index + 1}</span>
                           <div className="flex flex-wrap items-center justify-end gap-2">
-                            {autoMode && row.breakpointId && (
-                              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={row.manualOverride}
-                                  onChange={() => toggleRowOverride(index)}
-                                  className="rounded"
-                                />
-                                Manual override
-                              </label>
-                            )}
-                            <Button
-                              type="button" variant="ghost" size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeRow(index)}
-                              disabled={astRows.length === 1}
-                              data-testid={`button-remove-row-${index}`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1.5">
-                            <Label className="text-xs">Antibiotic</Label>
-                            <Select
-                              value={row.breakpointId ? String(row.breakpointId) : ""}
-                              onValueChange={(val) => selectAntibiotic(index, val)}
-                            >
-                              <SelectTrigger data-testid={`select-antibiotic-${index}`}>
-                                <SelectValue placeholder="Select antibiotic" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {antibioticOptions.map((opt) => (
-                                  <SelectItem key={opt.id} value={String(opt.id)}>
-                                    {opt.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <Label className="text-xs">Zone of Inhibition (mm)</Label>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={row.zoneSize}
-                              onChange={(e) => updateZoneSize(index, e.target.value)}
-                              placeholder="Enter zone size in mm"
-                              data-testid={`input-zone-${index}`}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          {(!autoMode || row.manualOverride) ? (
-                            <div className="space-y-1.5 flex-1">
-                              <Label className="text-xs">Sensitivity (Manual)</Label>
-                              <Select
-                                value={row.sensitivity}
-                                onValueChange={(val) => setManualSensitivity(index, val)}
-                              >
-                                <SelectTrigger data-testid={`select-sensitivity-${index}`}>
-                                  <SelectValue placeholder="Select result" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="S">S (Sensitive)</SelectItem>
-                                  <SelectItem value="I">I (Intermediate)</SelectItem>
-                                  <SelectItem value="R">R (Resistant)</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : (
-                            <div className="flex-1">
-                              <Label className="text-xs block mb-1.5">Interpretation</Label>
-                              {row.sensitivity ? (
-                                <Badge className={`${getSensitivityLabel(row.sensitivity).color} border-0 text-xs`}>
-                                  {getSensitivityLabel(row.sensitivity).text} ({row.sensitivity})
-                                </Badge>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  {row.breakpointId ? "Enter zone size to auto-interpret" : "Select an antibiotic first"}
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          {row.breakpointId && (
-                            <div className="text-xs text-muted-foreground sm:text-right">
-                              {(() => {
-                                const bp = breakpointsData?.find((b) => b.id === row.breakpointId);
-                                if (!bp) return null;
-                                return (
-                                  <div>
-                                    <span className="text-emerald-600 dark:text-emerald-400">S≥{bp.sensitiveMin}</span>
-                                    {bp.intermediateLow != null && bp.intermediateHigh != null && (
-                                      <span className="text-amber-600 dark:text-amber-400 ml-2">I:{bp.intermediateLow}–{bp.intermediateHigh}</span>
-                                    )}
-                                    <span className="text-red-600 dark:text-red-400 ml-2">R≤{bp.resistantMax}</span>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addRow} data-testid="button-add-antibiotic">
-                      <Plus className="w-3.5 h-3.5" />
-                      Add Antibiotic
+                    {autoMode && row.breakpointId && (
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={row.manualOverride}
+                          onChange={() => toggleRowOverride(index)}
+                          className="rounded"
+                        />
+                        Manual override
+                      </label>
+                    )}
+                    <Button
+                      type="button" variant="ghost" size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeRow(index)}
+                      disabled={astRows.length === 1}
+                      data-testid={`button-remove-row-${index}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </Button>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
-                {recommendations.length > 0 && (
-                  <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-emerald-600" />
-                        Recommended Antibiotics
-                      </CardTitle>
-                      <p className="text-xs text-muted-foreground">
-                        Based on sensitivity results — ranked by largest zone of inhibition among sensitive antibiotics
-                      </p>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {recommendations.map((rec, i) => (
-                          <div key={i} className="flex flex-wrap items-center gap-3 text-sm">
-                            <span className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
-                              {i + 1}
-                            </span>
-                            <span className="font-medium">{rec.antibiotic} ({rec.symbol})</span>
-                            <span className="text-muted-foreground">— zone: {rec.zoneSize} mm</span>
-                          </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Antibiotic</Label>
+                    <Select
+                      value={row.breakpointId ? String(row.breakpointId) : ""}
+                      onValueChange={(val) => selectAntibiotic(index, val)}
+                    >
+                      <SelectTrigger data-testid={`select-antibiotic-${index}`}>
+                        <SelectValue placeholder="Select antibiotic" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {antibioticOptions.map((opt) => (
+                          <SelectItem key={opt.id} value={String(opt.id)}>
+                            {opt.label}
+                          </SelectItem>
                         ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Zone of Inhibition (mm)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={row.zoneSize}
+                      onChange={(e) => updateZoneSize(index, e.target.value)}
+                      placeholder="Enter zone size in mm"
+                      data-testid={`input-zone-${index}`}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {(!autoMode || row.manualOverride) ? (
+                    <div className="space-y-1.5 flex-1">
+                      <Label className="text-xs">Sensitivity (Manual)</Label>
+                      <Select
+                        value={row.sensitivity}
+                        onValueChange={(val) => setManualSensitivity(index, val)}
+                      >
+                        <SelectTrigger data-testid={`select-sensitivity-${index}`}>
+                          <SelectValue placeholder="Select result" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="S">S (Sensitive)</SelectItem>
+                          <SelectItem value="I">I (Intermediate)</SelectItem>
+                          <SelectItem value="R">R (Resistant)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="flex-1">
+                      <Label className="text-xs block mb-1.5">Interpretation</Label>
+                      {row.sensitivity ? (
+                        <Badge className={`${getSensitivityLabel(row.sensitivity).color} border-0 text-xs`}>
+                          {getSensitivityLabel(row.sensitivity).text} ({row.sensitivity})
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {row.breakpointId ? "Enter zone size to auto-interpret" : "Select an antibiotic first"}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {row.breakpointId && (
+                            <div className="text-xs text-muted-foreground sm:text-right">
+                      {(() => {
+                        const bp = breakpointsData?.find((b) => b.id === row.breakpointId);
+                        if (!bp) return null;
+                        return (
+                          <div>
+                            <span className="text-emerald-600 dark:text-emerald-400">S≥{bp.sensitiveMin}</span>
+                            {bp.intermediateLow != null && bp.intermediateHigh != null && (
+                              <span className="text-amber-600 dark:text-amber-400 ml-2">I:{bp.intermediateLow}–{bp.intermediateHigh}</span>
+                            )}
+                            <span className="text-red-600 dark:text-red-400 ml-2">R≤{bp.resistantMax}</span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addRow} data-testid="button-add-antibiotic">
+              <Plus className="w-3.5 h-3.5" />
+              Add Antibiotic
+            </Button>
+          </CardContent>
+        </Card>
+
+        {recommendations.length > 0 && (
+          <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-emerald-600" />
+                Recommended Antibiotics
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Based on sensitivity results — ranked by largest zone of inhibition among sensitive antibiotics
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {recommendations.map((rec, i) => (
+                          <div key={i} className="flex flex-wrap items-center gap-3 text-sm">
+                    <span className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
+                      {i + 1}
+                    </span>
+                    <span className="font-medium">{rec.antibiotic} ({rec.symbol})</span>
+                    <span className="text-muted-foreground">— zone: {rec.zoneSize} mm</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
               </div>
             );
           }
 
           return (
             <Card key={section.key}>
-              <CardHeader className="pb-4">
+          <CardHeader className="pb-4">
                 <CardTitle className="text-base">{section.title}</CardTitle>
-              </CardHeader>
+          </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {visibleQuestions.map((q) => {
@@ -1208,8 +1208,8 @@ export default function RegisterCase() {
                     }
                   })}
                 </div>
-              </CardContent>
-            </Card>
+          </CardContent>
+        </Card>
           );
         })}
 
