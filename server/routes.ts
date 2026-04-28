@@ -2,6 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import bcrypt from "bcryptjs";
 import { sql } from "drizzle-orm";
+import { DB_PROVIDER } from "./db";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBreakpointRoutes } from "./routes/breakpoints";
@@ -12,7 +13,8 @@ import { authSessionRepo } from "./auth-session-repo";
 import { domainRepo } from "./domain-repo";
 
 export async function registerRoutes(_httpServer: Server, app: Express) {
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS users (
+  if (DB_PROVIDER === "sqlite") {
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     full_name TEXT NOT NULL,
     address TEXT NOT NULL,
@@ -25,17 +27,17 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     approved INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS sessions (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   )`);
-  // Force fresh auth after every server restart.
-  await dbRun(sql`DELETE FROM sessions`);
-  await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
-  await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
+    // Force fresh auth after every server restart.
+    await dbRun(sql`DELETE FROM sessions`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     requested_by_role TEXT NOT NULL,
@@ -47,14 +49,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     created_at TEXT NOT NULL,
     resolved_at TEXT
   )`);
-  await dbRun(
+    await dbRun(
     sql`CREATE INDEX IF NOT EXISTS password_reset_requests_user_id_idx ON password_reset_requests(user_id)`,
   );
-  await dbRun(
+    await dbRun(
     sql`CREATE INDEX IF NOT EXISTS password_reset_requests_status_idx ON password_reset_requests(status)`,
   );
 
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     antibiotic TEXT NOT NULL,
     symbol TEXT NOT NULL,
@@ -67,19 +69,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     is_preset INTEGER NOT NULL DEFAULT 0
   )`);
 
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS species_options (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS species_options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS breed_options (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS breed_options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     species_name TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(species_name, name)
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
     key TEXT PRIMARY KEY,
     section TEXT NOT NULL,
     label TEXT NOT NULL,
@@ -87,12 +89,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     required INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
     key TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     display_order INTEGER NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,
     section_key TEXT NOT NULL,
@@ -105,7 +107,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     is_builtin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_user_id INTEGER NOT NULL,
     actor_role TEXT NOT NULL,
@@ -115,12 +117,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     new_value TEXT,
     created_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
     role TEXT PRIMARY KEY,
     dashboard_visible INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
   )`);
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
     notification_key TEXT PRIMARY KEY,
     is_read INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
@@ -128,15 +130,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     updated_at TEXT NOT NULL
   )`);
 
-  try {
-    await dbRun(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
-  } catch {
-    await dbRun(
-      sql`ALTER TABLE breakpoints ADD COLUMN is_preset INTEGER NOT NULL DEFAULT 0`,
-    );
-  }
+    try {
+      await dbRun(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
+    } catch {
+      await dbRun(
+        sql`ALTER TABLE breakpoints ADD COLUMN is_preset INTEGER NOT NULL DEFAULT 0`,
+      );
+    }
 
-  await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     case_number TEXT NOT NULL,
     bill_number TEXT,
@@ -165,44 +167,45 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     updated_at TEXT,
     custom_fields TEXT
   )`);
-  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
-  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
-  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
-  try {
-    await dbRun(sql`SELECT last_updated_by FROM cases LIMIT 1`);
-  } catch {
-    await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by INTEGER`);
-  }
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
+    try {
+      await dbRun(sql`SELECT last_updated_by FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by INTEGER`);
+    }
 
-  try {
-    await dbRun(
-      sql`CREATE INDEX IF NOT EXISTS download_requests_created_at_idx ON download_requests(created_at)`,
-    );
-    await dbRun(
-      sql`CREATE INDEX IF NOT EXISTS download_requests_user_id_idx ON download_requests(user_id)`,
-    );
-  } catch {
-    // download_requests table may not exist on old DBs until migration is applied
-  }
-  try {
-    await dbRun(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
-  } catch {
-    await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
-  }
-  try {
-    await dbRun(sql`SELECT updated_at FROM cases LIMIT 1`);
-  } catch {
-    await dbRun(sql`ALTER TABLE cases ADD COLUMN updated_at TEXT`);
-  }
-  try {
-    await dbRun(sql`SELECT custom_fields FROM cases LIMIT 1`);
-  } catch {
-    await dbRun(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
-  }
-  try {
-    await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
-  } catch {
-    await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
+    try {
+      await dbRun(
+        sql`CREATE INDEX IF NOT EXISTS download_requests_created_at_idx ON download_requests(created_at)`,
+      );
+      await dbRun(
+        sql`CREATE INDEX IF NOT EXISTS download_requests_user_id_idx ON download_requests(user_id)`,
+      );
+    } catch {
+      // download_requests table may not exist on old DBs until migration is applied
+    }
+    try {
+      await dbRun(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT updated_at FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN updated_at TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT custom_fields FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
+    }
   }
 
   const existingBps = await domainRepo.getBreakpoints();
