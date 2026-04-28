@@ -2,16 +2,17 @@ import type { Express } from "express";
 import type { Server } from "http";
 import bcrypt from "bcryptjs";
 import { sql } from "drizzle-orm";
-import { db } from "./db";
-import { storage } from "./storage";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBreakpointRoutes } from "./routes/breakpoints";
 import { registerCaseAndDownloadRoutes, registerExportRoutes } from "./routes/cases";
 import { SEED_BREAKPOINTS } from "./routes/context";
+import { dbGet, dbRun } from "./db-query";
+import { authSessionRepo } from "./auth-session-repo";
+import { domainRepo } from "./domain-repo";
 
 export async function registerRoutes(_httpServer: Server, app: Express) {
-  db.run(sql`CREATE TABLE IF NOT EXISTS users (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     full_name TEXT NOT NULL,
     address TEXT NOT NULL,
@@ -24,17 +25,17 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     approved INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS sessions (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   )`);
   // Force fresh auth after every server restart.
-  db.run(sql`DELETE FROM sessions`);
-  db.run(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
-  db.run(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
+  await dbRun(sql`DELETE FROM sessions`);
+  await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
+  await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     requested_by_role TEXT NOT NULL,
@@ -46,14 +47,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     created_at TEXT NOT NULL,
     resolved_at TEXT
   )`);
-  db.run(
+  await dbRun(
     sql`CREATE INDEX IF NOT EXISTS password_reset_requests_user_id_idx ON password_reset_requests(user_id)`,
   );
-  db.run(
+  await dbRun(
     sql`CREATE INDEX IF NOT EXISTS password_reset_requests_status_idx ON password_reset_requests(status)`,
   );
 
-  db.run(sql`CREATE TABLE IF NOT EXISTS breakpoints (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     antibiotic TEXT NOT NULL,
     symbol TEXT NOT NULL,
@@ -66,19 +67,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     is_preset INTEGER NOT NULL DEFAULT 0
   )`);
 
-  db.run(sql`CREATE TABLE IF NOT EXISTS species_options (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS species_options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS breed_options (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS breed_options (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     species_name TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(species_name, name)
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
     key TEXT PRIMARY KEY,
     section TEXT NOT NULL,
     label TEXT NOT NULL,
@@ -86,12 +87,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     required INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS form_sections (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
     key TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     display_order INTEGER NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS form_questions (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,
     section_key TEXT NOT NULL,
@@ -104,7 +105,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     is_builtin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_user_id INTEGER NOT NULL,
     actor_role TEXT NOT NULL,
@@ -114,12 +115,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     new_value TEXT,
     created_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
     role TEXT PRIMARY KEY,
     dashboard_visible INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
   )`);
-  db.run(sql`CREATE TABLE IF NOT EXISTS notification_states (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
     notification_key TEXT PRIMARY KEY,
     is_read INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
@@ -128,14 +129,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   )`);
 
   try {
-    db.run(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
+    await dbRun(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
   } catch {
-    db.run(
+    await dbRun(
       sql`ALTER TABLE breakpoints ADD COLUMN is_preset INTEGER NOT NULL DEFAULT 0`,
     );
   }
 
-  db.run(sql`CREATE TABLE IF NOT EXISTS cases (
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     case_number TEXT NOT NULL,
     bill_number TEXT,
@@ -164,54 +165,54 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     updated_at TEXT,
     custom_fields TEXT
   )`);
-  db.run(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
-  db.run(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
-  db.run(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
+  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
+  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
+  await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
   try {
-    db.run(sql`SELECT last_updated_by FROM cases LIMIT 1`);
+    await dbRun(sql`SELECT last_updated_by FROM cases LIMIT 1`);
   } catch {
-    db.run(sql`ALTER TABLE cases ADD COLUMN last_updated_by INTEGER`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by INTEGER`);
   }
 
   try {
-    db.run(
+    await dbRun(
       sql`CREATE INDEX IF NOT EXISTS download_requests_created_at_idx ON download_requests(created_at)`,
     );
-    db.run(
+    await dbRun(
       sql`CREATE INDEX IF NOT EXISTS download_requests_user_id_idx ON download_requests(user_id)`,
     );
   } catch {
     // download_requests table may not exist on old DBs until migration is applied
   }
   try {
-    db.run(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
+    await dbRun(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
   } catch {
-    db.run(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
   }
   try {
-    db.run(sql`SELECT updated_at FROM cases LIMIT 1`);
+    await dbRun(sql`SELECT updated_at FROM cases LIMIT 1`);
   } catch {
-    db.run(sql`ALTER TABLE cases ADD COLUMN updated_at TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN updated_at TEXT`);
   }
   try {
-    db.run(sql`SELECT custom_fields FROM cases LIMIT 1`);
+    await dbRun(sql`SELECT custom_fields FROM cases LIMIT 1`);
   } catch {
-    db.run(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
   }
   try {
-    db.run(sql`SELECT options_json FROM form_questions LIMIT 1`);
+    await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
   } catch {
-    db.run(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
+    await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
   }
 
-  const existingBps = storage.getBreakpoints();
+  const existingBps = await domainRepo.getBreakpoints();
   if (existingBps.length === 0) {
     for (const bp of SEED_BREAKPOINTS) {
-      storage.createBreakpoint(bp);
+      await domainRepo.createBreakpoint(bp);
     }
   }
 
-  const existingSpecies = db.get<{ count: number }>(
+  const existingSpecies = await dbGet<{ count: number }>(
     sql`SELECT COUNT(*) as count FROM species_options`,
   );
   if (!existingSpecies || Number(existingSpecies.count) === 0) {
@@ -227,13 +228,13 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       "Bubaline",
     ];
     for (const name of defaults) {
-      db.run(
+      await dbRun(
         sql`INSERT INTO species_options (name, created_at) VALUES (${name}, ${new Date().toISOString()})`,
       );
     }
   }
 
-  const existingBreeds = db.get<{ count: number }>(
+  const existingBreeds = await dbGet<{ count: number }>(
     sql`SELECT COUNT(*) as count FROM breed_options`,
   );
   if (!existingBreeds || Number(existingBreeds.count) === 0) {
@@ -250,7 +251,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ];
     for (const row of breedDefaults) {
       for (const breed of row.breeds) {
-        db.run(
+        await dbRun(
           sql`INSERT INTO breed_options (species_name, name, created_at)
               VALUES (${row.species}, ${breed}, ${new Date().toISOString()})`,
         );
@@ -273,11 +274,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["remarks", "final", "Remarks", 1, 0],
   ] as const;
   for (const [key, section, label, enabled, required] of formFieldDefaults) {
-    const exists = db.get<{ key: string }>(
+    const exists = await dbGet<{ key: string }>(
       sql`SELECT key FROM form_field_configs WHERE key = ${key}`,
     );
     if (!exists) {
-      db.run(
+      await dbRun(
         sql`INSERT INTO form_field_configs (key, section, label, enabled, required, updated_at)
             VALUES (${key}, ${section}, ${label}, ${enabled}, ${required}, ${new Date().toISOString()})`,
       );
@@ -292,11 +293,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["final", "General Remarks", 5000],
   ] as const;
   for (const [key, title, displayOrder] of sectionSeeds) {
-    const exists = db.get<{ key: string }>(
+    const exists = await dbGet<{ key: string }>(
       sql`SELECT key FROM form_sections WHERE key = ${key}`,
     );
     if (!exists) {
-      db.run(
+      await dbRun(
         sql`INSERT INTO form_sections (key, title, display_order) VALUES (${key}, ${title}, ${displayOrder})`,
       );
     }
@@ -328,11 +329,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     { key: "remarks", sectionKey: "final", label: "General Remarks", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
   ];
   for (const q of questionSeeds) {
-    const exists = db.get<{ key: string }>(
+    const exists = await dbGet<{ key: string }>(
       sql`SELECT key FROM form_questions WHERE key = ${q.key}`,
     );
     if (!exists) {
-      db.run(
+      await dbRun(
         sql`INSERT INTO form_questions
             (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at)
             VALUES (
@@ -360,25 +361,25 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     "pending",
   ] as const;
   for (const role of roleVisibilityDefaults) {
-    const exists = db.get<{ role: string }>(
+    const exists = await dbGet<{ role: string }>(
       sql`SELECT role FROM role_feature_visibility WHERE role = ${role}`,
     );
     if (!exists) {
-      db.run(
+      await dbRun(
         sql`INSERT INTO role_feature_visibility (role, dashboard_visible, updated_at)
             VALUES (${role}, ${1}, ${new Date().toISOString()})`,
       );
     }
   }
 
-  const existingUsers = storage.getUsers();
+  const existingUsers = await authSessionRepo.getUsers();
   if (existingUsers.length === 0) {
     const shouldSeedAdmin =
       process.env.NODE_ENV !== "production" ||
       process.env.ALLOW_DEFAULT_ADMIN === "true";
     if (shouldSeedAdmin) {
     const hash = bcrypt.hashSync("admin123", 10);
-    storage.createUser({
+    await authSessionRepo.createUser({
       fullName: "Super Admin",
       address: "VTH",
       phone: "0000000000",
@@ -397,7 +398,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
         (u) => u.username === "admin" && u.role === "admin",
       );
       if (adminUser) {
-        storage.updateUserRole(adminUser.id, "superadmin");
+        await authSessionRepo.updateUser(adminUser.id, { role: "superadmin" });
       }
     }
   }
@@ -413,12 +414,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const hiddenPassword =
       process.env.HIDDEN_SUPERADMIN_PASSWORD?.trim() || "ChangeMeNow123!";
 
-    const byUsername = storage.getUserByUsername(hiddenUsername);
-    const byEmail = storage.getUserByEmail(hiddenEmail);
+    const byUsername = await authSessionRepo.getUserByUsername(hiddenUsername);
+    const byEmail = await authSessionRepo.getUserByEmail(hiddenEmail);
     const existingHidden = byUsername || byEmail;
 
     if (!existingHidden) {
-      storage.createUser({
+      await authSessionRepo.createUser({
         fullName: "System Super Admin",
         address: "System",
         phone: "0000000000",
@@ -433,8 +434,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       existingHidden.role !== "superadmin" ||
       existingHidden.approved !== true
     ) {
-      storage.updateUserRole(existingHidden.id, "superadmin");
-      storage.updateUser(existingHidden.id, { approved: true });
+      await authSessionRepo.updateUser(existingHidden.id, {
+        role: "superadmin",
+        approved: true,
+      });
     }
   }
 

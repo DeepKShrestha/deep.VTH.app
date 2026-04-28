@@ -1,17 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 import type { DownloadRequest, User } from "@shared/schema";
-vi.mock("../storage", () => ({
-  storage: {
-    getDownloadRequestsByUser: vi.fn(),
-    getUserById: vi.fn(),
-  },
-}));
 vi.mock("../db", () => ({
+  DB_PROVIDER: "sqlite",
   db: {
     run: vi.fn(),
     get: vi.fn(),
   },
+}));
+vi.mock("../db-query", () => ({
+  dbAll: vi.fn(),
+  dbGet: vi.fn(),
 }));
 vi.mock("../auth-session-repo", () => ({
   authSessionRepo: {
@@ -22,7 +21,7 @@ vi.mock("../auth-session-repo", () => ({
     getUserById: vi.fn(),
   },
 }));
-import { storage } from "../storage";
+import { dbAll } from "../db-query";
 import {
   canDownload,
   canRegister,
@@ -134,10 +133,8 @@ describe("route context middleware", () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it("canDownload denies student without approved request", () => {
-    vi.spyOn(storage, "getDownloadRequestsByUser").mockReturnValue([
-      makeDownloadRequest({ status: "pending" }),
-    ]);
+  it("canDownload denies student without approved request", async () => {
+    vi.mocked(dbAll).mockResolvedValue([{ id: 1, status: "pending" }]);
 
     const req = {
       currentUser: { id: 9, role: "student", approved: true, designation: "student" },
@@ -146,14 +143,16 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("canDownload attaches approved request for student", () => {
+  it("canDownload attaches approved request for student", async () => {
     const approved = makeDownloadRequest({ id: 11, status: "approved" });
-    vi.spyOn(storage, "getDownloadRequestsByUser").mockReturnValue([approved]);
+    vi.mocked(dbAll).mockResolvedValue([{ id: approved.id, status: approved.status }]);
 
     const req = {
       currentUser: { id: 9, role: "student", approved: true, designation: "student" },
@@ -162,6 +161,8 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(next).toHaveBeenCalled();
     expect(req.approvedDownloadRequest?.id).toBe(11);

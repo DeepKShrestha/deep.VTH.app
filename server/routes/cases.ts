@@ -1,8 +1,9 @@
 import type { Express, Request, Response } from "express";
 import { insertCaseSchema } from "@shared/schema";
-import { storage } from "../storage";
-import { db } from "../db";
 import { sql } from "drizzle-orm";
+import { dbAll, dbGet, dbRun } from "../db-query";
+import { caseRepo } from "../case-repo";
+import { authSessionRepo } from "../auth-session-repo";
 import {
   canDownload,
   canRegister,
@@ -17,10 +18,36 @@ import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { rowsToCsv, toExportRows } from "./cases-export";
 
+type DownloadRequestRow = {
+  id: number;
+  user_id: number;
+  date_from: string | null;
+  date_to: string | null;
+  reason: string | null;
+  status: string;
+  admin_note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+function toDownloadRequest(row: DownloadRequestRow) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    dateFrom: row.date_from,
+    dateTo: row.date_to,
+    reason: row.reason,
+    status: row.status,
+    adminNote: row.admin_note,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
 export function registerCaseAndDownloadRoutes(app: Express) {
-  app.get("/api/dashboard/summary", requireAuth, (req, res) => {
+  app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    if (!isDashboardVisibleForRole(currentUser.role)) {
+    if (!(await isDashboardVisibleForRole(currentUser.role))) {
       return res.status(403).json({ message: "Dashboard is disabled for your role" });
     }
     const preset = String(req.query.preset ?? "all");
@@ -117,7 +144,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return y;
     };
 
-    const allCases = storage.getCases();
+    const allCases = await caseRepo.getCases();
     const speciesSet = new Set<string>();
     const breedSet = new Set<string>();
     const sexSet = new Set<string>();
@@ -547,24 +574,24 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     });
   });
 
-  app.get("/api/species-options", requireAuth, canRegister, (_req, res) => {
-    const rows = db.all<{ name: string }>(
+  app.get("/api/species-options", requireAuth, canRegister, async (_req, res) => {
+    const rows = await dbAll<{ name: string }>(
       sql`SELECT name FROM species_options ORDER BY name ASC`,
     );
     res.json(rows.map((r) => r.name));
   });
 
-  app.get("/api/breed-options", requireAuth, canRegister, (req, res) => {
+  app.get("/api/breed-options", requireAuth, canRegister, async (req, res) => {
     const species = String(req.query.species ?? "").trim();
     if (!species) return res.json([]);
-    const rows = db.all<{ name: string }>(
+    const rows = await dbAll<{ name: string }>(
       sql`SELECT name FROM breed_options WHERE species_name = ${species} ORDER BY name ASC`,
     );
     res.json(rows.map((r) => r.name));
   });
 
-  app.get("/api/form-config", requireAuth, canRegister, (_req, res) => {
-    const rows = db.all<{
+  app.get("/api/form-config", requireAuth, canRegister, async (_req, res) => {
+    const rows = await dbAll<{
       key: string;
       section: string;
       label: string;
@@ -584,11 +611,11 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     );
   });
 
-  app.get("/api/form-definition", requireAuth, canRegister, (_req, res) => {
-    const sections = db.all<{ key: string; title: string; display_order: number }>(
+  app.get("/api/form-definition", requireAuth, canRegister, async (_req, res) => {
+    const sections = await dbAll<{ key: string; title: string; display_order: number }>(
       sql`SELECT key, title, display_order FROM form_sections ORDER BY display_order ASC`,
     );
-    const questions = db.all<{
+    const questions = await dbAll<{
       id: number;
       key: string;
       section_key: string;
@@ -630,33 +657,55 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     });
   });
 
-  app.post("/api/download-requests", requireAuth, (req: Request, res: Response) => {
+  app.post("/api/download-requests", requireAuth, async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const { dateFrom, dateTo, reason } = req.body;
-    const request = storage.createDownloadRequest({
-      userId: user.id,
-      dateFrom: dateFrom || null,
-      dateTo: dateTo || null,
-      reason: reason || null,
-    });
+    await dbRun(
+      sql`INSERT INTO download_requests
+          (user_id, date_from, date_to, reason, status, created_at)
+          VALUES (
+            ${user.id},
+            ${dateFrom || null},
+            ${dateTo || null},
+            ${reason || null},
+            ${"pending"},
+            ${new Date().toISOString()}
+          )`,
+    );
+    const created = await dbGet<DownloadRequestRow>(
+      sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+          FROM download_requests
+          ORDER BY id DESC
+          LIMIT 1`,
+    );
+    const request = created ? toDownloadRequest(created) : null;
+    if (!request) {
+      return res.status(500).json({ message: "Failed to create request" });
+    }
     res.status(201).json(request);
   });
 
   app.get(
     "/api/download-requests/mine",
     requireAuth,
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const user = (req as AuthenticatedRequest).currentUser;
-      res.json(storage.getDownloadRequestsByUser(user.id));
+      const rows = await dbAll<DownloadRequestRow>(
+        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+            FROM download_requests
+            WHERE user_id = ${user.id}
+            ORDER BY created_at DESC`,
+      );
+      res.json(rows.map(toDownloadRequest));
     },
   );
 
-  app.get("/api/cases", requireAuth, (req, res) => {
+  app.get("/api/cases", requireAuth, async (req, res) => {
     const pagination = getPaginationParams(req);
     if (!pagination.shouldPaginate) {
-      return res.json(storage.getCases());
+      return res.json(await caseRepo.getCases());
     }
-    const pageData = storage.getCasesPage(pagination.pageSize, pagination.offset);
+    const pageData = await caseRepo.getCasesPage(pagination.pageSize, pagination.offset);
     return res.json({
       items: pageData.items,
       page: pagination.page,
@@ -666,28 +715,28 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     });
   });
 
-  app.get("/api/cases/:id", requireAuth, (req, res) => {
-    const caseData = storage.getCase(getIdParam(req));
+  app.get("/api/cases/:id", requireAuth, async (req, res) => {
+    const caseData = await caseRepo.getCase(getIdParam(req));
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
     res.json(caseData);
   });
 
-  app.get("/api/next-case-info", requireAuth, canRegister, (_req, res) => {
+  app.get("/api/next-case-info", requireAuth, canRegister, async (_req, res) => {
     const todayBs = getTodayBs();
     const bsYearMonth = todayBs.substring(0, 7);
     res.json({
-      caseNumber: storage.getNextCaseNumber(),
-      dailyNumber: storage.getDailyNumber(todayBs),
-      monthlyNumber: storage.getMonthlyNumber(bsYearMonth),
+      caseNumber: await caseRepo.getNextCaseNumber(),
+      dailyNumber: await caseRepo.getDailyNumber(todayBs),
+      monthlyNumber: await caseRepo.getMonthlyNumber(bsYearMonth),
       todayBs,
       todayAd: new Date().toISOString().split("T")[0],
     });
   });
 
-  app.post("/api/cases", requireAuth, canRegister, (req: Request, res: Response) => {
+  app.post("/api/cases", requireAuth, canRegister, async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
-    const fullUser = storage.getUserById(user.id);
+    const fullUser = await authSessionRepo.getUserById(user.id);
 
     const parsed = insertCaseSchema.safeParse({
       ...req.body,
@@ -700,7 +749,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
     }
 
-    const newCase = storage.createCase({
+    const newCase = await caseRepo.createCase({
       ...parsed.data,
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
@@ -710,12 +759,12 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     res.status(201).json(newCase);
   });
 
-  app.patch("/api/cases/:id", requireAuth, canRegister, (req, res) => {
+  app.patch("/api/cases/:id", requireAuth, canRegister, async (req, res) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
-    const fullUser = storage.getUserById(user.id);
+    const fullUser = await authSessionRepo.getUserById(user.id);
 
-    const updated = storage.updateCase(getIdParam(req), {
+    const updated = await caseRepo.updateCase(getIdParam(req), {
       ...req.body,
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
@@ -733,24 +782,24 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     "/api/cases/:id",
     requireAuth,
     requireRole("superadmin", "admin"),
-    (req, res) => {
-      const existing = storage.getCase(getIdParam(req));
+    async (req, res) => {
+      const existing = await caseRepo.getCase(getIdParam(req));
       if (!existing) {
         return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
       }
-      storage.deleteCase(getIdParam(req));
+      await caseRepo.deleteCase(getIdParam(req));
       res.json({ message: "Case deleted" });
     },
   );
 }
 
 export function registerExportRoutes(app: Express) {
-  app.get("/api/export/cases", requireAuth, canDownload, (req: Request, res: Response) => {
+  app.get("/api/export/cases", requireAuth, canDownload, async (req: Request, res: Response) => {
     const { dateFrom, dateTo } = req.query as {
       dateFrom?: string;
       dateTo?: string;
     };
-    const casesData = storage.getCasesByDateRange(dateFrom, dateTo);
+    const casesData = await caseRepo.getCasesByDateRange(dateFrom, dateTo);
     const rows = toExportRows(casesData);
 
     res.setHeader("Content-Type", "text/csv");
@@ -761,10 +810,12 @@ export function registerExportRoutes(app: Express) {
     const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
 
     if (approvedReq) {
-      storage.resolveDownloadRequest(
-        approvedReq.id,
-        "downloaded",
-        "Download used",
+      await dbRun(
+        sql`UPDATE download_requests
+            SET status = ${"downloaded"},
+                admin_note = ${"Download used"},
+                resolved_at = ${new Date().toISOString()}
+            WHERE id = ${approvedReq.id}`,
       );
     }
 

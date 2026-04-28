@@ -1,12 +1,13 @@
 import type { NextFunction, Request, Response } from "express";
-import { storage } from "../storage";
 import NepaliDateImport from "nepali-date-converter";
 import type { AuthenticatedRequest, CurrentUser } from "./types";
 import { MESSAGES } from "./messages";
-import { db } from "../db";
+import { DB_PROVIDER } from "../db";
 import { sql } from "drizzle-orm";
 import crypto from "crypto";
 import { authSessionRepo } from "../auth-session-repo";
+import { Pool } from "pg";
+import { dbAll, dbGet } from "../db-query";
 
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
 
@@ -20,12 +21,19 @@ export function getTodayBs(): string {
   return nd.format("YYYY-MM-DD");
 }
 
-db.run(sql`CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-)`);
+let pgPool: Pool | null = null;
+function getPgPool(): Pool {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is required when DB_PROVIDER=postgres for dashboard visibility checks",
+    );
+  }
+  if (!pgPool) {
+    pgPool = new Pool({ connectionString: url });
+  }
+  return pgPool;
+}
 
 export const sessions = {
   async set(token: string, userId: number) {
@@ -89,9 +97,18 @@ export function isAdminRole(role: string): boolean {
   return role === "superadmin" || role === "admin";
 }
 
-export function isDashboardVisibleForRole(role: string): boolean {
+export async function isDashboardVisibleForRole(role: string): Promise<boolean> {
   if (!role) return false;
-  const row = db.get<{ dashboard_visible: number }>(
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ dashboard_visible: boolean | number }>(
+      "SELECT dashboard_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.dashboard_visible);
+  }
+  const row = await dbGet<{ dashboard_visible: number }>(
     sql`SELECT dashboard_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
   );
   if (!row) return true;
@@ -156,17 +173,28 @@ export function canDownload(req: Request, res: Response, next: NextFunction) {
     return next();
   }
 
-  const requests = storage.getDownloadRequestsByUser(user.id);
-  const approved = requests.find((r) => r.status === "approved");
-  if (!approved) {
-    return res.status(403).json({
-      message:
-        "Download access not approved or already used. Please submit a new download request.",
-    });
-  }
-
-  (req as AuthenticatedRequest).approvedDownloadRequest = approved;
-  return next();
+  void (async () => {
+    const requests = await dbAll<{ id: number; status: string }>(
+      sql`SELECT id, status FROM download_requests WHERE user_id = ${user.id} ORDER BY created_at DESC`,
+    );
+    const approved = requests.find((r) => r.status === "approved");
+    if (!approved) {
+      return res.status(403).json({
+        message:
+          "Download access not approved or already used. Please submit a new download request.",
+      });
+    }
+    (req as AuthenticatedRequest).approvedDownloadRequest = {
+      id: approved.id,
+      status: approved.status,
+    };
+    return next();
+  })().catch((error) =>
+    res.status(500).json({
+      message: "Failed to validate download permissions",
+      error: error instanceof Error ? error.message : "Unknown error",
+    }),
+  );
 }
 
 export const SEED_BREAKPOINTS = [

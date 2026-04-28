@@ -83,7 +83,7 @@ export function registerAuthRoutes(app: Express) {
       token,
       user: {
         ...safeUser,
-        dashboardVisible: isDashboardVisibleForRole(user.role),
+        dashboardVisible: await isDashboardVisibleForRole(user.role),
       },
     });
   });
@@ -109,13 +109,13 @@ export function registerAuthRoutes(app: Express) {
     const { passwordHash: _pwd, ...safeUser } = user;
     res.json({
       ...safeUser,
-      dashboardVisible: isDashboardVisibleForRole(user.role),
+      dashboardVisible: await isDashboardVisibleForRole(user.role),
     });
   });
 
-  app.get("/api/auth/dashboard-access", requireAuth, (req, res) => {
+  app.get("/api/auth/dashboard-access", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    return res.json({ allowed: isDashboardVisibleForRole(currentUser.role) });
+    return res.json({ allowed: await isDashboardVisibleForRole(currentUser.role) });
   });
 
   app.patch("/api/users/me", requireAuth, async (req, res) => {

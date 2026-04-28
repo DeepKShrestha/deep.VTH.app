@@ -6,13 +6,25 @@ import { createServer } from "http";
 import { DB_FILE, DB_PROVIDER } from "./db";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { db } from "./db";
 import { sql } from "drizzle-orm";
 import crypto from "crypto";
+import { Pool } from "pg";
+import { dbGet } from "./db-query";
 
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
+let pgPool: Pool | null = null;
+function getPgPool(): Pool {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error("DATABASE_URL is required when DB_PROVIDER=postgres");
+  }
+  if (!pgPool) {
+    pgPool = new Pool({ connectionString: url });
+  }
+  return pgPool;
+}
 
 declare module "http" {
   interface IncomingMessage {
@@ -133,12 +145,16 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.get("/api/ready", (_req, res) => {
+app.get("/api/ready", async (_req, res) => {
   try {
-    db.get(sql`SELECT 1 as ready`);
+    if (DB_PROVIDER === "postgres") {
+      await getPgPool().query("SELECT 1 as ready");
+    } else {
+      await dbGet(sql`SELECT 1 as ready`);
+    }
     res.json({
       status: "ready",
-      database: DB_FILE,
+      database: DB_PROVIDER === "postgres" ? "postgres" : DB_FILE,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

@@ -3,6 +3,7 @@ import type { PasswordResetRequest, User } from "@shared/schema";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
+import { dbRun } from "./db-query";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
@@ -64,7 +65,7 @@ function mapPgPasswordResetRequest(
 export const authSessionRepo = {
   async setSession(token: string, userId: number): Promise<void> {
     if (getProvider() === "sqlite") {
-      sessionsSqlite.set(token, userId);
+      await sessionsSqlite.set(token, userId);
       return;
     }
 
@@ -100,7 +101,7 @@ export const authSessionRepo = {
 
   async deleteSession(token: string): Promise<void> {
     if (getProvider() === "sqlite") {
-      sessionsSqlite.delete(token);
+      await sessionsSqlite.delete(token);
       return;
     }
     await getPgPool().query("DELETE FROM sessions WHERE token = $1", [token]);
@@ -108,7 +109,7 @@ export const authSessionRepo = {
 
   async clearSessions(): Promise<void> {
     if (getProvider() === "sqlite") {
-      sessionsSqlite.clear();
+      await sessionsSqlite.clear();
       return;
     }
     await getPgPool().query("DELETE FROM sessions");
@@ -256,10 +257,10 @@ export const authSessionRepo = {
 };
 
 const sessionsSqlite = {
-  set(token: string, userId: number): void {
+  async set(token: string, userId: number): Promise<void> {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
-    db.run(
+    await dbRun(
       sql`INSERT INTO sessions (token, user_id, created_at, expires_at)
         VALUES (${token}, ${userId}, ${now.toISOString()}, ${expiresAt})
         ON CONFLICT(token) DO UPDATE SET
@@ -273,15 +274,15 @@ const sessionsSqlite = {
     );
     if (!row) return undefined;
     if (Date.now() > new Date(row.expires_at).getTime()) {
-      this.delete(token);
+      void this.delete(token);
       return undefined;
     }
     return row.user_id;
   },
-  delete(token: string): void {
-    db.run(sql`DELETE FROM sessions WHERE token = ${token}`);
+  async delete(token: string): Promise<void> {
+    await dbRun(sql`DELETE FROM sessions WHERE token = ${token}`);
   },
-  clear(): void {
-    db.run(sql`DELETE FROM sessions`);
+  async clear(): Promise<void> {
+    await dbRun(sql`DELETE FROM sessions`);
   },
 };
