@@ -1206,7 +1206,7 @@ export default function AdminPanel() {
                     >
                       <span className="text-sm">{q.sectionTitle} - {q.label}</span>
                       <span className="text-xs text-muted-foreground">
-                        Restart server once to restore editable toggles for this field
+                        Loading field controls...
                       </span>
                     </div>
                   ))}
