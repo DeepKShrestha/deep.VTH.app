@@ -84,7 +84,10 @@ const INACTIVITY_TIMEOUT_MS: Record<
 };
 
 export function getAuthToken(): string | null {
-  return storedToken;
+  if (storedToken) return storedToken;
+  // Fallback for page reload/HMR race: token may already be in sessionStorage
+  // before in-memory state is rehydrated.
+  return sessionStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

@@ -54,14 +54,17 @@ export default function Welcome() {
           recentFormChanges: [],
         };
       }
-      const [downloadsRes, resetsRes, formLogsRes] = await Promise.all([
+      const [downloadsRes, resetsRes, formLogsRes] = await Promise.allSettled([
         apiRequest("GET", "/api/admin/download-requests"),
         apiRequest("GET", "/api/admin/password-reset-requests"),
         apiRequest("GET", "/api/admin/form-edit-logs"),
       ]);
-      const downloadsRaw = await downloadsRes.json();
-      const resetsRaw = await resetsRes.json();
-      const formLogsRaw = await formLogsRes.json();
+      const downloadsRaw =
+        downloadsRes.status === "fulfilled" ? await downloadsRes.value.json() : [];
+      const resetsRaw =
+        resetsRes.status === "fulfilled" ? await resetsRes.value.json() : [];
+      const formLogsRaw =
+        formLogsRes.status === "fulfilled" ? await formLogsRes.value.json() : [];
       const downloads = Array.isArray(downloadsRaw)
         ? downloadsRaw
         : Array.isArray(downloadsRaw?.items)
@@ -97,7 +100,9 @@ export default function Welcome() {
           .filter((l: { id: number }) => Number.isFinite(l.id)),
       };
     },
+    enabled: Boolean(isAdmin),
     staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
   });
 
   const { data: notificationStates = [] } = useQuery<
@@ -109,7 +114,9 @@ export default function Welcome() {
       const res = await apiRequest("GET", "/api/admin/notifications/states");
       return res.json();
     },
+    enabled: Boolean(isAdmin),
     staleTime: 15 * 1000,
+    refetchInterval: 15 * 1000,
   });
 
   const stateMap = useMemo(() => {
