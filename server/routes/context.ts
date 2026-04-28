@@ -89,6 +89,15 @@ export function isAdminRole(role: string): boolean {
   return role === "superadmin" || role === "admin";
 }
 
+export function isDashboardVisibleForRole(role: string): boolean {
+  if (!role) return false;
+  const row = db.get<{ dashboard_visible: number }>(
+    sql`SELECT dashboard_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+  );
+  if (!row) return true;
+  return Boolean(row.dashboard_visible);
+}
+
 export function getIdParam(req: Request): number {
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;

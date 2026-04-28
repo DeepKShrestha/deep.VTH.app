@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -29,6 +29,25 @@ type FormEditLog = {
   oldValue: string | null;
   newValue: string | null;
   createdAt: string;
+};
+
+type AdminFormDefinition = {
+  sections: Array<{
+    key: string;
+    title: string;
+    displayOrder: number;
+    questions: Array<{
+      id: number;
+      key: string;
+      label: string;
+      inputType: string;
+      options?: string[];
+      enabled: boolean;
+      required: boolean;
+      displayOrder: number;
+      isBuiltin: boolean;
+    }>;
+  }>;
 };
 
 const DEFAULT_BUILTIN_QUESTIONS = [
@@ -77,8 +96,17 @@ function roleBadge(role: string) {
 }
 
 export default function AdminPanel() {
+  const [location] = useLocation();
+  const initialTabFromUrl = (() => {
+    const qIndex = location.indexOf("?");
+    if (qIndex < 0) return "pending";
+    const qs = location.slice(qIndex + 1);
+    const tab = new URLSearchParams(qs).get("tab");
+    const allowed = ["pending", "users", "downloads", "password-resets", "form-options"];
+    return tab && allowed.includes(tab) ? tab : "pending";
+  })();
   const { toast } = useToast();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, updateCurrentUser } = useAuth();
 
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
   const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
@@ -88,6 +116,7 @@ export default function AdminPanel() {
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newQuestionLabelBySection, setNewQuestionLabelBySection] = useState<Record<string, string>>({});
   const [newQuestionTypeBySection, setNewQuestionTypeBySection] = useState<Record<string, string>>({});
+  const [newQuestionOptionsBySection, setNewQuestionOptionsBySection] = useState<Record<string, string>>({});
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [editForm, setEditForm] = useState({
     fullName: "",
@@ -104,24 +133,13 @@ export default function AdminPanel() {
   const { data: speciesOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/species-options"],
   });
-  const { data: formDefinition } = useQuery<{
-    sections: Array<{
-      key: string;
-      title: string;
-      displayOrder: number;
-      questions: Array<{
-        id: number;
-        key: string;
-        label: string;
-        inputType: string;
-        enabled: boolean;
-        required: boolean;
-        displayOrder: number;
-        isBuiltin: boolean;
-      }>;
-    }>;
-  }>({
+  const { data: formDefinition } = useQuery<AdminFormDefinition>({
     queryKey: ["/api/admin/form-definition"],
+  });
+  const { data: dashboardVisibility = [] } = useQuery<
+    Array<{ role: string; dashboardVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/dashboard"],
   });
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
@@ -349,6 +367,7 @@ export default function AdminPanel() {
       sectionKey: string;
       label: string;
       inputType: string;
+      options?: string[];
     }) => {
       const res = await apiRequest("POST", "/api/admin/form-questions", payload);
       return res.json();
@@ -358,6 +377,7 @@ export default function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
       setNewQuestionLabelBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
+      setNewQuestionOptionsBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
       toast({ title: "Question added" });
     },
   });
@@ -382,6 +402,99 @@ export default function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
       queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    },
+  });
+
+  const deleteSectionMutation = useMutation({
+    mutationFn: async (sectionKey: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/form-sections/${sectionKey}`);
+      return res.json() as Promise<{ deletedKey?: string }>;
+    },
+    onSuccess: async (data, sectionKey) => {
+      const deletedKey = data?.deletedKey || sectionKey;
+      queryClient.setQueryData<AdminFormDefinition | undefined>(
+        ["/api/admin/form-definition"],
+        (prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            sections: prev.sections.filter((s) => s.key !== deletedKey),
+          };
+        },
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition"] });
+      toast({ title: "Section deleted" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to delete section",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteQuestionMutation = useMutation({
+    mutationFn: async (questionId: number) => {
+      const res = await apiRequest("DELETE", `/api/admin/form-questions/${questionId}`);
+      return res.json() as Promise<{ deletedId?: number }>;
+    },
+    onSuccess: async (data, questionId) => {
+      const deletedId = data?.deletedId ?? questionId;
+      queryClient.setQueryData<AdminFormDefinition | undefined>(
+        ["/api/admin/form-definition"],
+        (prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            sections: prev.sections.map((s) => ({
+              ...s,
+              questions: s.questions.filter((q) => q.id !== deletedId),
+            })),
+          };
+        },
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition"] });
+      toast({ title: "Question deleted" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to delete question",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateDashboardVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; dashboardVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/dashboard/${encodeURIComponent(payload.role)}`,
+        { dashboardVisible: payload.dashboardVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/dashboard"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          dashboardVisible: vars.dashboardVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "Dashboard visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update visibility",
+        variant: "destructive",
+      });
     },
   });
 
@@ -424,7 +537,7 @@ export default function AdminPanel() {
         </Card>
       </div>
 
-      <Tabs defaultValue="pending">
+      <Tabs defaultValue={initialTabFromUrl}>
         <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="pending" data-testid="tab-pending">
             Pending ({pendingUsers.length})
@@ -754,6 +867,49 @@ export default function AdminPanel() {
         <TabsContent value="form-options" className="space-y-3 mt-4">
           <Card>
             <CardHeader className="pb-3">
+              <CardTitle className="text-base">Dashboard Visibility by Role</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Control which roles can open the dashboard. You can also disable it for your own
+                role.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {dashboardVisibility.map((row) => (
+                <div
+                  key={`dashboard-role-${row.role}`}
+                  className="flex items-center justify-between rounded border px-3 py-2"
+                >
+                  <div className="text-sm">
+                    {row.role === "superadmin"
+                      ? "Super Admin"
+                      : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={row.dashboardVisible ? "default" : "outline"}
+                    className="h-7"
+                    onClick={() =>
+                      updateDashboardVisibilityMutation.mutate({
+                        role: row.role,
+                        dashboardVisible: !row.dashboardVisible,
+                      })
+                    }
+                  >
+                    {row.dashboardVisible ? "Shown" : "Hidden"}
+                  </Button>
+                </div>
+              ))}
+              {dashboardVisibility.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No role visibility settings found yet.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
               <CardTitle className="text-base">Register Form Layout (Sections & Questions)</CardTitle>
               <p className="text-xs text-muted-foreground">
                 Add custom sections and questions, and rearrange them. Built-in questions can be hidden/required, and custom questions will appear in Register New Case.
@@ -812,6 +968,18 @@ export default function AdminPanel() {
                           >
                             <ArrowDown className="w-3.5 h-3.5" />
                           </Button>
+                          {!["owner", "animal", "sample", "ast", "final"].includes(section.key) && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                              onClick={() => deleteSectionMutation.mutate(section.key)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
+                            </Button>
+                          )}
                         </div>
                       </div>
 
@@ -842,9 +1010,26 @@ export default function AdminPanel() {
                               <SelectItem value="text">Text</SelectItem>
                               <SelectItem value="textarea">Long text</SelectItem>
                               <SelectItem value="number">Number</SelectItem>
+                              <SelectItem value="singleSelect">Dropdown (single)</SelectItem>
+                              <SelectItem value="multiSelect">Multiple choice</SelectItem>
+                              <SelectItem value="yesNo">Yes / No</SelectItem>
+                              <SelectItem value="date">Date</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
+                        {(newQuestionTypeBySection[section.key] === "singleSelect" ||
+                          newQuestionTypeBySection[section.key] === "multiSelect") && (
+                          <Input
+                            value={newQuestionOptionsBySection[section.key] || ""}
+                            onChange={(e) =>
+                              setNewQuestionOptionsBySection((prev) => ({
+                                ...prev,
+                                [section.key]: e.target.value,
+                              }))
+                            }
+                            placeholder="Options (comma separated), e.g. A+, B+, O+, AB+"
+                          />
+                        )}
                         <div className="flex justify-end">
                           <Button
                             type="button"
@@ -855,10 +1040,24 @@ export default function AdminPanel() {
                                 sectionKey: section.key,
                                 label: (newQuestionLabelBySection[section.key] || "").trim(),
                                 inputType: newQuestionTypeBySection[section.key] || "text",
+                                options:
+                                  (newQuestionTypeBySection[section.key] === "singleSelect" ||
+                                    newQuestionTypeBySection[section.key] === "multiSelect")
+                                    ? (newQuestionOptionsBySection[section.key] || "")
+                                        .split(",")
+                                        .map((v) => v.trim())
+                                        .filter(Boolean)
+                                    : [],
                               })
                             }
                             disabled={
                               !(newQuestionLabelBySection[section.key] || "").trim() ||
+                              ((newQuestionTypeBySection[section.key] === "singleSelect" ||
+                                newQuestionTypeBySection[section.key] === "multiSelect") &&
+                                (newQuestionOptionsBySection[section.key] || "")
+                                  .split(",")
+                                  .map((v) => v.trim())
+                                  .filter(Boolean).length < 2) ||
                               addQuestionMutation.isPending
                             }
                           >
@@ -887,6 +1086,9 @@ export default function AdminPanel() {
                                   </div>
                                   <div className="text-xs text-muted-foreground truncate">
                                     key: {q.key} · type: {q.inputType}
+                                    {q.options && q.options.length > 0
+                                      ? ` · options: ${q.options.join(", ")}`
+                                      : ""}
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -910,36 +1112,18 @@ export default function AdminPanel() {
                                   >
                                     <ArrowDown className="w-3.5 h-3.5" />
                                   </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={q.enabled ? "default" : "outline"}
-                                    className="h-8"
-                                    onClick={() =>
-                                      updateQuestionMutation.mutate({
-                                        id: q.id,
-                                        enabled: !q.enabled,
-                                        required: q.required,
-                                      })
-                                    }
-                                  >
-                                    {q.enabled ? "Visible" : "Hidden"}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={q.required ? "default" : "outline"}
-                                    className="h-8"
-                                    onClick={() =>
-                                      updateQuestionMutation.mutate({
-                                        id: q.id,
-                                        required: !q.required,
-                                        enabled: q.enabled,
-                                      })
-                                    }
-                                  >
-                                    {q.required ? "Required" : "Optional"}
-                                  </Button>
+                                  {!q.isBuiltin && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                                      onClick={() => deleteQuestionMutation.mutate(q.id)}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      Delete
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
                             ))
@@ -1026,6 +1210,80 @@ export default function AdminPanel() {
                     </div>
                   ))}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Edit Custom Register Form Fields</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Central controls for custom questions: set each as shown/hidden and compulsory/optional.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(formDefinition?.sections ?? []).map((section) => {
+                const customQuestions = (section.questions ?? []).filter((q) => !q.isBuiltin);
+                if (customQuestions.length === 0) return null;
+                return (
+                  <div key={`custom-${section.key}`} className="space-y-2">
+                    <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {section.title}
+                    </h4>
+                    {customQuestions.map((q) => (
+                      <div
+                        key={`custom-toggle-${q.id}`}
+                        className="flex items-center justify-between rounded border px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm truncate">{q.label}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            key: {q.key} · type: {q.inputType}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.enabled ? "default" : "outline"}
+                            className="h-7"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                enabled: !q.enabled,
+                                required: q.required,
+                              })
+                            }
+                          >
+                            {q.enabled ? "Shown" : "Hidden"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.required ? "default" : "outline"}
+                            className="h-7"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                required: !q.required,
+                                enabled: q.enabled,
+                              })
+                            }
+                          >
+                            {q.required ? "Compulsory" : "Optional"}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+              {(formDefinition?.sections ?? []).every(
+                (s) => (s.questions ?? []).filter((q) => !q.isBuiltin).length === 0,
+              ) && (
+                <p className="text-xs text-muted-foreground">
+                  No custom questions added yet.
+                </p>
               )}
             </CardContent>
           </Card>

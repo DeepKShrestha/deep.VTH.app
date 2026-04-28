@@ -11,6 +11,7 @@ import crypto from "crypto";
 
 const app = express();
 const httpServer = createServer(app);
+app.set("trust proxy", 1);
 
 declare module "http" {
   interface IncomingMessage {
@@ -65,6 +66,9 @@ app.use(
     max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    message: {
+      message: "Too many requests. Please retry later.",
+    },
   }),
 );
 
@@ -146,6 +150,14 @@ app.get("/api/ready", (_req, res) => {
 });
 
 (async () => {
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEFAULT_ADMIN === "true") {
+    logJson({
+      type: "startup_warning",
+      message:
+        "ALLOW_DEFAULT_ADMIN=true in production. This should be disabled after initial bootstrap.",
+    });
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -184,7 +196,11 @@ app.get("/api/ready", (_req, res) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
+  httpServer.requestTimeout = 120_000;
+  httpServer.headersTimeout = 65_000;
+  httpServer.keepAliveTimeout = 60_000;
+
+  const server = httpServer.listen(
     {
       port,
       host: "0.0.0.0",
@@ -195,4 +211,43 @@ app.get("/api/ready", (_req, res) => {
       log(`using database: ${DB_FILE}`);
     },
   );
+
+  const shutdown = (signal: string) => {
+    logJson({ type: "shutdown_signal", signal });
+    server.close((err?: Error) => {
+      if (err) {
+        logJson({
+          type: "shutdown_error",
+          signal,
+          message: err.message,
+        });
+        process.exit(1);
+      }
+      logJson({ type: "shutdown_complete", signal });
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logJson({ type: "shutdown_timeout", signal });
+      process.exit(1);
+    }, 10_000).unref();
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  process.on("unhandledRejection", (reason) => {
+    logJson({
+      type: "unhandled_rejection",
+      reason: reason instanceof Error ? reason.message : String(reason),
+    });
+  });
+
+  process.on("uncaughtException", (error) => {
+    logJson({
+      type: "uncaught_exception",
+      message: error.message,
+      stack: error.stack,
+    });
+    shutdown("uncaughtException");
+  });
 })();

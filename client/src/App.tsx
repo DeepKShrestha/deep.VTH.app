@@ -14,12 +14,13 @@ import PrintReport from "@/pages/print-report";
 import BreakpointsPage from "@/pages/breakpoints";
 import AdminPanel from "@/pages/admin";
 import ExportDataPage from "@/pages/export-data";
+import DashboardPage from "@/pages/dashboard";
 import NotFound from "@/pages/not-found";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import ProfilePage from "./pages/profile";
 
 function ProtectedRoutes() {
-  const { user, isAdmin, canRegisterCase, isLoading } = useAuth();
+  const { user, isAdmin, canRegisterCase, canViewDashboard, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -51,6 +52,9 @@ function ProtectedRoutes() {
           <Route path="/profile" component={ProfilePage} />
           {canRegisterCase && <Route path="/register" component={RegisterCase} />}
           <Route path="/cases" component={CaseList} />
+          <Route path="/dashboard">
+            {canViewDashboard ? <DashboardPage /> : <Redirect to="/" />}
+          </Route>
           <Route path="/cases/:id" component={CaseView} />
           <Route path="/print/:id" component={PrintReport} />
           <Route path="/export" component={ExportDataPage} />

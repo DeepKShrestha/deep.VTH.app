@@ -3,6 +3,7 @@ import { insertUserSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import {
   generateToken,
+  isDashboardVisibleForRole,
   requireAuth,
   sessions,
 } from "./context";
@@ -78,7 +79,13 @@ export function registerAuthRoutes(app: Express) {
     await sessions.set(token, user.id);
 
     const { passwordHash: _pwd, ...safeUser } = user;
-    res.json({ token, user: safeUser });
+    res.json({
+      token,
+      user: {
+        ...safeUser,
+        dashboardVisible: isDashboardVisibleForRole(user.role),
+      },
+    });
   });
 
   app.post("/api/auth/logout", async (req, res) => {
@@ -100,7 +107,15 @@ export function registerAuthRoutes(app: Express) {
     const user = await authSessionRepo.getUserById(userId);
     if (!user) return res.status(401).json({ message: "User not found" });
     const { passwordHash: _pwd, ...safeUser } = user;
-    res.json(safeUser);
+    res.json({
+      ...safeUser,
+      dashboardVisible: isDashboardVisibleForRole(user.role),
+    });
+  });
+
+  app.get("/api/auth/dashboard-access", requireAuth, (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    return res.json({ allowed: isDashboardVisibleForRole(currentUser.role) });
   });
 
   app.patch("/api/users/me", requireAuth, async (req, res) => {

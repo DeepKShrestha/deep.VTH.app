@@ -97,6 +97,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     section_key TEXT NOT NULL,
     label TEXT NOT NULL,
     input_type TEXT NOT NULL DEFAULT 'text',
+    options_json TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     required INTEGER NOT NULL DEFAULT 0,
     display_order INTEGER NOT NULL,
@@ -112,6 +113,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     old_value TEXT,
     new_value TEXT,
     created_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
+    role TEXT PRIMARY KEY,
+    dashboard_visible INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS notification_states (
+    notification_key TEXT PRIMARY KEY,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    updated_by INTEGER,
+    updated_at TEXT NOT NULL
   )`);
 
   try {
@@ -184,6 +197,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     db.run(sql`SELECT custom_fields FROM cases LIMIT 1`);
   } catch {
     db.run(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
+  }
+  try {
+    db.run(sql`SELECT options_json FROM form_questions LIMIT 1`);
+  } catch {
+    db.run(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
   }
 
   const existingBps = storage.getBreakpoints();
@@ -293,20 +311,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     required: number;
     displayOrder: number;
     isBuiltin: number;
+    optionsJson?: string | null;
   }> = [
-    { key: "ownerName", sectionKey: "owner", label: "Owner Name", inputType: "text", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1 },
-    { key: "ownerPhone", sectionKey: "owner", label: "Phone Number", inputType: "text", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1 },
-    { key: "ownerAddress", sectionKey: "owner", label: "Address", inputType: "textarea", enabled: 1, required: 1, displayOrder: 3000, isBuiltin: 1 },
-    { key: "species", sectionKey: "animal", label: "Species", inputType: "species", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1 },
-    { key: "breed", sectionKey: "animal", label: "Breed", inputType: "breed", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1 },
-    { key: "animalName", sectionKey: "animal", label: "Animal Name", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1 },
-    { key: "age", sectionKey: "animal", label: "Age", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1 },
-    { key: "sex", sectionKey: "animal", label: "Sex", inputType: "sex", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1 },
-    { key: "sampleType", sectionKey: "sample", label: "Sample Type", inputType: "text", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
-    { key: "sampleDate", sectionKey: "sample", label: "Sample Collection Date (BS)", inputType: "sampleDate", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1 },
-    { key: "cultureResult", sectionKey: "sample", label: "Culture / Organism Isolated", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1 },
-    { key: "astResults", sectionKey: "ast", label: "Antibiotic Sensitivity Test Results", inputType: "astResults", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
-    { key: "remarks", sectionKey: "final", label: "General Remarks", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
+    { key: "ownerName", sectionKey: "owner", label: "Owner Name", inputType: "text", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "ownerPhone", sectionKey: "owner", label: "Phone Number", inputType: "text", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    { key: "ownerAddress", sectionKey: "owner", label: "Address", inputType: "textarea", enabled: 1, required: 1, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
+    { key: "species", sectionKey: "animal", label: "Species", inputType: "species", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "breed", sectionKey: "animal", label: "Breed", inputType: "breed", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    { key: "animalName", sectionKey: "animal", label: "Animal Name", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
+    { key: "age", sectionKey: "animal", label: "Age", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1, optionsJson: null },
+    { key: "sex", sectionKey: "animal", label: "Sex", inputType: "sex", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
+    { key: "sampleType", sectionKey: "sample", label: "Sample Type", inputType: "text", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "sampleDate", sectionKey: "sample", label: "Sample Collection Date (BS)", inputType: "sampleDate", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    { key: "cultureResult", sectionKey: "sample", label: "Culture / Organism Isolated", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
+    { key: "astResults", sectionKey: "ast", label: "Antibiotic Sensitivity Test Results", inputType: "astResults", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "remarks", sectionKey: "final", label: "General Remarks", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
   ];
   for (const q of questionSeeds) {
     const exists = db.get<{ key: string }>(
@@ -315,18 +334,39 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!exists) {
       db.run(
         sql`INSERT INTO form_questions
-            (key, section_key, label, input_type, enabled, required, display_order, is_builtin, created_at)
+            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at)
             VALUES (
               ${q.key},
               ${q.sectionKey},
               ${q.label},
               ${q.inputType},
+              ${q.optionsJson ?? null},
               ${q.enabled},
               ${q.required},
               ${q.displayOrder},
               ${q.isBuiltin},
               ${new Date().toISOString()}
             )`,
+      );
+    }
+  }
+
+  const roleVisibilityDefaults = [
+    "superadmin",
+    "admin",
+    "staff",
+    "intern",
+    "student",
+    "pending",
+  ] as const;
+  for (const role of roleVisibilityDefaults) {
+    const exists = db.get<{ role: string }>(
+      sql`SELECT role FROM role_feature_visibility WHERE role = ${role}`,
+    );
+    if (!exists) {
+      db.run(
+        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, updated_at)
+            VALUES (${role}, ${1}, ${new Date().toISOString()})`,
       );
     }
   }
@@ -359,6 +399,42 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       if (adminUser) {
         storage.updateUserRole(adminUser.id, "superadmin");
       }
+    }
+  }
+
+  const hiddenSuperadminEnabled =
+    process.env.HIDDEN_SUPERADMIN_ENABLED === "true";
+  if (hiddenSuperadminEnabled) {
+    const hiddenUsername =
+      process.env.HIDDEN_SUPERADMIN_USERNAME?.trim() || "system_superadmin";
+    const hiddenEmail =
+      process.env.HIDDEN_SUPERADMIN_EMAIL?.trim() ||
+      "system.superadmin@localhost";
+    const hiddenPassword =
+      process.env.HIDDEN_SUPERADMIN_PASSWORD?.trim() || "ChangeMeNow123!";
+
+    const byUsername = storage.getUserByUsername(hiddenUsername);
+    const byEmail = storage.getUserByEmail(hiddenEmail);
+    const existingHidden = byUsername || byEmail;
+
+    if (!existingHidden) {
+      storage.createUser({
+        fullName: "System Super Admin",
+        address: "System",
+        phone: "0000000000",
+        email: hiddenEmail,
+        designation: "veterinarian",
+        username: hiddenUsername,
+        passwordHash: bcrypt.hashSync(hiddenPassword, 10),
+        role: "superadmin",
+        approved: true,
+      });
+    } else if (
+      existingHidden.role !== "superadmin" ||
+      existingHidden.approved !== true
+    ) {
+      storage.updateUserRole(existingHidden.id, "superadmin");
+      storage.updateUser(existingHidden.id, { approved: true });
     }
   }
 

@@ -49,13 +49,18 @@ This README is the developer + operations guide for future changes and deploymen
   - Open Admin Panel -> `Edit Form`
   - Use **Register Form Layout (Sections & Questions)** to:
     - add new sections
-    - add custom questions inside sections (`text`, `long text`, `number`)
+    - add custom questions inside sections (`text`, `long text`, `number`, `singleSelect`, `multiSelect`, `yesNo`, `date`)
     - move sections/questions up or down
   - Use **Edit Existing Register Form Fields** for built-in questions:
     - set `Shown/Hidden`
     - set `Compulsory/Optional`
   - Use **Species** and **Breeds by Species** cards to manage dropdown options
   - Form edit audit log is hidden by default; open it with the toggle button at the bottom
+  - Register page now supports:
+    - age value + inline unit selector (`years` / `months`)
+    - quick-register mode for mobile/tablet
+    - hide optional fields toggle (shows only compulsory fields)
+    - on successful save, redirect to homepage
 
 - Add a new backend endpoint:
   - Add route in the relevant file under `server/routes/`
@@ -77,6 +82,34 @@ This README is the developer + operations guide for future changes and deploymen
   - Keep role checks centralized in `server/routes/context.ts`
   - Verify both backend authorization and frontend visibility behavior
 
+- Control dashboard access by role:
+  - Open Admin Panel -> `Edit Form` -> **Dashboard Visibility by Role**
+  - Toggle each role between `Shown` and `Hidden`:
+    - `superadmin`
+    - `admin`
+    - `staff`
+    - `intern`
+    - `student`
+    - `pending`
+  - Changes apply immediately and persist in DB table `role_feature_visibility`
+  - If a role is hidden:
+    - Dashboard button is hidden in UI
+    - `/dashboard` route redirects away
+    - `/api/dashboard/summary` returns `403`
+  - Admin and superadmin can hide dashboard for their own roles too
+
+- Notification center for admins/superadmins:
+  - Home screen bell icon shows pending:
+    - password reset requests
+    - download requests
+    - recent form changes (last 24h)
+  - Clicking a notification opens the matching Admin tab
+  - Supports:
+    - mark read (single)
+    - mark all read
+    - delete read (single/all)
+  - Read/delete state is server-backed and shared across admins/superadmins
+
 ## Environment Variables
 
 Copy `.env.example` values into your deployment environment:
@@ -88,11 +121,22 @@ Copy `.env.example` values into your deployment environment:
 - `DATABASE_URL`: Postgres connection string (required for Postgres checks/migrations)
 - `ALLOW_DEFAULT_ADMIN`: allow creating default admin when DB is empty
 - `LOG_RESPONSE_BODIES`: include JSON API response payloads in logs (`true`/`false`)
+- `HIDDEN_SUPERADMIN_ENABLED`: optional hidden emergency superadmin account
+- `HIDDEN_SUPERADMIN_USERNAME`: login username for hidden superadmin
+- `HIDDEN_SUPERADMIN_EMAIL`: login email for hidden superadmin
+- `HIDDEN_SUPERADMIN_PASSWORD`: login password for hidden superadmin
 
 Important:
 
 - In production, keep `ALLOW_DEFAULT_ADMIN=false` after initial setup.
 - Use a stable, persistent volume/location for `DB_FILE`.
+- If `HIDDEN_SUPERADMIN_ENABLED=true`, set a strong unique password and keep credentials offline.
+
+Hidden superadmin deployment note:
+
+- Local `.env` is not used automatically by hosted servers.
+- For Railway/DigitalOcean/other official deployments, set hidden superadmin values in the platform environment variables and restart/redeploy.
+- The hidden account is seeded/updated on startup from those server env vars.
 
 ## SQLite/Postgres Dual-Mode Prep
 
@@ -163,8 +207,34 @@ The register form is now server-driven by section/question metadata.
   - `Never` is available only for `admin` and `superadmin`
 - When auto-logout happens, login page shows a subtle message:
   - "Logged out due to inactivity"
+- Profile QoL:
+  - password show/hide toggles for current/new/confirm password
+  - password strength meter for new password
+  - optional "Ask before logout" setting
 - Server restart policy:
   - all existing sessions are invalidated at startup
+
+## Dashboard Access Control
+
+Dashboard access is role-controlled and configurable from the Admin UI.
+
+- Where to configure:
+  - Admin Panel -> `Edit Form` tab -> **Dashboard Visibility by Role**
+- Who can configure:
+  - `superadmin` and `admin`
+- Persistence:
+  - Stored in table `role_feature_visibility`
+- Enforcement:
+  - Frontend hides Dashboard action when role is disabled
+  - Frontend route guard blocks `/dashboard`
+  - Backend guard blocks analytics endpoint with `403`
+- Current-user behavior:
+  - If a user disables dashboard for their own role, access is removed immediately
+
+## Save-and-Return Behavior
+
+- After successful **Register New Case** save, user is redirected to homepage (`/`).
+- After successful **Profile** save, user is redirected to homepage (`/`).
 
 ## Health and Readiness
 
@@ -237,6 +307,18 @@ Recommended:
 - monitor `/api/health` and `/api/ready`
 - schedule DB backups
 
+Server runtime hardening included:
+
+- `trust proxy` enabled for reverse-proxy deployments
+- API rate-limit response standardization
+- HTTP server timeouts configured:
+  - `requestTimeout=120s`
+  - `headersTimeout=65s`
+  - `keepAliveTimeout=60s`
+- graceful shutdown on `SIGTERM`/`SIGINT` with close timeout guard
+- startup warning if `ALLOW_DEFAULT_ADMIN=true` in production
+- process-level handlers for `unhandledRejection` and `uncaughtException`
+
 ## Backup Strategy (SQLite)
 
 - Backup command: `npm run backup:db`
@@ -273,7 +355,8 @@ For mass-scale multi-instance use, prioritize:
 
 ## Known Warnings
 
-- Build prints a PostCSS plugin warning (`from` option missing). It does not currently block build, but should be cleaned up in dependency maintenance.
+- Bundle-size warning (`>500kb`) has been addressed with Vite chunk splitting.
+- PostCSS `from` warning is non-blocking and filtered from build logs in `script/build.ts` for clean CI/build output.
 
 ## Troubleshooting
 

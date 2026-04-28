@@ -16,9 +16,11 @@ import {
 } from "../components/ui/select";
 import { ArrowLeft, User as UserIcon } from "lucide-react";
 import {
+  type ConfirmLogoutPreference,
   INACTIVITY_TIMEOUT_LABELS,
   type InactivityTimeoutOption,
 } from "../lib/auth";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function ProfilePage() {
   const {
@@ -28,6 +30,8 @@ export default function ProfilePage() {
     updateCurrentUser,
     inactivityTimeout,
     setInactivityTimeout,
+    confirmBeforeLogout,
+    setConfirmBeforeLogout,
   } = useAuth();
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -42,6 +46,23 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const passwordStrength = (() => {
+    const p = newPassword;
+    if (!p) return { label: "Not set", score: 0, color: "bg-muted" };
+    let score = 0;
+    if (p.length >= 8) score += 1;
+    if (/[A-Z]/.test(p) && /[a-z]/.test(p)) score += 1;
+    if (/\d/.test(p)) score += 1;
+    if (/[^A-Za-z0-9]/.test(p)) score += 1;
+    if (score <= 1) return { label: "Weak", score, color: "bg-red-500" };
+    if (score <= 2) return { label: "Fair", score, color: "bg-amber-500" };
+    if (score === 3) return { label: "Good", score, color: "bg-blue-500" };
+    return { label: "Strong", score, color: "bg-emerald-500" };
+  })();
 
   useEffect(() => {
     if (!user) return;
@@ -141,6 +162,7 @@ export default function ProfilePage() {
         setNewPassword("");
         setConfirmPassword("");
         toast({ title: "Profile updated" });
+        navigate("/");
       } else {
         toast({
           title: body?.message || "Failed to update profile",
@@ -268,35 +290,79 @@ export default function ProfilePage() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="currentPassword">Current Password</Label>
-                <Input
-                  id="currentPassword"
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="Enter current password"
-                />
+                <div className="relative">
+                  <Input
+                    id="currentPassword"
+                    type={showCurrentPassword ? "text" : "password"}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1 h-7 w-7"
+                    onClick={() => setShowCurrentPassword((v) => !v)}
+                  >
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="newPassword">New Password</Label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Minimum 6 characters"
-                />
+                <div className="relative">
+                  <Input
+                    id="newPassword"
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Minimum 6 characters"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1 h-7 w-7"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+                <div className="space-y-1">
+                  <div className="h-1.5 w-full rounded bg-muted overflow-hidden">
+                    <div
+                      className={`h-full ${passwordStrength.color}`}
+                      style={{ width: `${Math.max(5, (passwordStrength.score / 4) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Password strength: {passwordStrength.label}
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat new password"
-                />
+                <div className="relative">
+                  <Input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repeat new password"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1 h-7 w-7"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
               </div>
 
               {!isSuperAdmin && (
@@ -338,6 +404,36 @@ export default function ProfilePage() {
               <p className="text-[11px] text-muted-foreground">
                 Automatically logs out when inactive. "Never" is available only
                 to admins.
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-border space-y-2">
+              <Label
+                htmlFor="confirm-logout"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                Logout confirmation
+              </Label>
+              <Select
+                value={confirmBeforeLogout}
+                onValueChange={(value) =>
+                  setConfirmBeforeLogout(value as ConfirmLogoutPreference)
+                }
+              >
+                <SelectTrigger id="confirm-logout" className="h-8 text-xs">
+                  <SelectValue placeholder="Logout confirmation setting" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="never" className="text-xs">
+                    Do not ask
+                  </SelectItem>
+                  <SelectItem value="always" className="text-xs">
+                    Ask before logout
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                If enabled, clicking Logout asks for confirmation first.
               </p>
             </div>
 

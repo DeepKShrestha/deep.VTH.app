@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Microscope, UserPlus, CheckCircle } from "lucide-react";
+import { Microscope, UserPlus, CheckCircle, Eye, EyeOff } from "lucide-react";
 
 const DESIGNATIONS = [
   { value: "veterinarian", label: "Veterinarian" },
@@ -36,6 +36,21 @@ export default function SignupPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const passwordStrength = (() => {
+    if (!password) return { label: "Not set", score: 0, color: "bg-muted" };
+    let score = 0;
+    if (password.length >= 8) score += 1;
+    if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+    if (/\d/.test(password)) score += 1;
+    if (/[^A-Za-z0-9]/.test(password)) score += 1;
+    if (score <= 1) return { label: "Weak", score, color: "bg-red-500" };
+    if (score <= 2) return { label: "Fair", score, color: "bg-amber-500" };
+    if (score === 3) return { label: "Good", score, color: "bg-blue-500" };
+    return { label: "Strong", score, color: "bg-emerald-500" };
+  })();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,11 +149,58 @@ export default function SignupPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Password <span className="text-destructive">*</span></Label>
-                  <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min 6 characters" data-testid="input-signup-password" />
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Min 6 characters"
+                      data-testid="input-signup-password"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1 h-7 w-7"
+                      onClick={() => setShowPassword((v) => !v)}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="h-1.5 w-full rounded bg-muted overflow-hidden">
+                      <div
+                        className={`h-full ${passwordStrength.color}`}
+                        style={{ width: `${Math.max(5, (passwordStrength.score / 4) * 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Password strength: {passwordStrength.label}
+                    </p>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="confirmPassword">Confirm Password <span className="text-destructive">*</span></Label>
-                  <Input id="confirmPassword" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Repeat password" data-testid="input-signup-confirm-password" />
+                  <div className="relative">
+                    <Input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat password"
+                      data-testid="input-signup-confirm-password"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1 h-7 w-7"
+                      onClick={() => setShowConfirmPassword((v) => !v)}
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                  </div>
                 </div>
               </div>
 

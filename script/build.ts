@@ -34,7 +34,21 @@ async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
   console.log("building client...");
-  await viteBuild();
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const first = String(args[0] ?? "");
+    if (
+      first.includes("A PostCSS plugin did not pass the `from` option to `postcss.parse`")
+    ) {
+      return;
+    }
+    originalWarn(...args);
+  };
+  try {
+    await viteBuild();
+  } finally {
+    console.warn = originalWarn;
+  }
 
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));

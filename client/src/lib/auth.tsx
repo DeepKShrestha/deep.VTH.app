@@ -16,6 +16,7 @@ export type InactivityTimeoutOption =
   | "10m"
   | "30m"
   | "never";
+export type ConfirmLogoutPreference = "always" | "never";
 
 export const INACTIVITY_TIMEOUT_LABELS: Record<InactivityTimeoutOption, string> = {
   "1m": "1 minute",
@@ -32,6 +33,8 @@ interface AuthContextType {
   isLoading: boolean;
   inactivityTimeout: InactivityTimeoutOption;
   setInactivityTimeout: (value: InactivityTimeoutOption) => void;
+  confirmBeforeLogout: ConfirmLogoutPreference;
+  setConfirmBeforeLogout: (value: ConfirmLogoutPreference) => void;
   login: (
     usernameOrEmail: string,
     password: string
@@ -46,6 +49,7 @@ interface AuthContextType {
   isStudent: boolean;
   canRegisterCase: boolean;
   canDownload: boolean;
+  canViewDashboard: boolean;
 }
 
 interface SignupData {
@@ -65,7 +69,9 @@ let storedToken: string | null = null;
 const TOKEN_STORAGE_KEY = "auth_token";
 export const INACTIVITY_LOGOUT_FLAG_KEY = "logged_out_inactivity";
 const INACTIVITY_TIMEOUT_STORAGE_KEY = "inactivity_timeout";
+const CONFIRM_LOGOUT_STORAGE_KEY = "confirm_logout_preference";
 const DEFAULT_INACTIVITY_TIMEOUT: InactivityTimeoutOption = "10m";
+const DEFAULT_CONFIRM_LOGOUT: ConfirmLogoutPreference = "never";
 const INACTIVITY_TIMEOUT_MS: Record<
   Exclude<InactivityTimeoutOption, "never">,
   number
@@ -104,6 +110,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return DEFAULT_INACTIVITY_TIMEOUT;
     });
+  const [confirmBeforeLogout, setConfirmBeforeLogoutState] =
+    useState<ConfirmLogoutPreference>(() => {
+      const raw = localStorage.getItem(CONFIRM_LOGOUT_STORAGE_KEY);
+      if (raw === "always" || raw === "never") return raw;
+      return DEFAULT_CONFIRM_LOGOUT;
+    });
   const inactivityTimerRef = useRef<number | null>(null);
 
   const setAuth = useCallback((t: string | null, u: SafeUser | null) => {
@@ -132,7 +144,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAuth(null, null);
           return;
         }
-        const safeUser = (await res.json()) as SafeUser;
+        const safeUser = (await res.json()) as SafeUser & {
+          dashboardVisible?: boolean;
+        };
         setAuth(token, safeUser);
       } catch {
         setAuth(null, null);
@@ -216,6 +230,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isStudent = user?.role === "student";
   const canRegisterCase = isAdmin || isStaff || isIntern;
   const canDownload = isAdmin || isStaff || isIntern; // students must request
+  const canViewDashboard =
+    Boolean((user as (SafeUser & { dashboardVisible?: boolean }) | null)?.dashboardVisible) !==
+    false;
 
   const setInactivityTimeout = useCallback(
     (value: InactivityTimeoutOption) => {
@@ -224,6 +241,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  const setConfirmBeforeLogout = useCallback((value: ConfirmLogoutPreference) => {
+    setConfirmBeforeLogoutState(value);
+    localStorage.setItem(CONFIRM_LOGOUT_STORAGE_KEY, value);
+  }, []);
 
   useEffect(() => {
     if ((user?.role !== "admin" && user?.role !== "superadmin") && inactivityTimeout === "never") {
@@ -280,6 +301,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isLoading,
     inactivityTimeout,
     setInactivityTimeout,
+    confirmBeforeLogout,
+    setConfirmBeforeLogout,
     login,
     signup,
     logout,
@@ -291,6 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isStudent,
     canRegisterCase,
     canDownload,
+    canViewDashboard,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
