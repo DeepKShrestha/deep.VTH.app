@@ -869,37 +869,38 @@ export default function AdminPanel() {
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Dashboard Visibility by Role</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Control which roles can open the dashboard. You can also disable it for your own
-                role.
+                Compact role-level dashboard access control.
               </p>
             </CardHeader>
             <CardContent className="space-y-2">
-              {dashboardVisibility.map((row) => (
-                <div
-                  key={`dashboard-role-${row.role}`}
-                  className="flex items-center justify-between rounded border px-3 py-2"
-                >
-                  <div className="text-sm">
-                    {row.role === "superadmin"
-                      ? "Super Admin"
-                      : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={row.dashboardVisible ? "default" : "outline"}
-                    className="h-7"
-                    onClick={() =>
-                      updateDashboardVisibilityMutation.mutate({
-                        role: row.role,
-                        dashboardVisible: !row.dashboardVisible,
-                      })
-                    }
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {dashboardVisibility.map((row) => (
+                  <div
+                    key={`dashboard-role-${row.role}`}
+                    className="flex items-center justify-between rounded border px-2.5 py-2"
                   >
-                    {row.dashboardVisible ? "Shown" : "Hidden"}
-                  </Button>
-                </div>
-              ))}
+                    <div className="text-xs font-medium truncate pr-2">
+                      {row.role === "superadmin"
+                        ? "Super Admin"
+                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={row.dashboardVisible ? "default" : "outline"}
+                      className="h-6 text-[11px] px-2"
+                      onClick={() =>
+                        updateDashboardVisibilityMutation.mutate({
+                          role: row.role,
+                          dashboardVisible: !row.dashboardVisible,
+                        })
+                      }
+                    >
+                      {row.dashboardVisible ? "On" : "Off"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
               {dashboardVisibility.length === 0 && (
                 <p className="text-xs text-muted-foreground">
                   No role visibility settings found yet.

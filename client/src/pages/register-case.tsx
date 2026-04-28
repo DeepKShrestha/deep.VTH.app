@@ -136,6 +136,22 @@ function getSensitivityLabel(s: string) {
   }
 }
 
+function toTitleCase(input: string): string {
+  return input
+    .toLowerCase()
+    .split(" ")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toSentenceCase(input: string): string {
+  const cleaned = input.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.replace(/(^\s*[a-z])|([.!?]\s+[a-z])/g, (m) => m.toUpperCase());
+}
+
 export default function RegisterCase() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -458,6 +474,15 @@ export default function RegisterCase() {
       return;
     }
 
+    const normalizedCustomAnswers: Record<string, string | string[]> = {};
+    for (const [key, value] of Object.entries(customAnswers)) {
+      if (typeof value === "string") {
+        normalizedCustomAnswers[key] = toTitleCase(value);
+      } else {
+        normalizedCustomAnswers[key] = value;
+      }
+    }
+
     createMutation.mutate({
       caseNumber: caseInfo?.caseNumber || "AST-000",
       billNumber: billNumber || null,
@@ -465,21 +490,24 @@ export default function RegisterCase() {
       monthlyNumber: caseInfo?.monthlyNumber || 1,
       date: dateBs,
       dateAd: dateAd || null,
-      ownerName,
-      ownerAddress: isQuestionEnabled("ownerAddress", true) ? ownerAddress : "",
+      ownerName: toTitleCase(ownerName),
+      ownerAddress: isQuestionEnabled("ownerAddress", true) ? toTitleCase(ownerAddress) : "",
       ownerPhone: isQuestionEnabled("ownerPhone", true) ? ownerPhone : "",
-      species: isQuestionEnabled("species", true) ? effectiveSpecies : "",
-      breed: isQuestionEnabled("breed", true) ? breed : "",
-      animalName: isQuestionEnabled("animalName") ? animalName || null : null,
+      species: isQuestionEnabled("species", true) ? toTitleCase(effectiveSpecies) : "",
+      breed: isQuestionEnabled("breed", true) ? toTitleCase(breed) : "",
+      animalName: isQuestionEnabled("animalName") ? toTitleCase(animalName) || null : null,
       age: isQuestionEnabled("age") ? age || null : null,
-      sex: isQuestionEnabled("sex") ? sex || null : null,
-      sampleType: isQuestionEnabled("sampleType") ? sampleType || null : null,
+      sex: isQuestionEnabled("sex") ? toTitleCase(sex) || null : null,
+      sampleType: isQuestionEnabled("sampleType") ? toTitleCase(sampleType) || null : null,
       sampleDate: isQuestionEnabled("sampleDate") ? sampleDateBs || null : null,
       sampleDateAd: sampleDateAd || null,
-      cultureResult: isQuestionEnabled("cultureResult") ? cultureResult || null : null,
+      cultureResult: isQuestionEnabled("cultureResult") ? toTitleCase(cultureResult) || null : null,
       astResults: JSON.stringify(filteredAst),
-      remarks: isQuestionEnabled("remarks") ? remarks || null : null,
-      customFields: Object.keys(customAnswers).length > 0 ? JSON.stringify(customAnswers) : null,
+      remarks: isQuestionEnabled("remarks") ? toSentenceCase(remarks) || null : null,
+      customFields:
+        Object.keys(normalizedCustomAnswers).length > 0
+          ? JSON.stringify(normalizedCustomAnswers)
+          : null,
     });
   };
 
@@ -601,6 +629,9 @@ export default function RegisterCase() {
             onChange={(e) =>
               setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
             }
+            onBlur={(e) =>
+              setCustomAnswers((prev) => ({ ...prev, [q.key]: toTitleCase(e.target.value) }))
+            }
             rows={2}
           />
         </div>
@@ -617,6 +648,11 @@ export default function RegisterCase() {
           onChange={(e) =>
             setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
           }
+          onBlur={(e) => {
+            if (q.inputType !== "number") {
+              setCustomAnswers((prev) => ({ ...prev, [q.key]: toTitleCase(e.target.value) }));
+            }
+          }}
         />
       </div>
     );
@@ -935,6 +971,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={ownerName}
                               onChange={(e) => setOwnerName(e.target.value)}
+                              onBlur={(e) => setOwnerName(toTitleCase(e.target.value))}
                               placeholder="Full name"
                               data-testid="input-owner-name"
                             />
@@ -979,6 +1016,7 @@ export default function RegisterCase() {
                                 className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
                                 value={customSpecies}
                                 onChange={(e) => setCustomSpecies(e.target.value)}
+                                onBlur={(e) => setCustomSpecies(toTitleCase(e.target.value))}
                                 placeholder="Type species manually"
                                 data-testid="input-custom-species"
                               />
@@ -1008,6 +1046,7 @@ export default function RegisterCase() {
                                 className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
                                 value={customBreed}
                                 onChange={(e) => setCustomBreed(e.target.value)}
+                                onBlur={(e) => setCustomBreed(toTitleCase(e.target.value))}
                                 placeholder="Type breed manually"
                                 data-testid="input-custom-breed"
                               />
@@ -1056,6 +1095,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "text-base" : ""}
                               value={ownerAddress}
                               onChange={(e) => setOwnerAddress(e.target.value)}
+                              onBlur={(e) => setOwnerAddress(toTitleCase(e.target.value))}
                               placeholder="Full address"
                               rows={2}
                               data-testid="input-owner-address"
@@ -1073,6 +1113,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={cultureResult}
                               onChange={(e) => setCultureResult(e.target.value)}
+                              onBlur={(e) => setCultureResult(toTitleCase(e.target.value))}
                               placeholder="e.g. Staphylococcus aureus, E. coli"
                               data-testid="input-culture-result"
                             />
@@ -1088,6 +1129,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "text-base" : ""}
                               value={remarks}
                               onChange={(e) => setRemarks(e.target.value)}
+                              onBlur={(e) => setRemarks(toSentenceCase(e.target.value))}
                               placeholder="Any additional notes, observations, or recommendations..."
                               rows={3}
                               data-testid="input-remarks"
@@ -1105,6 +1147,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={animalName}
                               onChange={(e) => setAnimalName(e.target.value)}
+                              onBlur={(e) => setAnimalName(toTitleCase(e.target.value))}
                               placeholder="Optional"
                               data-testid="input-animal-name"
                             />
@@ -1154,6 +1197,7 @@ export default function RegisterCase() {
                               className={quickRegisterMode ? "h-11 text-base" : ""}
                               value={sampleType}
                               onChange={(e) => setSampleType(e.target.value)}
+                              onBlur={(e) => setSampleType(toTitleCase(e.target.value))}
                               placeholder="e.g. Milk, Wound swab, Urine"
                               data-testid="input-sample-type"
                             />

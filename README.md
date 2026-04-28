@@ -60,6 +60,10 @@ This README is the developer + operations guide for future changes and deploymen
     - age value + inline unit selector (`years` / `months`)
     - quick-register mode for mobile/tablet
     - hide optional fields toggle (shows only compulsory fields)
+    - compulsory marker (`*`) + save validation strictly follow Admin form `required` settings
+    - text normalization:
+      - title case for names/labels (e.g. owner name)
+      - sentence case for remarks
     - on successful save, redirect to homepage
 
 - Add a new backend endpoint:
@@ -109,6 +113,7 @@ This README is the developer + operations guide for future changes and deploymen
     - mark all read
     - delete read (single/all)
   - Read/delete state is server-backed and shared across admins/superadmins
+  - Includes compact popover layout with per-item delete and bulk delete-read actions
 
 ## Environment Variables
 
@@ -211,6 +216,10 @@ The register form is now server-driven by section/question metadata.
   - password show/hide toggles for current/new/confirm password
   - password strength meter for new password
   - optional "Ask before logout" setting
+- Auth page QoL:
+  - login password show/hide toggle
+  - signup password + confirm show/hide toggles
+  - signup password strength meter
 - Server restart policy:
   - all existing sessions are invalidated at startup
 
@@ -230,6 +239,7 @@ Dashboard access is role-controlled and configurable from the Admin UI.
   - Backend guard blocks analytics endpoint with `403`
 - Current-user behavior:
   - If a user disables dashboard for their own role, access is removed immediately
+  - Admin Panel visibility card is compact and responsive for dense layouts
 
 ## Save-and-Return Behavior
 
