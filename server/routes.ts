@@ -66,6 +66,54 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     is_preset INTEGER NOT NULL DEFAULT 0
   )`);
 
+  db.run(sql`CREATE TABLE IF NOT EXISTS species_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS breed_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    species_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(species_name, name)
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
+    key TEXT PRIMARY KEY,
+    section TEXT NOT NULL,
+    label TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    required INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS form_sections (
+    key TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    display_order INTEGER NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS form_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    section_key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    input_type TEXT NOT NULL DEFAULT 'text',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    required INTEGER NOT NULL DEFAULT 0,
+    display_order INTEGER NOT NULL,
+    is_builtin INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_user_id INTEGER NOT NULL,
+    actor_role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_key TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT NOT NULL
+  )`);
+
   try {
     db.run(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
   } catch {
@@ -100,7 +148,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     created_at TEXT NOT NULL,
     last_updated_by INTEGER,
     last_updated_by_name TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    custom_fields TEXT
   )`);
   db.run(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
@@ -131,11 +180,154 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   } catch {
     db.run(sql`ALTER TABLE cases ADD COLUMN updated_at TEXT`);
   }
+  try {
+    db.run(sql`SELECT custom_fields FROM cases LIMIT 1`);
+  } catch {
+    db.run(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
+  }
 
   const existingBps = storage.getBreakpoints();
   if (existingBps.length === 0) {
     for (const bp of SEED_BREAKPOINTS) {
       storage.createBreakpoint(bp);
+    }
+  }
+
+  const existingSpecies = db.get<{ count: number }>(
+    sql`SELECT COUNT(*) as count FROM species_options`,
+  );
+  if (!existingSpecies || Number(existingSpecies.count) === 0) {
+    const defaults = [
+      "Bovine",
+      "Canine",
+      "Caprine",
+      "Equine",
+      "Feline",
+      "Ovine",
+      "Porcine",
+      "Avian",
+      "Bubaline",
+    ];
+    for (const name of defaults) {
+      db.run(
+        sql`INSERT INTO species_options (name, created_at) VALUES (${name}, ${new Date().toISOString()})`,
+      );
+    }
+  }
+
+  const existingBreeds = db.get<{ count: number }>(
+    sql`SELECT COUNT(*) as count FROM breed_options`,
+  );
+  if (!existingBreeds || Number(existingBreeds.count) === 0) {
+    const breedDefaults: Array<{ species: string; breeds: string[] }> = [
+      { species: "Bovine", breeds: ["Holstein Friesian", "Jersey", "Brown Swiss", "Local", "Crossbreed"] },
+      { species: "Canine", breeds: ["Labrador", "German Shepherd", "Golden Retriever", "Pug", "Local"] },
+      { species: "Caprine", breeds: ["Boer", "Saanen", "Jamunapari", "Barbari", "Local"] },
+      { species: "Equine", breeds: ["Thoroughbred", "Arabian", "Marwari", "Local"] },
+      { species: "Feline", breeds: ["Persian", "Siamese", "Maine Coon", "Local"] },
+      { species: "Ovine", breeds: ["Merino", "Suffolk", "Dorper", "Local"] },
+      { species: "Porcine", breeds: ["Yorkshire", "Landrace", "Duroc", "Local"] },
+      { species: "Avian", breeds: ["Broiler", "Layer", "Kadaknath", "Local"] },
+      { species: "Bubaline", breeds: ["Murrah", "Nili-Ravi", "Local"] },
+    ];
+    for (const row of breedDefaults) {
+      for (const breed of row.breeds) {
+        db.run(
+          sql`INSERT INTO breed_options (species_name, name, created_at)
+              VALUES (${row.species}, ${breed}, ${new Date().toISOString()})`,
+        );
+      }
+    }
+  }
+
+  const formFieldDefaults = [
+    ["ownerName", "owner", "Owner Name", 1, 1],
+    ["ownerAddress", "owner", "Owner Address", 1, 1],
+    ["ownerPhone", "owner", "Owner Phone", 1, 1],
+    ["species", "animal", "Species", 1, 1],
+    ["breed", "animal", "Breed", 1, 1],
+    ["animalName", "animal", "Animal Name", 1, 0],
+    ["age", "animal", "Age", 1, 0],
+    ["sex", "animal", "Sex", 1, 0],
+    ["sampleType", "sample", "Sample Type", 1, 0],
+    ["sampleDate", "sample", "Sample Date", 1, 0],
+    ["cultureResult", "sample", "Culture Result", 1, 0],
+    ["remarks", "final", "Remarks", 1, 0],
+  ] as const;
+  for (const [key, section, label, enabled, required] of formFieldDefaults) {
+    const exists = db.get<{ key: string }>(
+      sql`SELECT key FROM form_field_configs WHERE key = ${key}`,
+    );
+    if (!exists) {
+      db.run(
+        sql`INSERT INTO form_field_configs (key, section, label, enabled, required, updated_at)
+            VALUES (${key}, ${section}, ${label}, ${enabled}, ${required}, ${new Date().toISOString()})`,
+      );
+    }
+  }
+
+  const sectionSeeds = [
+    ["owner", "Owner Information", 1000],
+    ["animal", "Animal Information", 2000],
+    ["sample", "Sample Information", 3000],
+    ["ast", "AST Results", 4000],
+    ["final", "General Remarks", 5000],
+  ] as const;
+  for (const [key, title, displayOrder] of sectionSeeds) {
+    const exists = db.get<{ key: string }>(
+      sql`SELECT key FROM form_sections WHERE key = ${key}`,
+    );
+    if (!exists) {
+      db.run(
+        sql`INSERT INTO form_sections (key, title, display_order) VALUES (${key}, ${title}, ${displayOrder})`,
+      );
+    }
+  }
+
+  const questionSeeds: Array<{
+    key: string;
+    sectionKey: string;
+    label: string;
+    inputType: string;
+    enabled: number;
+    required: number;
+    displayOrder: number;
+    isBuiltin: number;
+  }> = [
+    { key: "ownerName", sectionKey: "owner", label: "Owner Name", inputType: "text", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1 },
+    { key: "ownerPhone", sectionKey: "owner", label: "Phone Number", inputType: "text", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1 },
+    { key: "ownerAddress", sectionKey: "owner", label: "Address", inputType: "textarea", enabled: 1, required: 1, displayOrder: 3000, isBuiltin: 1 },
+    { key: "species", sectionKey: "animal", label: "Species", inputType: "species", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1 },
+    { key: "breed", sectionKey: "animal", label: "Breed", inputType: "breed", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1 },
+    { key: "animalName", sectionKey: "animal", label: "Animal Name", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1 },
+    { key: "age", sectionKey: "animal", label: "Age", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1 },
+    { key: "sex", sectionKey: "animal", label: "Sex", inputType: "sex", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1 },
+    { key: "sampleType", sectionKey: "sample", label: "Sample Type", inputType: "text", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
+    { key: "sampleDate", sectionKey: "sample", label: "Sample Collection Date (BS)", inputType: "sampleDate", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1 },
+    { key: "cultureResult", sectionKey: "sample", label: "Culture / Organism Isolated", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1 },
+    { key: "astResults", sectionKey: "ast", label: "Antibiotic Sensitivity Test Results", inputType: "astResults", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
+    { key: "remarks", sectionKey: "final", label: "General Remarks", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1 },
+  ];
+  for (const q of questionSeeds) {
+    const exists = db.get<{ key: string }>(
+      sql`SELECT key FROM form_questions WHERE key = ${q.key}`,
+    );
+    if (!exists) {
+      db.run(
+        sql`INSERT INTO form_questions
+            (key, section_key, label, input_type, enabled, required, display_order, is_builtin, created_at)
+            VALUES (
+              ${q.key},
+              ${q.sectionKey},
+              ${q.label},
+              ${q.inputType},
+              ${q.enabled},
+              ${q.required},
+              ${q.displayOrder},
+              ${q.isBuiltin},
+              ${new Date().toISOString()}
+            )`,
+      );
     }
   }
 

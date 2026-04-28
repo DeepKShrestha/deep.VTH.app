@@ -86,6 +86,7 @@ export const cases = sqliteTable("cases", {
   lastUpdatedBy: integer("last_updated_by"),
   lastUpdatedByName: text("last_updated_by_name"),
   updatedAt: text("updated_at"),
+  customFields: text("custom_fields"),
 });
 
 export const breakpoints = sqliteTable("breakpoints", {

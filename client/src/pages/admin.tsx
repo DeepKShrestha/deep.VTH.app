@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -17,8 +17,34 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, UserCheck, UserX, Download, Shield, Users, Clock } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Download, Plus, Trash2, UserCheck, UserX, Users, Clock } from "lucide-react";
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
+type FormEditLog = {
+  id: number;
+  actorUserId: number;
+  actorRole: string;
+  actorName: string;
+  action: string;
+  targetKey: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  createdAt: string;
+};
+
+const DEFAULT_BUILTIN_QUESTIONS = [
+  { sectionTitle: "Owner Information", key: "ownerName", label: "Owner Name" },
+  { sectionTitle: "Owner Information", key: "ownerPhone", label: "Phone Number" },
+  { sectionTitle: "Owner Information", key: "ownerAddress", label: "Address" },
+  { sectionTitle: "Animal Information", key: "species", label: "Species" },
+  { sectionTitle: "Animal Information", key: "breed", label: "Breed" },
+  { sectionTitle: "Animal Information", key: "animalName", label: "Animal Name" },
+  { sectionTitle: "Animal Information", key: "age", label: "Age" },
+  { sectionTitle: "Animal Information", key: "sex", label: "Sex" },
+  { sectionTitle: "Sample Information", key: "sampleType", label: "Sample Type" },
+  { sectionTitle: "Sample Information", key: "sampleDate", label: "Sample Collection Date (BS)" },
+  { sectionTitle: "Sample Information", key: "cultureResult", label: "Culture / Organism Isolated" },
+  { sectionTitle: "General Remarks", key: "remarks", label: "General Remarks" },
+];
 
 function designationLabel(d: string) {
   const map: Record<string, string> = {
@@ -56,6 +82,13 @@ export default function AdminPanel() {
 
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
   const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
+  const [newSpeciesName, setNewSpeciesName] = useState("");
+  const [selectedBreedSpecies, setSelectedBreedSpecies] = useState("");
+  const [newBreedName, setNewBreedName] = useState("");
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+  const [newQuestionLabelBySection, setNewQuestionLabelBySection] = useState<Record<string, string>>({});
+  const [newQuestionTypeBySection, setNewQuestionTypeBySection] = useState<Record<string, string>>({});
+  const [showAuditLog, setShowAuditLog] = useState(false);
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -68,6 +101,49 @@ export default function AdminPanel() {
   const { data: allUsers = [] } = useQuery<SafeUser[]>({
     queryKey: ["/api/admin/users"],
   });
+  const { data: speciesOptions = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["/api/admin/species-options"],
+  });
+  const { data: formDefinition } = useQuery<{
+    sections: Array<{
+      key: string;
+      title: string;
+      displayOrder: number;
+      questions: Array<{
+        id: number;
+        key: string;
+        label: string;
+        inputType: string;
+        enabled: boolean;
+        required: boolean;
+        displayOrder: number;
+        isBuiltin: boolean;
+      }>;
+    }>;
+  }>({
+    queryKey: ["/api/admin/form-definition"],
+  });
+  const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
+    queryFn: async () => {
+      if (!selectedBreedSpecies.trim()) return [];
+      const res = await apiRequest(
+        "GET",
+        `/api/admin/breed-options?species=${encodeURIComponent(selectedBreedSpecies)}`,
+      );
+      return res.json();
+    },
+    enabled: Boolean(selectedBreedSpecies.trim()),
+  });
+  const { data: formEditLogs = [] } = useQuery<FormEditLog[]>({
+    queryKey: ["/api/admin/form-edit-logs"],
+  });
+
+  useEffect(() => {
+    if (!selectedBreedSpecies) return;
+    const stillExists = speciesOptions.some((s) => s.name === selectedBreedSpecies);
+    if (!stillExists) setSelectedBreedSpecies("");
+  }, [speciesOptions, selectedBreedSpecies]);
 
   const { data: downloadRequests = [] } = useQuery<(DownloadRequest & { userName: string; userDesignation: string })[]>({
     queryKey: ["/api/admin/download-requests"],
@@ -181,6 +257,134 @@ export default function AdminPanel() {
     },
   });
 
+  const addSpeciesMutation = useMutation({
+    mutationFn: async (name: string) => {
+      await apiRequest("POST", "/api/admin/species-options", { name });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/species-options"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/species-options"] });
+      setNewSpeciesName("");
+      toast({ title: "Species added" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to add species",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteSpeciesMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/admin/species-options/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/species-options"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/species-options"] });
+      toast({ title: "Species removed" });
+    },
+  });
+  const addBreedMutation = useMutation({
+    mutationFn: async (payload: { species: string; name: string }) => {
+      await apiRequest("POST", "/api/admin/breed-options", payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/breed-options"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-edit-logs"] });
+      setNewBreedName("");
+      toast({ title: "Breed added" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to add breed",
+        variant: "destructive",
+      });
+    },
+  });
+  const deleteBreedMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/admin/breed-options/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/breed-options"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-edit-logs"] });
+      toast({ title: "Breed removed" });
+    },
+  });
+
+  const addSectionMutation = useMutation({
+    mutationFn: async (title: string) => {
+      const res = await apiRequest("POST", "/api/admin/form-sections", { title });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+      setNewSectionTitle("");
+      toast({ title: "Section added" });
+    },
+  });
+
+  const moveSectionMutation = useMutation({
+    mutationFn: async (payload: { key: string; direction: "up" | "down" }) => {
+      await apiRequest("PATCH", `/api/admin/form-sections/${payload.key}/move`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    },
+  });
+
+  const addQuestionMutation = useMutation({
+    mutationFn: async (payload: {
+      sectionKey: string;
+      label: string;
+      inputType: string;
+    }) => {
+      const res = await apiRequest("POST", "/api/admin/form-questions", payload);
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+      setNewQuestionLabelBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
+      toast({ title: "Question added" });
+    },
+  });
+
+  const updateQuestionMutation = useMutation({
+    mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean }) => {
+      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+      toast({ title: "Question updated" });
+    },
+  });
+
+  const moveQuestionMutation = useMutation({
+    mutationFn: async (payload: { id: number; direction: "up" | "down" }) => {
+      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}/move`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    },
+  });
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -221,7 +425,7 @@ export default function AdminPanel() {
       </div>
 
       <Tabs defaultValue="pending">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="pending" data-testid="tab-pending">
             Pending ({pendingUsers.length})
           </TabsTrigger>
@@ -233,6 +437,9 @@ export default function AdminPanel() {
           </TabsTrigger>
           <TabsTrigger value="password-resets" data-testid="tab-password-resets">
             Password Resets ({pendingPasswordResets.length})
+          </TabsTrigger>
+          <TabsTrigger value="form-options" data-testid="tab-form-options">
+            Edit Form
           </TabsTrigger>
         </TabsList>
 
@@ -541,6 +748,459 @@ export default function AdminPanel() {
                 </CardContent>
               </Card>
             ))
+          )}
+        </TabsContent>
+
+        <TabsContent value="form-options" className="space-y-3 mt-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Register Form Layout (Sections & Questions)</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Add custom sections and questions, and rearrange them. Built-in questions can be hidden/required, and custom questions will appear in Register New Case.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Input
+                  value={newSectionTitle}
+                  onChange={(e) => setNewSectionTitle(e.target.value)}
+                  placeholder="Add section (e.g. Owner Details)"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => addSectionMutation.mutate(newSectionTitle.trim())}
+                  disabled={!newSectionTitle.trim() || addSectionMutation.isPending}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add section
+                </Button>
+              </div>
+
+              {(formDefinition?.sections ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No server form-definition found yet. Built-in questions still available below.</p>
+              ) : (
+                <div className="space-y-3">
+                  {(formDefinition?.sections ?? []).map((section, idx, arr) => (
+                    <div key={section.key} className="rounded border">
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium truncate">{section.title}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            key: {section.key}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "up" })}
+                            disabled={idx === 0}
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "down" })}
+                            disabled={idx === arr.length - 1}
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="p-3 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="sm:col-span-2">
+                            <Input
+                              value={newQuestionLabelBySection[section.key] || ""}
+                              onChange={(e) =>
+                                setNewQuestionLabelBySection((prev) => ({
+                                  ...prev,
+                                  [section.key]: e.target.value,
+                                }))
+                              }
+                              placeholder="Add question (e.g. Owner Email)"
+                            />
+                          </div>
+                          <Select
+                            value={newQuestionTypeBySection[section.key] || "text"}
+                            onValueChange={(v) =>
+                              setNewQuestionTypeBySection((prev) => ({ ...prev, [section.key]: v }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text">Text</SelectItem>
+                              <SelectItem value="textarea">Long text</SelectItem>
+                              <SelectItem value="number">Number</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() =>
+                              addQuestionMutation.mutate({
+                                sectionKey: section.key,
+                                label: (newQuestionLabelBySection[section.key] || "").trim(),
+                                inputType: newQuestionTypeBySection[section.key] || "text",
+                              })
+                            }
+                            disabled={
+                              !(newQuestionLabelBySection[section.key] || "").trim() ||
+                              addQuestionMutation.isPending
+                            }
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add question
+                          </Button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {(section.questions ?? []).length === 0 ? (
+                            <p className="text-xs text-muted-foreground">No questions in this section.</p>
+                          ) : (
+                            section.questions.map((q, qIdx) => (
+                              <div
+                                key={q.id}
+                                className="flex items-center justify-between gap-2 rounded border px-3 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm truncate">
+                                    {q.label}{" "}
+                                    {q.isBuiltin ? (
+                                      <span className="text-xs text-muted-foreground">(built-in)</span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">(custom)</span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground truncate">
+                                    key: {q.key} · type: {q.inputType}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "up" })}
+                                    disabled={qIdx === 0}
+                                  >
+                                    <ArrowUp className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "down" })}
+                                    disabled={qIdx === section.questions.length - 1}
+                                  >
+                                    <ArrowDown className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={q.enabled ? "default" : "outline"}
+                                    className="h-8"
+                                    onClick={() =>
+                                      updateQuestionMutation.mutate({
+                                        id: q.id,
+                                        enabled: !q.enabled,
+                                        required: q.required,
+                                      })
+                                    }
+                                  >
+                                    {q.enabled ? "Visible" : "Hidden"}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={q.required ? "default" : "outline"}
+                                    className="h-8"
+                                    onClick={() =>
+                                      updateQuestionMutation.mutate({
+                                        id: q.id,
+                                        required: !q.required,
+                                        enabled: q.enabled,
+                                      })
+                                    }
+                                  >
+                                    {q.required ? "Required" : "Optional"}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Edit Existing Register Form Fields</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Classic controls for built-in fields: set each as shown/hidden and compulsory/optional.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(formDefinition?.sections ?? []).map((section) => {
+                const builtinQuestions = (section.questions ?? []).filter((q) => q.isBuiltin);
+                if (builtinQuestions.length === 0) return null;
+                return (
+                  <div key={`builtin-${section.key}`} className="space-y-2">
+                    <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {section.title}
+                    </h4>
+                    {builtinQuestions.map((q) => (
+                      <div
+                        key={q.id}
+                        className="flex items-center justify-between rounded border px-3 py-2"
+                      >
+                        <span className="text-sm">{q.label}</span>
+                        <div className="flex items-center gap-2 text-xs">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.enabled ? "default" : "outline"}
+                            className="h-7"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                enabled: !q.enabled,
+                                required: q.required,
+                              })
+                            }
+                          >
+                            {q.enabled ? "Shown" : "Hidden"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.required ? "default" : "outline"}
+                            className="h-7"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                required: !q.required,
+                                enabled: q.enabled,
+                              })
+                            }
+                          >
+                            {q.required ? "Compulsory" : "Optional"}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+              {(formDefinition?.sections ?? []).length === 0 && (
+                <div className="space-y-2">
+                  {DEFAULT_BUILTIN_QUESTIONS.map((q) => (
+                    <div
+                      key={q.key}
+                      className="flex items-center justify-between rounded border px-3 py-2"
+                    >
+                      <span className="text-sm">{q.sectionTitle} - {q.label}</span>
+                      <span className="text-xs text-muted-foreground">
+                        Restart server once to restore editable toggles for this field
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Edit Register Form: Species</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Controls species values used in Register New Case. This is kept in
+                Admin Panel so case entry users can register cases without form
+                configuration controls in the same screen.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2">
+                <Input
+                  value={newSpeciesName}
+                  onChange={(e) => setNewSpeciesName(e.target.value)}
+                  placeholder="Add species (e.g. Camelid)"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => addSpeciesMutation.mutate(newSpeciesName.trim())}
+                  disabled={!newSpeciesName.trim() || addSpeciesMutation.isPending}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {speciesOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No species configured.</p>
+                ) : (
+                  speciesOptions.map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between rounded border px-3 py-2"
+                    >
+                      <span className="text-sm">{s.name}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                        onClick={() => deleteSpeciesMutation.mutate(s.id)}
+                        data-testid={`button-delete-species-${s.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Edit Register Form: Breeds by Species</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Manage breed dropdown options for each species. Users can still choose "Other" and type manually.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Species</Label>
+                <Select value={selectedBreedSpecies} onValueChange={setSelectedBreedSpecies}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select species to manage breeds" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {speciesOptions.map((s) => (
+                      <SelectItem key={s.id} value={s.name}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={newBreedName}
+                  onChange={(e) => setNewBreedName(e.target.value)}
+                  placeholder="Add breed (e.g. Belgian Malinois)"
+                  disabled={!selectedBreedSpecies}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() =>
+                    addBreedMutation.mutate({
+                      species: selectedBreedSpecies.trim(),
+                      name: newBreedName.trim(),
+                    })
+                  }
+                  disabled={
+                    !selectedBreedSpecies.trim() || !newBreedName.trim() || addBreedMutation.isPending
+                  }
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add
+                </Button>
+              </div>
+              {!selectedBreedSpecies ? (
+                <p className="text-xs text-muted-foreground">
+                  Select a species first to view and edit breed options.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {breedOptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No breeds configured for this species.</p>
+                  ) : (
+                    breedOptions.map((b) => (
+                      <div
+                        key={b.id}
+                        className="flex items-center justify-between rounded border px-3 py-2"
+                      >
+                        <span className="text-sm">{b.name}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                          onClick={() => deleteBreedMutation.mutate(b.id)}
+                          data-testid={`button-delete-breed-${b.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Remove
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAuditLog((v) => !v)}
+            >
+              {showAuditLog ? "Hide Form Edit Audit Log" : "Show Form Edit Audit Log"}
+            </Button>
+          </div>
+
+          {showAuditLog && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Form Edit Audit Log</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {formEditLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No edits recorded yet.</p>
+                ) : (
+                  formEditLogs.slice(0, 30).map((log) => (
+                    <div key={log.id} className="rounded border px-3 py-2 text-xs">
+                      <div className="font-medium">
+                        {log.actorName} ({log.actorRole}) - {log.action}
+                      </div>
+                      <div className="text-muted-foreground">
+                        Target: {log.targetKey || "n/a"} |{" "}
+                        {new Date(log.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
       </Tabs>

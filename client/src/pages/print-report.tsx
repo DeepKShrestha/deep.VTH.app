@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Case } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { ArrowLeft, Printer } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
 
@@ -18,6 +19,7 @@ interface AstRow {
 
 export default function PrintReport() {
   const params = useParams<{ id: string }>();
+  const [compactMode, setCompactMode] = useState(false);
 
   const { data: caseData, isLoading } = useQuery<Case>({
     queryKey: ["/api/cases", params.id],
@@ -90,24 +92,34 @@ export default function PrintReport() {
           </Link>
           <span className="text-sm font-medium">Print Preview</span>
         </div>
-        <Button
-          onClick={handlePrint}
-          size="sm"
-          className="gap-1.5"
-          data-testid="button-print"
-        >
-          <Printer className="w-3.5 h-3.5" />
-          Print / Save PDF
-        </Button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Compact</span>
+            <Switch
+              checked={compactMode}
+              onCheckedChange={setCompactMode}
+              aria-label="Compact print mode"
+            />
+          </div>
+          <Button
+            onClick={handlePrint}
+            size="sm"
+            className="gap-1.5"
+            data-testid="button-print"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            Print / Save PDF
+          </Button>
+        </div>
       </div>
 
             {/* Printable Report */}
       <div
         id="print-root"
-        className="max-w-[210mm] mx-auto bg-white text-black p-8 sm:p-12 my-4 sm:my-8 print:m-0 print:p-0 print:max-w-none"
+        className={`print-a4 ${compactMode ? "compact-mode" : ""} max-w-[210mm] mx-auto bg-white text-black p-6 sm:p-10 my-4 sm:my-8 print:m-0 print:p-0 print:max-w-none`}
       >
         {/* Header */}
-        <div className="text-center border-b-2 border-black pb-4 mb-4">
+        <div className="print-section text-center border-b-2 border-black pb-3 mb-3">
           <h1 className="text-xl font-bold uppercase tracking-wide text-black">
             Veterinary Teaching Hospital
           </h1>
@@ -117,7 +129,7 @@ export default function PrintReport() {
         </div>
 
         {/* Case Info Row */}
-        <div className="flex justify-between items-start mb-2 text-sm">
+        <div className="print-section flex justify-between items-start mb-2 text-sm">
           <div>
             <span className="font-semibold text-black">Case No: </span>
             <span className="text-black">{caseData.caseNumber}</span>
@@ -134,7 +146,7 @@ export default function PrintReport() {
             )}
           </div>
         </div>
-        <div className="flex justify-between items-start mb-2 text-sm">
+        <div className="print-section flex justify-between items-start mb-2 text-sm">
           {caseData.billNumber && (
             <div>
               <span className="font-semibold text-black">Bill/Reg No: </span>
@@ -160,8 +172,8 @@ export default function PrintReport() {
         <div className="mb-4" />
 
        {/* Details Table */}
-<div className="border border-gray-400 mb-4">
-  <table className="w-full text-sm">
+<div className="print-section border border-gray-400 mb-4">
+  <table className="w-full text-sm print-table">
     <tbody>
       <tr className="border-b border-gray-400">
   <td className="py-2 px-3 font-semibold bg-gray-50 w-32 text-black">
@@ -252,11 +264,11 @@ export default function PrintReport() {
 
         {/* AST Results */}
         {astResults.length > 0 && (
-          <div className="mb-4">
+          <div className="print-section mb-4">
             <h2 className="text-sm font-bold uppercase mb-2 text-black">
               Antibiotic Sensitivity Test Results
             </h2>
-            <table className="w-full text-sm border border-gray-400">
+            <table className="w-full text-sm border border-gray-400 print-table">
               <thead>
   <tr className="bg-gray-100">
     <th className="py-2 px-3 text-left border border-gray-400 font-semibold w-10 text-black">
@@ -329,7 +341,7 @@ export default function PrintReport() {
 
         {/* Remarks */}
         {caseData.remarks && (
-          <div className="mb-4">
+          <div className="print-section mb-4">
             <h2 className="text-sm font-bold uppercase mb-2 text-black">
               Remarks
             </h2>
@@ -340,7 +352,7 @@ export default function PrintReport() {
         )}
 
         {/* Signature Area */}
-        <div className="mt-20 flex justify-between items-end text-sm">
+        <div className="print-section mt-14 flex justify-between items-end text-sm">
           <div className="text-center">
             <div className="border-t border-gray-400 pt-1 px-8">
               <p className="font-semibold text-black">Laboratory Technician</p>
@@ -354,7 +366,7 @@ export default function PrintReport() {
         </div>
 
         {/* Footer */}
-        <div className="mt-6 pt-3 border-t border-gray-300 text-center text-xs text-gray-500">
+        <div className="print-section mt-5 pt-3 border-t border-gray-300 text-center text-xs text-gray-500">
           <p>
             This report is generated by the Veterinary Teaching Hospital AST
             Report System.

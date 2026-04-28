@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { insertCaseSchema } from "@shared/schema";
 import { storage } from "../storage";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
 import {
   canDownload,
   canRegister,
@@ -15,6 +17,87 @@ import { MESSAGES } from "./messages";
 import { rowsToCsv, toExportRows } from "./cases-export";
 
 export function registerCaseAndDownloadRoutes(app: Express) {
+  app.get("/api/species-options", requireAuth, canRegister, (_req, res) => {
+    const rows = db.all<{ name: string }>(
+      sql`SELECT name FROM species_options ORDER BY name ASC`,
+    );
+    res.json(rows.map((r) => r.name));
+  });
+
+  app.get("/api/breed-options", requireAuth, canRegister, (req, res) => {
+    const species = String(req.query.species ?? "").trim();
+    if (!species) return res.json([]);
+    const rows = db.all<{ name: string }>(
+      sql`SELECT name FROM breed_options WHERE species_name = ${species} ORDER BY name ASC`,
+    );
+    res.json(rows.map((r) => r.name));
+  });
+
+  app.get("/api/form-config", requireAuth, canRegister, (_req, res) => {
+    const rows = db.all<{
+      key: string;
+      section: string;
+      label: string;
+      enabled: number;
+      required: number;
+    }>(
+      sql`SELECT key, section, label, enabled, required
+          FROM form_field_configs
+          ORDER BY section ASC, label ASC`,
+    );
+    res.json(
+      rows.map((r) => ({
+        ...r,
+        enabled: Boolean(r.enabled),
+        required: Boolean(r.required),
+      })),
+    );
+  });
+
+  app.get("/api/form-definition", requireAuth, canRegister, (_req, res) => {
+    const sections = db.all<{ key: string; title: string; display_order: number }>(
+      sql`SELECT key, title, display_order FROM form_sections ORDER BY display_order ASC`,
+    );
+    const questions = db.all<{
+      id: number;
+      key: string;
+      section_key: string;
+      label: string;
+      input_type: string;
+      enabled: number;
+      required: number;
+      display_order: number;
+      is_builtin: number;
+    }>(
+      sql`SELECT id, key, section_key, label, input_type, enabled, required, display_order, is_builtin
+          FROM form_questions
+          ORDER BY section_key ASC, display_order ASC`,
+    );
+    const bySection = new Map<string, typeof questions>();
+    for (const q of questions) {
+      const list = bySection.get(q.section_key) ?? [];
+      list.push(q);
+      bySection.set(q.section_key, list);
+    }
+    res.json({
+      sections: sections.map((s) => ({
+        key: s.key,
+        title: s.title,
+        displayOrder: s.display_order,
+        questions: (bySection.get(s.key) ?? []).map((q) => ({
+          id: q.id,
+          key: q.key,
+          label: q.label,
+          inputType: q.input_type,
+          enabled: Boolean(q.enabled),
+          required: Boolean(q.required),
+          displayOrder: q.display_order,
+          isBuiltin: Boolean(q.is_builtin),
+        })),
+      })),
+    });
+  });
+
   app.post("/api/download-requests", requireAuth, (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const { dateFrom, dateTo, reason } = req.body;

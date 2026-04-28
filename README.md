@@ -45,6 +45,18 @@ This README is the developer + operations guide for future changes and deploymen
 
 ## Common Developer Tasks
 
+- Configure Register New Case form from Admin UI:
+  - Open Admin Panel -> `Edit Form`
+  - Use **Register Form Layout (Sections & Questions)** to:
+    - add new sections
+    - add custom questions inside sections (`text`, `long text`, `number`)
+    - move sections/questions up or down
+  - Use **Edit Existing Register Form Fields** for built-in questions:
+    - set `Shown/Hidden`
+    - set `Compulsory/Optional`
+  - Use **Species** and **Breeds by Species** cards to manage dropdown options
+  - Form edit audit log is hidden by default; open it with the toggle button at the bottom
+
 - Add a new backend endpoint:
   - Add route in the relevant file under `server/routes/`
   - Reuse shared middleware from `server/routes/context.ts`
@@ -113,8 +125,33 @@ Data is not removed on restart unless:
 Exception (intentional behavior):
 
 - Sessions are intentionally cleared at server startup, so all users must log in again after a restart.
+- Register form configuration is persisted in DB tables:
+  - `form_sections`
+  - `form_questions`
+  - `form_edit_audit_logs`
+  - `species_options`
+  - `breed_options`
+- Custom answers from admin-added questions are stored per case in `cases.custom_fields`.
 
 At startup, server logs the active DB file path.
+
+## Register Form Builder APIs
+
+The register form is now server-driven by section/question metadata.
+
+- Admin configuration APIs:
+  - `GET /api/admin/form-definition`
+  - `POST /api/admin/form-sections`
+  - `PATCH /api/admin/form-sections/:key/move`
+  - `POST /api/admin/form-questions`
+  - `PATCH /api/admin/form-questions/:id`
+  - `PATCH /api/admin/form-questions/:id/move`
+- Register-screen read API:
+  - `GET /api/form-definition`
+- Species/breed option APIs:
+  - `GET /api/admin/species-options`, `POST /api/admin/species-options`, `DELETE /api/admin/species-options/:id`
+  - `GET /api/admin/breed-options`, `POST /api/admin/breed-options`, `DELETE /api/admin/breed-options/:id`
+  - `GET /api/species-options`, `GET /api/breed-options?species=...`
 
 ## Session Behavior
 

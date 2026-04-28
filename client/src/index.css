@@ -153,21 +153,64 @@
 @media print {
   @page {
     size: A4;
-    margin: 10mm; /* was 15mm, reduces top/bottom space a bit */
+    margin: 10mm;
   }
 
   body {
     background: white !important;
     color: black !important;
-    font-size: 10pt !important; /* was 11pt */
+    font-size: 10pt !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   #print-root {
-    width: 100%;
-    max-width: 210mm;
-    margin: 0 auto;
+    width: 190mm;
+    max-width: 190mm;
+    margin: 0 auto !important;
     box-sizing: border-box;
-    padding: 6mm;            /* smaller than the current 8–12mm */
+    padding: 0 !important;
+    line-height: 1.25;
+  }
+
+  #print-root h1 {
+    font-size: 15pt !important;
+  }
+
+  #print-root h2 {
+    font-size: 10.5pt !important;
+  }
+
+  #print-root p,
+  #print-root td,
+  #print-root th,
+  #print-root span {
+    font-size: 9.5pt;
+  }
+
+  .print-a4 .print-section {
+    page-break-inside: avoid;
+    break-inside: avoid-page;
+  }
+
+  .print-a4 .print-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  .print-a4 .print-table thead {
+    display: table-header-group;
+  }
+
+  .print-a4 .print-table tfoot {
+    display: table-footer-group;
+  }
+
+  .print-a4 .print-table td,
+  .print-a4 .print-table th {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
   }
 
   .no-print {
@@ -177,6 +220,35 @@
   .print-only {
     display: block !important;
   }
+}
+
+.print-a4.compact-mode {
+  line-height: 1.15;
+}
+
+.print-a4.compact-mode h1 {
+  font-size: 1.05rem;
+}
+
+.print-a4.compact-mode h2 {
+  font-size: 0.78rem;
+}
+
+.print-a4.compact-mode p,
+.print-a4.compact-mode td,
+.print-a4.compact-mode th,
+.print-a4.compact-mode span {
+  font-size: 0.74rem;
+}
+
+.print-a4.compact-mode .print-section {
+  margin-bottom: 0.55rem;
+}
+
+.print-a4.compact-mode .print-table td,
+.print-a4.compact-mode .print-table th {
+  padding-top: 0.2rem;
+  padding-bottom: 0.2rem;
 }
 
 @layer utilities {
