@@ -8,6 +8,17 @@ Veterinary AST case management application built with:
 
 This README is the developer + operations guide for future changes and deployments.
 
+## Quick Start (5 Minutes)
+
+1. Install dependencies: `npm install`
+2. Start app locally: `npm run dev`
+3. Open app in browser (default local URL from terminal output)
+4. Run quality checks before changes are merged:
+   - `npm run test`
+   - `npm run check`
+   - `npm run build`
+5. Use `npm run verify` to run the standard full check sequence.
+
 ## Architecture
 
 - `client/`: UI pages, components, and client auth/session bootstrap.
@@ -32,6 +43,28 @@ This README is the developer + operations guide for future changes and deploymen
 - Build production bundle: `npm run build`
 - Run all verification in sequence: `npm run verify`
 
+## Common Developer Tasks
+
+- Add a new backend endpoint:
+  - Add route in the relevant file under `server/routes/`
+  - Reuse shared middleware from `server/routes/context.ts`
+  - Reuse API messages from `server/routes/messages.ts` when possible
+  - Add/adjust tests in `server/routes/*.test.ts`
+
+- Add a new frontend page:
+  - Create page in `client/src/pages/`
+  - Register route in `client/src/App.tsx`
+  - Use existing UI primitives from `client/src/components/ui/`
+
+- Add or update DB columns:
+  - Update schema in `shared/schema.ts`
+  - Add non-destructive migration SQL under `migrations/` (and `migrations-pg/` if needed)
+  - Keep compatibility for existing SQLite data
+
+- Add role/permission logic:
+  - Keep role checks centralized in `server/routes/context.ts`
+  - Verify both backend authorization and frontend visibility behavior
+
 ## Environment Variables
 
 Copy `.env.example` values into your deployment environment:
@@ -42,6 +75,7 @@ Copy `.env.example` values into your deployment environment:
 - `DB_FILE`: SQLite file path (set this explicitly in production)
 - `DATABASE_URL`: Postgres connection string (required for Postgres checks/migrations)
 - `ALLOW_DEFAULT_ADMIN`: allow creating default admin when DB is empty
+- `LOG_RESPONSE_BODIES`: include JSON API response payloads in logs (`true`/`false`)
 
 Important:
 
@@ -76,7 +110,24 @@ Data is not removed on restart unless:
 - DB file is manually deleted
 - delete/reset API actions are called
 
+Exception (intentional behavior):
+
+- Sessions are intentionally cleared at server startup, so all users must log in again after a restart.
+
 At startup, server logs the active DB file path.
+
+## Session Behavior
+
+- Auth token is stored in `sessionStorage` (not `localStorage`):
+  - page reload keeps login in the same tab
+  - closing the tab/window logs user out
+- Users can set inactivity auto-logout timeout from Profile:
+  - `1 min`, `3 min`, `5 min`, `10 min`, `30 min`
+  - `Never` is available only for `admin` and `superadmin`
+- When auto-logout happens, login page shows a subtle message:
+  - "Logged out due to inactivity"
+- Server restart policy:
+  - all existing sessions are invalidated at startup
 
 ## Health and Readiness
 
@@ -127,6 +178,16 @@ All pull requests should pass CI before merge.
 - Release process: `docs/RELEASE.md`
 - Operations and incident basics: `docs/OPERATIONS.md`
 
+## Release Checklist (Quick Link)
+
+Before shipping:
+
+1. `npm run verify` passes locally
+2. Environment variables are set correctly for target environment
+3. Backup/restore commands are verified for current DB mode
+4. CI passes on GitHub
+5. Follow final release steps in `docs/RELEASE.md`
+
 ## Deployment Notes (Single Instance)
 
 This app is currently suitable for single-instance deployment with persistent disk.
@@ -176,3 +237,22 @@ For mass-scale multi-instance use, prioritize:
 ## Known Warnings
 
 - Build prints a PostCSS plugin warning (`from` option missing). It does not currently block build, but should be cleaned up in dependency maintenance.
+
+## Troubleshooting
+
+- Blank page in development:
+  - Ensure `NODE_ENV=development` for local run
+  - Confirm server is running and check browser console/network tab
+
+- Unexpected logout:
+  - Closing tab/window logs out by design (`sessionStorage`)
+  - Server restart invalidates all sessions by design
+  - Inactivity timeout may auto-logout users based on profile setting
+
+- `/api/ready` returns non-ready:
+  - Verify DB path (`DB_FILE`) exists and is writable
+  - Check startup logs for database path and error details
+
+- Deployed domain not active:
+  - Verify DNS records match host provider instructions exactly
+  - Wait for propagation and SSL issuance to complete

@@ -30,6 +30,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   )`);
+  // Force fresh auth after every server restart.
+  db.run(sql`DELETE FROM sessions`);
   db.run(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
   db.run(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (

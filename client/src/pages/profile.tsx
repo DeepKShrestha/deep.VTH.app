@@ -7,10 +7,28 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { ArrowLeft, User as UserIcon } from "lucide-react";
+import {
+  INACTIVITY_TIMEOUT_LABELS,
+  type InactivityTimeoutOption,
+} from "../lib/auth";
 
 export default function ProfilePage() {
-  const { user, isSuperAdmin, updateCurrentUser } = useAuth();
+  const {
+    user,
+    isSuperAdmin,
+    isAdmin,
+    updateCurrentUser,
+    inactivityTimeout,
+    setInactivityTimeout,
+  } = useAuth();
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
@@ -286,6 +304,41 @@ export default function ProfilePage() {
                   Only superadmin can edit username, email, and designation here.
                 </p>
               )}
+            </div>
+
+            <div className="pt-4 border-t border-border space-y-2">
+              <Label
+                htmlFor="inactivity-timeout"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                Session timeout
+              </Label>
+              <Select
+                value={inactivityTimeout}
+                onValueChange={(value) =>
+                  setInactivityTimeout(value as InactivityTimeoutOption)
+                }
+              >
+                <SelectTrigger id="inactivity-timeout" className="h-8 text-xs">
+                  <SelectValue placeholder="Auto logout time" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["1m", "3m", "5m", "10m", "30m"] as const).map((value) => (
+                    <SelectItem key={value} value={value} className="text-xs">
+                      {INACTIVITY_TIMEOUT_LABELS[value]}
+                    </SelectItem>
+                  ))}
+                  {isAdmin && (
+                    <SelectItem value="never" className="text-xs">
+                      {INACTIVITY_TIMEOUT_LABELS.never}
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Automatically logs out when inactive. "Never" is available only
+                to admins.
+              </p>
             </div>
 
             <div className="pt-2 flex justify-end">

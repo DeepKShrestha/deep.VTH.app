@@ -32,6 +32,17 @@ Use `health` for process checks and `ready` for traffic routing.
 - Ensure `DB_FILE` points to persistent disk/volume.
 - Keep WAL files alongside DB file (`*.db-wal`, `*.db-shm`).
 
+### Intentional auth behavior
+
+- Sessions are intentionally cleared on every server startup.
+- Result: all users (including admins/superadmins) must log in again after restart.
+- This is expected behavior, not an outage condition.
+
+- Client auth token uses tab-scoped storage (`sessionStorage`):
+  - page reload in same tab keeps login
+  - closing tab/window ends login
+- Inactivity auto-logout is intentionally enabled and user-configurable.
+
 ## Backup operations
 
 - Backup: `npm run backup:db`

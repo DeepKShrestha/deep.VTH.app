@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { useAuth } from "@/lib/auth";
+import { INACTIVITY_LOGOUT_FLAG_KEY, useAuth } from "@/lib/auth";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,14 @@ export default function LoginPage() {
   const [forgotNewPassword, setForgotNewPassword] = useState("");
   const [forgotReason, setForgotReason] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
+
+  useEffect(() => {
+    const wasInactiveLogout = sessionStorage.getItem(INACTIVITY_LOGOUT_FLAG_KEY);
+    if (wasInactiveLogout === "1") {
+      sessionStorage.removeItem(INACTIVITY_LOGOUT_FLAG_KEY);
+      toast({ title: "Logged out due to inactivity" });
+    }
+  }, [toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

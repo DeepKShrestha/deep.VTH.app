@@ -4,14 +4,34 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import type { SafeUser } from "@shared/schema";
+
+export type InactivityTimeoutOption =
+  | "1m"
+  | "3m"
+  | "5m"
+  | "10m"
+  | "30m"
+  | "never";
+
+export const INACTIVITY_TIMEOUT_LABELS: Record<InactivityTimeoutOption, string> = {
+  "1m": "1 minute",
+  "3m": "3 minutes",
+  "5m": "5 minutes",
+  "10m": "10 minutes",
+  "30m": "30 minutes",
+  never: "Never",
+};
 
 interface AuthContextType {
   user: SafeUser | null;
   token: string | null;
   isLoading: boolean;
+  inactivityTimeout: InactivityTimeoutOption;
+  setInactivityTimeout: (value: InactivityTimeoutOption) => void;
   login: (
     usernameOrEmail: string,
     password: string
@@ -40,9 +60,22 @@ interface SignupData {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Simple in‑memory token (lost on reload, but stable during a session)
+// In-memory token + sessionStorage (persists on reload, clears when tab/window closes)
 let storedToken: string | null = null;
 const TOKEN_STORAGE_KEY = "auth_token";
+export const INACTIVITY_LOGOUT_FLAG_KEY = "logged_out_inactivity";
+const INACTIVITY_TIMEOUT_STORAGE_KEY = "inactivity_timeout";
+const DEFAULT_INACTIVITY_TIMEOUT: InactivityTimeoutOption = "10m";
+const INACTIVITY_TIMEOUT_MS: Record<
+  Exclude<InactivityTimeoutOption, "never">,
+  number
+> = {
+  "1m": 1 * 60 * 1000,
+  "3m": 3 * 60 * 1000,
+  "5m": 5 * 60 * 1000,
+  "10m": 10 * 60 * 1000,
+  "30m": 30 * 60 * 1000,
+};
 
 export function getAuthToken(): string | null {
   return storedToken;
@@ -51,18 +84,34 @@ export function getAuthToken(): string | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SafeUser | null>(null);
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    return sessionStorage.getItem(TOKEN_STORAGE_KEY);
   });
   const [isLoading, setIsLoading] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem(TOKEN_STORAGE_KEY));
+    return Boolean(sessionStorage.getItem(TOKEN_STORAGE_KEY));
   });
+  const [inactivityTimeout, setInactivityTimeoutState] =
+    useState<InactivityTimeoutOption>(() => {
+      const raw = localStorage.getItem(INACTIVITY_TIMEOUT_STORAGE_KEY);
+      if (
+        raw === "1m" ||
+        raw === "3m" ||
+        raw === "5m" ||
+        raw === "10m" ||
+        raw === "30m" ||
+        raw === "never"
+      ) {
+        return raw;
+      }
+      return DEFAULT_INACTIVITY_TIMEOUT;
+    });
+  const inactivityTimerRef = useRef<number | null>(null);
 
   const setAuth = useCallback((t: string | null, u: SafeUser | null) => {
     storedToken = t;
     if (t) {
-      localStorage.setItem(TOKEN_STORAGE_KEY, t);
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, t);
     } else {
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
     setToken(t);
     setUser(u);
@@ -149,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: { Authorization: `Bearer ${storedToken}` },
       }).catch(() => {});
     }
+    sessionStorage.removeItem(INACTIVITY_LOGOUT_FLAG_KEY);
     setAuth(null, null);
   }, [setAuth]);
 
@@ -167,10 +217,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canRegisterCase = isAdmin || isStaff || isIntern;
   const canDownload = isAdmin || isStaff || isIntern; // students must request
 
+  const setInactivityTimeout = useCallback(
+    (value: InactivityTimeoutOption) => {
+      setInactivityTimeoutState(value);
+      localStorage.setItem(INACTIVITY_TIMEOUT_STORAGE_KEY, value);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if ((user?.role !== "admin" && user?.role !== "superadmin") && inactivityTimeout === "never") {
+      setInactivityTimeout(DEFAULT_INACTIVITY_TIMEOUT);
+    }
+  }, [user?.role, inactivityTimeout, setInactivityTimeout]);
+
+  useEffect(() => {
+    const clearTimer = () => {
+      if (inactivityTimerRef.current !== null) {
+        window.clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+    };
+
+    if (!token || !user || inactivityTimeout === "never") {
+      clearTimer();
+      return;
+    }
+
+    const timeoutMs = INACTIVITY_TIMEOUT_MS[inactivityTimeout];
+    const resetTimer = () => {
+      clearTimer();
+      inactivityTimerRef.current = window.setTimeout(() => {
+        sessionStorage.setItem(INACTIVITY_LOGOUT_FLAG_KEY, "1");
+        logout();
+      }, timeoutMs);
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      "mousemove",
+      "mousedown",
+      "keydown",
+      "scroll",
+      "touchstart",
+      "focus",
+    ];
+    for (const eventName of activityEvents) {
+      window.addEventListener(eventName, resetTimer, { passive: true });
+    }
+    resetTimer();
+
+    return () => {
+      clearTimer();
+      for (const eventName of activityEvents) {
+        window.removeEventListener(eventName, resetTimer);
+      }
+    };
+  }, [token, user, inactivityTimeout, logout]);
+
   const value: AuthContextType = {
     user,
     token,
     isLoading,
+    inactivityTimeout,
+    setInactivityTimeout,
     login,
     signup,
     logout,
