@@ -64,9 +64,9 @@ export default function CaseList() {
   });
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href="/">
             <Button variant="ghost" size="icon" data-testid="button-back">
@@ -77,7 +77,7 @@ export default function CaseList() {
             Previous Cases
           </h1>
         </div>
-        <Link href="/register">
+        <Link href="/register" className="w-full sm:w-auto">
           <Button size="sm" className="gap-1.5" data-testid="button-new-case">
             <ClipboardPlus className="w-3.5 h-3.5" />
             New Case
@@ -138,7 +138,7 @@ export default function CaseList() {
       ) : (
         <>
           {isAdmin && (
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>Selected: {selectedIds.length}</span>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -185,7 +185,7 @@ export default function CaseList() {
                   className="transition-colors hover:bg-accent/50"
                 >
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
                       <div className="flex items-start gap-3 flex-1 min-w-0">
                         {isAdmin && (
                           <input
@@ -244,12 +244,12 @@ export default function CaseList() {
                         </div>
                       </div>
 
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        <Link href={`/cases/${c.id}`}>
+                      <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 w-full sm:w-auto shrink-0">
+                        <Link href={`/cases/${c.id}`} className="w-full sm:w-auto">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="gap-1.5"
+                            className="gap-1.5 w-full sm:w-auto"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             Preview
@@ -262,7 +262,7 @@ export default function CaseList() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="gap-1.5 text-destructive hover:text-destructive"
+                                className="gap-1.5 text-destructive hover:text-destructive w-full sm:w-auto"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 Delete

@@ -147,27 +147,29 @@ export default function DashboardPage() {
   return (
     <div className="max-w-[1300px] mx-auto px-4 py-6 space-y-6">
       <div className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b pb-3">
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-start sm:items-center gap-3 mb-3">
           <Link href="/"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
             <h1 className="text-lg font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4" /> AMR Statistical Dashboard</h1>
             <p className="text-sm text-muted-foreground">Veterinary AST surveillance dashboard</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Select value={preset} onValueChange={setPreset}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Preset" /></SelectTrigger><SelectContent><SelectItem value="today">Today</SelectItem><SelectItem value="7d">Last 7 days</SelectItem><SelectItem value="30d">Last 30 days</SelectItem><SelectItem value="3m">Last 3 months</SelectItem><SelectItem value="6m">Last 6 months</SelectItem><SelectItem value="12m">Last 12 months</SelectItem><SelectItem value="all">All time</SelectItem></SelectContent></Select>
-          <Select value={groupBy} onValueChange={setGroupBy}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Group by" /></SelectTrigger><SelectContent><SelectItem value="day">Day</SelectItem><SelectItem value="week">Week</SelectItem><SelectItem value="month">Month</SelectItem><SelectItem value="year">Year</SelectItem></SelectContent></Select>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" />
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
-          <Select value={species} onValueChange={setSpecies}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Species" /></SelectTrigger><SelectContent><SelectItem value="all">All species</SelectItem>{(data?.options.species ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={breed} onValueChange={setBreed}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Breed" /></SelectTrigger><SelectContent><SelectItem value="all">All breeds</SelectItem>{(data?.options.breeds ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={sex} onValueChange={setSex}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Sex" /></SelectTrigger><SelectContent><SelectItem value="all">All sex</SelectItem>{(data?.options.sex ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={sampleType} onValueChange={setSampleType}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Sample type" /></SelectTrigger><SelectContent><SelectItem value="all">All sample types</SelectItem>{(data?.options.sampleTypes ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={organism} onValueChange={setOrganism}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Organism" /></SelectTrigger><SelectContent><SelectItem value="all">All organisms</SelectItem>{(data?.options.organisms ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={antibiotic} onValueChange={setAntibiotic}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Antibiotic" /></SelectTrigger><SelectContent><SelectItem value="all">All antibiotics</SelectItem>{(data?.options.antibiotics ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
-          <Select value={result} onValueChange={setResult}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Result" /></SelectTrigger><SelectContent><SelectItem value="all">All result</SelectItem><SelectItem value="S">Susceptible</SelectItem><SelectItem value="I">Intermediate</SelectItem><SelectItem value="R">Resistant</SelectItem></SelectContent></Select>
-          <Select value={minTested} onValueChange={setMinTested}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Min tested" /></SelectTrigger><SelectContent><SelectItem value="1">Min tested 1</SelectItem><SelectItem value="5">Min tested 5</SelectItem><SelectItem value="10">Min tested 10</SelectItem><SelectItem value="30">Min tested 30</SelectItem></SelectContent></Select>
-          <Select value={matrixMode} onValueChange={(v) => setMatrixMode(v as "susceptiblePct" | "resistantPct" | "tested")}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Antibiogram mode" /></SelectTrigger><SelectContent><SelectItem value="susceptiblePct">% susceptible</SelectItem><SelectItem value="resistantPct">% resistant</SelectItem><SelectItem value="tested">Number tested</SelectItem></SelectContent></Select>
+        <div className="overflow-x-auto">
+          <div className="flex gap-2 min-w-max pr-1">
+            <Select value={preset} onValueChange={setPreset}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Preset" /></SelectTrigger><SelectContent><SelectItem value="today">Today</SelectItem><SelectItem value="7d">Last 7 days</SelectItem><SelectItem value="30d">Last 30 days</SelectItem><SelectItem value="3m">Last 3 months</SelectItem><SelectItem value="6m">Last 6 months</SelectItem><SelectItem value="12m">Last 12 months</SelectItem><SelectItem value="all">All time</SelectItem></SelectContent></Select>
+            <Select value={groupBy} onValueChange={setGroupBy}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Group by" /></SelectTrigger><SelectContent><SelectItem value="day">Day</SelectItem><SelectItem value="week">Week</SelectItem><SelectItem value="month">Month</SelectItem><SelectItem value="year">Year</SelectItem></SelectContent></Select>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[150px]" />
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[150px]" />
+            <Select value={species} onValueChange={setSpecies}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Species" /></SelectTrigger><SelectContent><SelectItem value="all">All species</SelectItem>{(data?.options.species ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={breed} onValueChange={setBreed}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Breed" /></SelectTrigger><SelectContent><SelectItem value="all">All breeds</SelectItem>{(data?.options.breeds ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={sex} onValueChange={setSex}><SelectTrigger className="w-[120px]"><SelectValue placeholder="Sex" /></SelectTrigger><SelectContent><SelectItem value="all">All sex</SelectItem>{(data?.options.sex ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={sampleType} onValueChange={setSampleType}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Sample type" /></SelectTrigger><SelectContent><SelectItem value="all">All sample types</SelectItem>{(data?.options.sampleTypes ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={organism} onValueChange={setOrganism}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Organism" /></SelectTrigger><SelectContent><SelectItem value="all">All organisms</SelectItem>{(data?.options.organisms ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={antibiotic} onValueChange={setAntibiotic}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Antibiotic" /></SelectTrigger><SelectContent><SelectItem value="all">All antibiotics</SelectItem>{(data?.options.antibiotics ?? []).map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}</SelectContent></Select>
+            <Select value={result} onValueChange={setResult}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Result" /></SelectTrigger><SelectContent><SelectItem value="all">All result</SelectItem><SelectItem value="S">Susceptible</SelectItem><SelectItem value="I">Intermediate</SelectItem><SelectItem value="R">Resistant</SelectItem></SelectContent></Select>
+            <Select value={minTested} onValueChange={setMinTested}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Min tested" /></SelectTrigger><SelectContent><SelectItem value="1">Min tested 1</SelectItem><SelectItem value="5">Min tested 5</SelectItem><SelectItem value="10">Min tested 10</SelectItem><SelectItem value="30">Min tested 30</SelectItem></SelectContent></Select>
+            <Select value={matrixMode} onValueChange={(v) => setMatrixMode(v as "susceptiblePct" | "resistantPct" | "tested")}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Antibiogram mode" /></SelectTrigger><SelectContent><SelectItem value="susceptiblePct">% susceptible</SelectItem><SelectItem value="resistantPct">% resistant</SelectItem><SelectItem value="tested">Number tested</SelectItem></SelectContent></Select>
+          </div>
         </div>
       </div>
 
@@ -175,7 +177,7 @@ export default function DashboardPage() {
         <Card><CardContent className="p-6 text-sm text-muted-foreground">Loading dashboard...</CardContent></Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
             <Metric label="Total registered cases" value={data?.overview.totalRegisteredCases ?? 0} />
             <Metric label="Total samples" value={data?.overview.totalSamples ?? 0} />
             <Metric label="Cases with organism" value={data?.overview.totalCasesWithOrganismEntered ?? 0} />
@@ -183,7 +185,7 @@ export default function DashboardPage() {
             <Metric label="Distinct organisms" value={data?.overview.totalDistinctOrganisms ?? 0} />
             <Metric label="Distinct antibiotics" value={data?.overview.totalDistinctAntibiotics ?? 0} />
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
             <Metric label="Overall S%" value={`${data?.overview.overallSusceptiblePct ?? 0}%`} />
             <Metric label="Overall I%" value={`${data?.overview.overallIntermediatePct ?? 0}%`} />
             <Metric label="Overall R%" value={`${data?.overview.overallResistantPct ?? 0}%`} />

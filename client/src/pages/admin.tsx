@@ -499,7 +499,7 @@ export default function AdminPanel() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
         <Link href="/">
           <Button variant="ghost" size="icon" data-testid="button-back">
@@ -513,7 +513,7 @@ export default function AdminPanel() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
           <CardContent className="pt-4 pb-3 text-center">
             <Users className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
@@ -538,20 +538,20 @@ export default function AdminPanel() {
       </div>
 
       <Tabs defaultValue={initialTabFromUrl}>
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="pending" data-testid="tab-pending">
+        <TabsList className="w-full h-auto flex overflow-x-auto gap-1 whitespace-nowrap p-1">
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="pending" data-testid="tab-pending">
             Pending ({pendingUsers.length})
           </TabsTrigger>
-          <TabsTrigger value="users" data-testid="tab-users">
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="users" data-testid="tab-users">
             All Users ({approvedUsers.length})
           </TabsTrigger>
-          <TabsTrigger value="downloads" data-testid="tab-downloads">
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="downloads" data-testid="tab-downloads">
             Downloads ({pendingDlRequests.length})
           </TabsTrigger>
-          <TabsTrigger value="password-resets" data-testid="tab-password-resets">
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="password-resets" data-testid="tab-password-resets">
             Password Resets ({pendingPasswordResets.length})
           </TabsTrigger>
-          <TabsTrigger value="form-options" data-testid="tab-form-options">
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="form-options" data-testid="tab-form-options">
             Edit Form
           </TabsTrigger>
         </TabsList>
@@ -564,7 +564,7 @@ export default function AdminPanel() {
             pendingUsers.map((u) => (
               <Card key={u.id}>
                 <CardContent className="pt-4 pb-3">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm">{u.fullName}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
@@ -574,7 +574,7 @@ export default function AdminPanel() {
                         {designationLabel(u.designation)} &middot; {u.phone} &middot; {u.address}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
                       <Button
                         size="sm"
                         variant="outline"
@@ -616,7 +616,7 @@ export default function AdminPanel() {
           {approvedUsers.map((u) => (
             <Card key={u.id}>
               <CardContent className="pt-4 pb-3">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{u.fullName}</span>
@@ -628,7 +628,7 @@ export default function AdminPanel() {
                   </div>
 
                   {u.id !== currentUser?.id && (
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
                       {(currentUser?.role === "superadmin" || !["superadmin", "admin"].includes(u.role)) && (
                         <Button
                           size="sm"
@@ -705,7 +705,7 @@ export default function AdminPanel() {
             downloadRequests.map((r) => (
               <Card key={r.id}>
                 <CardContent className="pt-4 pb-3">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm">{r.userName}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
@@ -717,7 +717,7 @@ export default function AdminPanel() {
                         <div className="text-xs text-muted-foreground mt-1">Reason: {r.reason}</div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
                      {r.status === "pending" ? (
   <>
     <Button
@@ -777,7 +777,7 @@ export default function AdminPanel() {
             passwordResetRequests.map((r) => (
               <Card key={r.id}>
                 <CardContent className="pt-4 pb-3">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm">
                         {r.userName} (@{r.userUsername})
@@ -813,7 +813,7 @@ export default function AdminPanel() {
                         </div>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
                       {r.status === "pending" ? (
                         <>
                           <Button
@@ -917,7 +917,7 @@ export default function AdminPanel() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   value={newSectionTitle}
                   onChange={(e) => setNewSectionTitle(e.target.value)}
@@ -941,14 +941,14 @@ export default function AdminPanel() {
                 <div className="space-y-3">
                   {(formDefinition?.sections ?? []).map((section, idx, arr) => (
                     <div key={section.key} className="rounded border">
-                      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 border-b">
                         <div className="min-w-0">
                           <div className="text-sm font-medium truncate">{section.title}</div>
                           <div className="text-xs text-muted-foreground truncate">
                             key: {section.key}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                           <Button
                             type="button"
                             size="sm"
@@ -1074,7 +1074,7 @@ export default function AdminPanel() {
                             section.questions.map((q, qIdx) => (
                               <div
                                 key={q.id}
-                                className="flex items-center justify-between gap-2 rounded border px-3 py-2"
+                                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
                               >
                                 <div className="min-w-0">
                                   <div className="text-sm truncate">
@@ -1092,7 +1092,7 @@ export default function AdminPanel() {
                                       : ""}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                                   <Button
                                     type="button"
                                     size="sm"
@@ -1157,10 +1157,10 @@ export default function AdminPanel() {
                     {builtinQuestions.map((q) => (
                       <div
                         key={q.id}
-                        className="flex items-center justify-between rounded border px-3 py-2"
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
                       >
                         <span className="text-sm">{q.label}</span>
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-xs w-full sm:w-auto">
                           <Button
                             type="button"
                             size="sm"
@@ -1234,7 +1234,7 @@ export default function AdminPanel() {
                     {customQuestions.map((q) => (
                       <div
                         key={`custom-toggle-${q.id}`}
-                        className="flex items-center justify-between rounded border px-3 py-2"
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
                       >
                         <div className="min-w-0">
                           <div className="text-sm truncate">{q.label}</div>
@@ -1242,7 +1242,7 @@ export default function AdminPanel() {
                             key: {q.key} · type: {q.inputType}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-xs w-full sm:w-auto">
                           <Button
                             type="button"
                             size="sm"
@@ -1299,7 +1299,7 @@ export default function AdminPanel() {
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   value={newSpeciesName}
                   onChange={(e) => setNewSpeciesName(e.target.value)}
@@ -1323,7 +1323,7 @@ export default function AdminPanel() {
                   speciesOptions.map((s) => (
                     <div
                       key={s.id}
-                      className="flex items-center justify-between rounded border px-3 py-2"
+                      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
                     >
                       <span className="text-sm">{s.name}</span>
                       <Button
@@ -1367,7 +1367,7 @@ export default function AdminPanel() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   value={newBreedName}
                   onChange={(e) => setNewBreedName(e.target.value)}
@@ -1404,7 +1404,7 @@ export default function AdminPanel() {
                     breedOptions.map((b) => (
                       <div
                         key={b.id}
-                        className="flex items-center justify-between rounded border px-3 py-2"
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
                       >
                         <span className="text-sm">{b.name}</span>
                         <Button
@@ -1535,7 +1535,7 @@ export default function AdminPanel() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
               <Button
                 variant="ghost"
                 size="sm"

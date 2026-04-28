@@ -106,8 +106,8 @@ export default function BreakpointsPage() {
 
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href="/"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
@@ -115,7 +115,7 @@ export default function BreakpointsPage() {
             <p className="text-sm text-muted-foreground">Manage antibiotic zone diameter interpretive criteria</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5"><RotateCcw className="w-3.5 h-3.5" />Reset Defaults</Button>
@@ -216,12 +216,12 @@ export default function BreakpointsPage() {
 
       {/* Add/Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+            <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingBp ? "Edit Breakpoint" : "Add Breakpoint"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Antibiotic Name</Label>
                 <Input value={form.antibiotic} onChange={(e) => setForm({ ...form, antibiotic: e.target.value })} placeholder="e.g. Amoxicillin" />
@@ -235,7 +235,7 @@ export default function BreakpointsPage() {
               <Label className="text-xs">Disc Content</Label>
               <Input value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="e.g. 25 µg" />
             </div>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs text-emerald-600">S &ge; (mm)</Label>
                 <Input type="number" value={form.sensitiveMin} onChange={(e) => setForm({ ...form, sensitiveMin: e.target.value })} />

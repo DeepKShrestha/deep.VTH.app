@@ -661,7 +661,7 @@ export default function RegisterCase() {
     !hideOptionalFields || required;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href="/">
@@ -673,7 +673,7 @@ export default function RegisterCase() {
           <h1 className="text-lg font-semibold" data-testid="text-page-title">
             Register New AST Case
           </h1>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
             <span>Case #{caseInfo?.caseNumber || "..."}</span>
             <span>Day #{caseInfo?.dailyNumber || "..."}</span>
             <span>Month #{caseInfo?.monthlyNumber || "..."}</span>
@@ -684,7 +684,7 @@ export default function RegisterCase() {
       <form onSubmit={handleSubmit} className="space-y-6">
         <Card>
           <CardContent className="pt-4 pb-3 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-medium">Quick register mode</p>
                 <p className="text-xs text-muted-foreground">
@@ -697,7 +697,7 @@ export default function RegisterCase() {
                 data-testid="switch-quick-register-mode"
               />
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
                 Hide optional fields
               </p>
@@ -752,12 +752,12 @@ export default function RegisterCase() {
               <div key={section.key} className="space-y-6">
                 <Card>
                   <CardHeader className="pb-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                       <CardTitle className="text-base">
                         Antibiotic Sensitivity Test Results{" "}
                         {astIsRequired && <span className="text-destructive">*</span>}
                       </CardTitle>
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                         <div className="flex items-center gap-2">
                           <Label
                             htmlFor="preset-antibiotics"
@@ -797,9 +797,9 @@ export default function RegisterCase() {
                   <CardContent className="space-y-4">
                     {astRows.map((row, index) => (
                       <div key={index} className="border border-border rounded-lg p-3 space-y-3">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-medium text-muted-foreground">Antibiotic #{index + 1}</span>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
                             {autoMode && row.breakpointId && (
                               <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
                                 <input
@@ -891,7 +891,7 @@ export default function RegisterCase() {
                           )}
 
                           {row.breakpointId && (
-                            <div className="text-xs text-muted-foreground text-right">
+                            <div className="text-xs text-muted-foreground sm:text-right">
                               {(() => {
                                 const bp = breakpointsData?.find((b) => b.id === row.breakpointId);
                                 if (!bp) return null;
@@ -932,7 +932,7 @@ export default function RegisterCase() {
                     <CardContent>
                       <div className="space-y-2">
                         {recommendations.map((rec, i) => (
-                          <div key={i} className="flex items-center gap-3 text-sm">
+                          <div key={i} className="flex flex-wrap items-center gap-3 text-sm">
                             <span className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 flex items-center justify-center text-xs font-bold">
                               {i + 1}
                             </span>
@@ -1214,12 +1214,12 @@ export default function RegisterCase() {
         })}
 
         {/* Submit */}
-        <div className="flex gap-3 justify-end">
-          <Link href="/">
+        <div className="flex flex-col-reverse sm:flex-row gap-3 justify-end">
+          <Link href="/" className="w-full sm:w-auto">
             <Button
               type="button"
               variant="outline"
-              className={quickRegisterMode ? "h-11 px-5 text-base" : ""}
+              className={`${quickRegisterMode ? "h-11 px-5 text-base" : ""} w-full sm:w-auto`}
               data-testid="button-cancel"
             >
               Cancel
@@ -1228,7 +1228,7 @@ export default function RegisterCase() {
           <Button
             type="submit"
             disabled={createMutation.isPending}
-            className={`gap-2 ${quickRegisterMode ? "h-11 px-5 text-base" : ""}`}
+            className={`gap-2 ${quickRegisterMode ? "h-11 px-5 text-base" : ""} w-full sm:w-auto`}
             data-testid="button-submit"
           >
             <Save className="w-4 h-4" />

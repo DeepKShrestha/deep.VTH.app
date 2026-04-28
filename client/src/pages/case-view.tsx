@@ -88,9 +88,9 @@ export default function CaseView() {
   }
 
     return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href="/cases">
             <Button
@@ -108,7 +108,7 @@ export default function CaseView() {
             >
               {caseData.caseNumber}
             </h1>
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
               <span>{formatBsDate(caseData.date)}</span>
               {caseData.dateAd && (
                 <span className="text-xs">
@@ -126,7 +126,7 @@ export default function CaseView() {
         </div>
 
         {/* RIGHT SIDE: last updated + buttons */}
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-start sm:items-end gap-1 w-full sm:w-auto">
           {caseData.lastUpdatedBy && caseData.updatedAt && (
             <p className="text-[11px] text-muted-foreground">
               Last updated by{" "}
@@ -136,12 +136,12 @@ export default function CaseView() {
             </p>
           )}
 
-          <div className="flex gap-2">
-            <Link href={`/print/${caseData.id}`}>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <Link href={`/print/${caseData.id}`} className="w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="sm"
-                className="gap-1.5"
+                className="gap-1.5 w-full sm:w-auto"
                 data-testid="button-print"
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -155,8 +155,8 @@ export default function CaseView() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1.5 text-destructive hover:text-destructive"
                     data-testid="button-delete"
+                    className="gap-1.5 text-destructive hover:text-destructive w-full sm:w-auto"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     Delete

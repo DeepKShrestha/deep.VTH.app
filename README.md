@@ -65,6 +65,11 @@ This README is the developer + operations guide for future changes and deploymen
       - title case for names/labels (e.g. owner name)
       - sentence case for remarks
     - on successful save, redirect to homepage
+  - Recent responsive hardening (phone/tablet-safe without desktop regressions):
+    - Admin Panel: tab row scroll + stacked action controls to avoid overlap
+    - Dashboard: horizontally scrollable sticky filter bar + mobile-safe KPI grids
+    - Breakpoints: mobile-safe header actions + scrollable add/edit dialog
+    - Case list/view/export/print/register: stacked button rows and wrapped metadata on narrow screens
 
 - Add a new backend endpoint:
   - Add route in the relevant file under `server/routes/`

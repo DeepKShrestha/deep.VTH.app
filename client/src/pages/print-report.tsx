@@ -79,7 +79,7 @@ export default function PrintReport() {
   return (
     <div>
       {/* Toolbar */}
-      <div className="no-print sticky top-0 z-10 bg-background border-b border-border px-4 py-3 flex items-center justify-between">
+      <div className="no-print sticky top-0 z-10 bg-background border-b border-border px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href={`/cases/${caseData.id}`}>
             <Button
@@ -92,7 +92,7 @@ export default function PrintReport() {
           </Link>
           <span className="text-sm font-medium">Print Preview</span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Compact</span>
             <Switch
@@ -104,7 +104,7 @@ export default function PrintReport() {
           <Button
             onClick={handlePrint}
             size="sm"
-            className="gap-1.5"
+            className="gap-1.5 w-full sm:w-auto"
             data-testid="button-print"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -129,7 +129,7 @@ export default function PrintReport() {
         </div>
 
         {/* Case Info Row */}
-        <div className="print-section flex justify-between items-start mb-2 text-sm">
+        <div className="print-section flex flex-col sm:flex-row justify-between items-start gap-2 mb-2 text-sm">
           <div>
             <span className="font-semibold text-black">Case No: </span>
             <span className="text-black">{caseData.caseNumber}</span>
@@ -146,14 +146,14 @@ export default function PrintReport() {
             )}
           </div>
         </div>
-        <div className="print-section flex justify-between items-start mb-2 text-sm">
+        <div className="print-section flex flex-col sm:flex-row justify-between items-start gap-2 mb-2 text-sm">
           {caseData.billNumber && (
             <div>
               <span className="font-semibold text-black">Bill/Reg No: </span>
               <span className="text-black">{caseData.billNumber}</span>
             </div>
           )}
-          <div className="flex gap-6">
+          <div className="flex flex-wrap gap-4 sm:gap-6">
             {caseData.dailyNumber && (
               <span className="text-black">
                 <span className="font-semibold">Daily #: </span>
