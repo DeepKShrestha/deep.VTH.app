@@ -34,7 +34,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 export default function CaseList() {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const { isAdmin } = useAuth();
+  const { isAdmin, canRegisterCase } = useAuth();
   const { toast } = useToast();
 
   const { data: cases, isLoading } = useQuery<Case[]>({
@@ -77,12 +77,14 @@ export default function CaseList() {
             Previous Cases
           </h1>
         </div>
-        <Link href="/register" className="w-full sm:w-auto">
-          <Button size="sm" className="gap-1.5" data-testid="button-new-case">
-            <ClipboardPlus className="w-3.5 h-3.5" />
-            New Case
-          </Button>
-        </Link>
+        {canRegisterCase && (
+          <Link href="/register" className="w-full sm:w-auto">
+            <Button size="sm" className="gap-1.5" data-testid="button-new-case">
+              <ClipboardPlus className="w-3.5 h-3.5" />
+              New Case
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Search */}
@@ -126,7 +128,7 @@ export default function CaseList() {
                 : "Register your first AST case to get started."}
             </p>
           </div>
-          {!search && (
+          {!search && canRegisterCase && (
             <Link href="/register">
               <Button size="sm" className="gap-1.5">
                 <ClipboardPlus className="w-3.5 h-3.5" />
