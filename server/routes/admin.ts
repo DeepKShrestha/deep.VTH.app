@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
 import {
@@ -255,11 +254,11 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/form-definition",
     requireAuth,
     requireRole("superadmin", "admin"),
-    (_req, res) => {
-      const sections = db.all<{ key: string; title: string; display_order: number }>(
+    async (_req, res) => {
+      const sections = await dbAll<{ key: string; title: string; display_order: number }>(
         sql`SELECT key, title, display_order FROM form_sections ORDER BY display_order ASC`,
       );
-      const questions = db.all<{
+      const questions = await dbAll<{
         id: number;
         key: string;
         section_key: string;
@@ -653,8 +652,8 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/form-config",
     requireAuth,
     requireRole("superadmin", "admin"),
-    (_req, res) => {
-      const rows = db.all<{
+    async (_req, res) => {
+      const rows = await dbAll<{
         key: string;
         section: string;
         label: string;
@@ -729,7 +728,7 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (_req, res) => {
-      const rows = db.all<{
+      const rows = await dbAll<{
         id: number;
         actor_user_id: number;
         actor_role: string;
@@ -768,8 +767,8 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/species-options",
     requireAuth,
     requireRole("superadmin", "admin"),
-    (_req, res) => {
-      const rows = db.all<{ id: number; name: string }>(
+    async (_req, res) => {
+      const rows = await dbAll<{ id: number; name: string }>(
         sql`SELECT id, name FROM species_options ORDER BY name ASC`,
       );
       res.json(rows);
@@ -851,10 +850,10 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/breed-options",
     requireAuth,
     requireRole("superadmin", "admin"),
-    (req, res) => {
+    async (req, res) => {
       const species = String(req.query.species ?? "").trim();
       if (!species) return res.json([]);
-      const rows = db.all<{ id: number; name: string }>(
+      const rows = await dbAll<{ id: number; name: string }>(
         sql`SELECT id, name FROM breed_options WHERE species_name = ${species} ORDER BY name ASC`,
       );
       return res.json(rows);
