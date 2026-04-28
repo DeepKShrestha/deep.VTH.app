@@ -206,6 +206,176 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } catch {
       await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
     }
+  } else {
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      address TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      designation TEXT NOT NULL,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'pending',
+      approved BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`DELETE FROM sessions`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
+
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      requested_by_role TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      resolved_by INTEGER,
+      resolver_note TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    )`);
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS password_reset_requests_user_id_idx ON password_reset_requests(user_id)`,
+    );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS password_reset_requests_status_idx ON password_reset_requests(status)`,
+    );
+
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS download_requests (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      date_from TEXT,
+      date_to TEXT,
+      reason TEXT,
+      admin_note TEXT,
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    )`);
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS download_requests_created_at_idx ON download_requests(created_at)`,
+    );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS download_requests_user_id_idx ON download_requests(user_id)`,
+    );
+
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
+      id SERIAL PRIMARY KEY,
+      antibiotic TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      content TEXT NOT NULL,
+      sensitive_min INTEGER NOT NULL,
+      intermediate_low INTEGER,
+      intermediate_high INTEGER,
+      resistant_max INTEGER NOT NULL,
+      primary_targets TEXT,
+      is_preset BOOLEAN NOT NULL DEFAULT FALSE
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS species_options (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS breed_options (
+      id SERIAL PRIMARY KEY,
+      species_name TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(species_name, name)
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
+      key TEXT PRIMARY KEY,
+      section TEXT NOT NULL,
+      label TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      required INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
+      key TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      display_order INTEGER NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
+      id SERIAL PRIMARY KEY,
+      key TEXT NOT NULL UNIQUE,
+      section_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      input_type TEXT NOT NULL DEFAULT 'text',
+      options_json TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      required INTEGER NOT NULL DEFAULT 0,
+      display_order INTEGER NOT NULL,
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
+      id SERIAL PRIMARY KEY,
+      actor_user_id INTEGER NOT NULL,
+      actor_role TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target_key TEXT,
+      old_value TEXT,
+      new_value TEXT,
+      created_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
+      role TEXT PRIMARY KEY,
+      dashboard_visible INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
+      notification_key TEXT PRIMARY KEY,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      updated_by INTEGER,
+      updated_at TEXT NOT NULL
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
+      id SERIAL PRIMARY KEY,
+      case_number TEXT NOT NULL,
+      bill_number TEXT,
+      daily_number INTEGER,
+      monthly_number INTEGER,
+      date TEXT NOT NULL,
+      date_ad TEXT,
+      owner_name TEXT NOT NULL,
+      owner_address TEXT NOT NULL,
+      owner_phone TEXT NOT NULL,
+      species TEXT NOT NULL,
+      breed TEXT NOT NULL,
+      animal_name TEXT,
+      age TEXT,
+      sex TEXT,
+      sample_type TEXT,
+      sample_date TEXT,
+      sample_date_ad TEXT,
+      culture_result TEXT,
+      ast_results TEXT,
+      remarks TEXT,
+      registered_by INTEGER,
+      created_at TEXT NOT NULL,
+      last_updated_by INTEGER,
+      last_updated_by_name TEXT,
+      updated_at TEXT,
+      custom_fields TEXT
+    )`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_created_at_idx ON cases(created_at)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
+    await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS options_json TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by INTEGER`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by_name TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS custom_fields TEXT`);
   }
 
   const existingBps = await domainRepo.getBreakpoints();
