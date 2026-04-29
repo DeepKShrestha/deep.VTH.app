@@ -1,399 +1,476 @@
-# Vet AST App
+# Vet AST App - Full Developer Handover Guide
 
-Veterinary AST case management application built with:
+Veterinary AST case management application with:
 
 - React + Vite frontend (`client/`)
 - Express + TypeScript backend (`server/`)
-- SQLite storage via Drizzle + better-sqlite3
+- SQLite as default runtime DB (`DB_PROVIDER=sqlite`)
+- Postgres support path (in progress, safe for migration/testing commands)
 
-This README is the developer + operations guide for future changes and deployments.
+This document is written as a handover manual for developers who were not part of original implementation.
 
-## Quick Start (5 Minutes)
+---
 
-1. Install dependencies: `npm install`
-2. Start app locally: `npm run dev`
-3. Open app in browser (default local URL from terminal output)
-4. Run quality checks before changes are merged:
+## 1) Product Overview
+
+The app supports:
+
+- User signup/login with approval workflow
+- Role-based behavior (`superadmin`, `admin`, `staff`, `intern`, `student`, `pending`)
+- Case registration and management (including configurable form fields)
+- Breakpoint management
+- Download request workflow
+- Password reset request workflow with approval/rejection
+- Admin-side auditability features (notifications, edit logs, reset logs, CSV exports)
+
+---
+
+## 2) First 30 Minutes for a New Developer
+
+Do this in order:
+
+1. Install dependencies:
+   - `npm install`
+2. Prepare environment:
+   - Copy `.env.example` to `.env`
+3. Run app:
+   - `npm run dev`
+4. Run checks once:
    - `npm run test`
    - `npm run check`
-   - `npm run build`
-5. Use `npm run verify` to run the standard full check sequence.
+5. Understand default auth bootstrap:
+   - On empty DB, default admin may be seeded (see `ALLOW_DEFAULT_ADMIN` and runtime conditions below)
+6. Explore key UI areas:
+   - Login/Signup
+   - Admin Panel (Users, Password Resets, Edit Form)
+   - Register New Case
 
-## Architecture
+---
 
-- `client/`: UI pages, components, and client auth/session bootstrap.
-- `server/`: API entrypoint, security middleware, health endpoints, bootstrap.
-- `server/routes/`: route modules grouped by domain:
-  - `auth.ts`: auth + profile update
-  - `admin.ts`: user/admin management
-  - `cases.ts`: case CRUD + exports + student requests
-  - `breakpoints.ts`: breakpoint CRUD + reset
-  - `context.ts`: shared middleware + session/token handling
-  - `messages.ts`: shared API response messages
-  - `types.ts`: shared request typings
-  - `cases-export.ts`: pure export formatting helpers
-- `shared/`: schema/types shared by client and server.
+## 3) Tech Stack and Runtime
 
-## Local Development
+### Frontend
 
-- Install dependencies: `npm install`
-- Run development server: `npm run dev`
-- Run tests: `npm run test`
-- Run type-check: `npm run check`
-- Build production bundle: `npm run build`
-- Run all verification in sequence: `npm run verify`
+- React 18
+- Vite
+- TypeScript
+- TanStack Query
+- Radix UI + Tailwind
 
-## Common Developer Tasks
+### Backend
 
-- Configure Register New Case form from Admin UI:
-  - Open Admin Panel -> `Edit Form`
-  - Use **Register Form Layout (Sections & Questions)** to:
-    - add new sections
-    - add custom questions inside sections (`text`, `long text`, `number`, `singleSelect`, `multiSelect`, `yesNo`, `date`)
-    - move sections/questions up or down
-  - Use **Edit Existing Register Form Fields** for built-in questions:
-    - set `Shown/Hidden`
-    - set `Compulsory/Optional`
-  - Use **Species** and **Breeds by Species** cards to manage dropdown options
-  - Form edit audit log is hidden by default; open it with the toggle button at the bottom
-  - Register page now supports:
-    - age value + inline unit selector (`years` / `months`)
-    - quick-register mode for mobile/tablet
-    - hide optional fields toggle (shows only compulsory fields)
-    - compulsory marker (`*`) + save validation strictly follow Admin form `required` settings
-    - text normalization:
-      - title case for names/labels (e.g. owner name)
-      - sentence case for remarks
-    - on successful save, redirect to homepage
-  - Recent responsive hardening (phone/tablet-safe without desktop regressions):
-    - Admin Panel: tab row scroll + stacked action controls to avoid overlap
-    - Dashboard: horizontally scrollable sticky filter bar + mobile-safe KPI grids
-    - Breakpoints: mobile-safe header actions + scrollable add/edit dialog
-    - Case list/view/export/print/register: stacked button rows and wrapped metadata on narrow screens
+- Express 5
+- TypeScript
+- Drizzle ORM
+- `better-sqlite3` (SQLite path)
+- `pg` (Postgres path)
 
-- Add a new backend endpoint:
-  - Add route in the relevant file under `server/routes/`
-  - Reuse shared middleware from `server/routes/context.ts`
-  - Reuse API messages from `server/routes/messages.ts` when possible
-  - Add/adjust tests in `server/routes/*.test.ts`
+### Tests and Type Safety
 
-- Add a new frontend page:
-  - Create page in `client/src/pages/`
-  - Register route in `client/src/App.tsx`
-  - Use existing UI primitives from `client/src/components/ui/`
+- Vitest
+- TypeScript compiler (`tsc`) for static checks
 
-- Add or update DB columns:
-  - Update schema in `shared/schema.ts`
-  - Add non-destructive migration SQL under `migrations/` (and `migrations-pg/` if needed)
-  - Keep compatibility for existing SQLite data
+---
 
-- Add role/permission logic:
-  - Keep role checks centralized in `server/routes/context.ts`
-  - Verify both backend authorization and frontend visibility behavior
+## 4) Repository Structure
 
-- Control dashboard access by role:
-  - Open Admin Panel -> `Edit Form` -> **Dashboard Visibility by Role**
-  - Toggle each role between `Shown` and `Hidden`:
-    - `superadmin`
-    - `admin`
-    - `staff`
-    - `intern`
-    - `student`
-    - `pending`
-  - Changes apply immediately and persist in DB table `role_feature_visibility`
-  - If a role is hidden:
-    - Dashboard button is hidden in UI
-    - `/dashboard` route redirects away
-    - `/api/dashboard/summary` returns `403`
-  - Admin and superadmin can hide dashboard for their own roles too
+### Core paths
 
-- Notification center for admins/superadmins:
-  - Home screen bell icon shows pending:
-    - password reset requests
-    - download requests
-    - recent form changes (last 24h)
-  - Clicking a notification opens the matching Admin tab
-  - Supports:
-    - mark read (single)
-    - mark all read
-    - delete read (single/all)
-  - Read/delete state is server-backed and shared across admins/superadmins
-  - Includes compact popover layout with per-item delete and bulk delete-read actions
+- `client/` - frontend application
+- `server/` - API server and bootstrap
+- `shared/schema.ts` - schema/types shared by client and server
+- `migrations/` - SQLite migrations
+- `migrations-pg/` - Postgres migrations
+- `docs/` - operational/release runbooks
 
-## Environment Variables
+### Important backend files
 
-Copy `.env.example` values into your deployment environment:
+- `server/index.ts`
+  - App initialization, middleware, health/readiness endpoints, error handling, shutdown behavior
+- `server/routes.ts`
+  - DB bootstrap/seed logic and route registration
+- `server/routes/auth.ts`
+  - Signup/login/logout/me/profile/password-reset-request endpoints
+- `server/routes/admin.ts`
+  - Admin APIs: users, form config, species/breeds, requests, notifications, feature visibility
+- `server/routes/cases.ts`
+  - Case CRUD and export flows
+- `server/routes/context.ts`
+  - Auth middleware, role middleware, shared helpers
+- `server/auth-session-repo.ts`
+  - Auth/session repository abstraction (sqlite/postgres paths)
+- `server/storage.ts`
+  - DB storage implementation
 
-- `NODE_ENV`: `production` or `development`
-- `PORT`: server port
-- `DB_PROVIDER`: `sqlite` (current runtime default) or `postgres` (prep mode)
-- `DB_FILE`: SQLite file path (set this explicitly in production)
-- `DATABASE_URL`: Postgres connection string (required for Postgres checks/migrations)
-- `ALLOW_DEFAULT_ADMIN`: allow creating default admin when DB is empty
-- `LOG_RESPONSE_BODIES`: include JSON API response payloads in logs (`true`/`false`)
-- `HIDDEN_SUPERADMIN_ENABLED`: optional hidden emergency superadmin account
-- `HIDDEN_SUPERADMIN_USERNAME`: login username for hidden superadmin
-- `HIDDEN_SUPERADMIN_EMAIL`: login email for hidden superadmin
-- `HIDDEN_SUPERADMIN_PASSWORD`: login password for hidden superadmin
+### Important frontend files
 
-Important:
+- `client/src/App.tsx` - routing and route protections
+- `client/src/lib/auth.tsx` - auth context/session logic
+- `client/src/pages/admin.tsx` - main admin panel workflows
+- `client/src/pages/register-case.tsx` - case entry form
+- `client/src/components/ui/*` - reusable UI primitives
 
-- In production, keep `ALLOW_DEFAULT_ADMIN=false` after initial setup.
-- Use a stable, persistent volume/location for `DB_FILE`.
-- If `HIDDEN_SUPERADMIN_ENABLED=true`, set a strong unique password and keep credentials offline.
+---
 
-Hidden superadmin deployment note:
+## 5) Environment Variables (Authoritative)
 
-- Local `.env` is not used automatically by hosted servers.
-- For Railway/DigitalOcean/other official deployments, set hidden superadmin values in the platform environment variables and restart/redeploy.
-- The hidden account is seeded/updated on startup from those server env vars.
+Based on `.env.example`:
 
-## SQLite/Postgres Dual-Mode Prep
+- `NODE_ENV=development|production`
+- `PORT=<number>`
+- `DB_PROVIDER=sqlite|postgres`
+- `DB_FILE=./data.db` (SQLite DB file path)
+- `DATABASE_URL=<postgres-url>` (required for postgres mode/tasks)
+- `ALLOW_DEFAULT_ADMIN=true|false`
+- `HIDDEN_SUPERADMIN_ENABLED=true|false`
+- `HIDDEN_SUPERADMIN_USERNAME=<string>`
+- `HIDDEN_SUPERADMIN_EMAIL=<string>`
+- `HIDDEN_SUPERADMIN_PASSWORD=<string>`
+- `LOG_RESPONSE_BODIES=true|false`
 
-Current runtime is stable on SQLite and remains the default for localhost.
-Postgres prep is included safely for migration and connectivity workflows.
-Auth/session repository now includes a Postgres implementation for the first
-migration slice, but app runtime remains blocked for `DB_PROVIDER=postgres`
-until remaining storage slices are migrated.
+### Production recommendations
 
-- SQLite runtime:
-  - `npm run dev`
-  - `npm run db:push:sqlite`
-- Postgres prep checks:
-  - Set `DATABASE_URL`
-  - `npm run check:pg`
-  - `npm run smoke:pg:auth`
-  - `npm run db:push:pg`
+- Keep `ALLOW_DEFAULT_ADMIN=false` after initial setup.
+- Use persistent volume for `DB_FILE` if SQLite.
+- Do not enable `LOG_RESPONSE_BODIES` unless temporary debug is needed.
+- If hidden superadmin is enabled, use strong credentials and store secrets safely.
 
-This lets you test schema/migration and connectivity for Postgres without risking existing SQLite-based local flow.
+---
 
-## Data Persistence
+## 6) Scripts You Will Use
 
-Cases, users, breakpoints, and sessions are persisted in SQLite (`DB_FILE`).
-Data is not removed on restart unless:
+- `npm run dev` - local dev server
+- `npm run test` - run tests
+- `npm run check` - TypeScript check
+- `npm run build` - production build
+- `npm run verify` - test + check + build
+- `npm run backup:db` - SQLite backup helper
+- `npm run restore:db` - SQLite restore helper
+- `npm run check:pg` - Postgres connectivity check
+- `npm run smoke:pg:auth` - auth/session smoke test on Postgres
+- `npm run db:push:sqlite` - push SQLite schema changes
+- `npm run db:push:pg` - push Postgres schema changes
 
-- DB file/path changes
-- DB file is manually deleted
-- delete/reset API actions are called
+---
 
-Exception (intentional behavior):
+## 7) Database and Persistence Model
 
-- Sessions are intentionally cleared at server startup, so all users must log in again after a restart.
-- Register form configuration is persisted in DB tables:
-  - `form_sections`
-  - `form_questions`
-  - `form_edit_audit_logs`
-  - `species_options`
-  - `breed_options`
-- Custom answers from admin-added questions are stored per case in `cases.custom_fields`.
+### Current practical mode
 
-At startup, server logs the active DB file path.
+- SQLite is default and stable runtime.
 
-## Register Form Builder APIs
+### Key persistence notes
 
-The register form is now server-driven by section/question metadata.
+- Data is persisted in DB file (`DB_FILE`) unless file/path changes or data is removed manually.
+- Sessions are intentionally cleared at startup (forced re-login after server restart).
+- Form builder metadata and custom field definitions are persisted in DB tables.
 
-- Admin configuration APIs:
-  - `GET /api/admin/form-definition`
-  - `POST /api/admin/form-sections`
-  - `PATCH /api/admin/form-sections/:key/move`
-  - `POST /api/admin/form-questions`
-  - `PATCH /api/admin/form-questions/:id`
-  - `PATCH /api/admin/form-questions/:id/move`
-- Register-screen read API:
-  - `GET /api/form-definition`
-- Species/breed option APIs:
-  - `GET /api/admin/species-options`, `POST /api/admin/species-options`, `DELETE /api/admin/species-options/:id`
-  - `GET /api/admin/breed-options`, `POST /api/admin/breed-options`, `DELETE /api/admin/breed-options/:id`
-  - `GET /api/species-options`, `GET /api/breed-options?species=...`
+### Major tables to know
 
-## Session Behavior
+- `users`
+- `sessions`
+- `cases`
+- `breakpoints`
+- `download_requests`
+- `password_reset_requests`
+- `form_sections`
+- `form_questions`
+- `form_edit_audit_logs`
+- `species_options`
+- `breed_options`
+- `role_feature_visibility`
+- `notification_states`
 
-- Auth token is stored in `sessionStorage` (not `localStorage`):
-  - page reload keeps login in the same tab
-  - closing the tab/window logs user out
-- Users can set inactivity auto-logout timeout from Profile:
-  - `1 min`, `3 min`, `5 min`, `10 min`, `30 min`
-  - `Never` is available only for `admin` and `superadmin`
-- When auto-logout happens, login page shows a subtle message:
-  - "Logged out due to inactivity"
-- Profile QoL:
-  - password show/hide toggles for current/new/confirm password
-  - password strength meter for new password
-  - optional "Ask before logout" setting
-- Auth page QoL:
-  - login password show/hide toggle
-  - signup password + confirm show/hide toggles
-  - signup password strength meter
-- Server restart policy:
-  - all existing sessions are invalidated at startup
+---
 
-## Dashboard Access Control
+## 8) Authentication, Session, and Role Rules
 
-Dashboard access is role-controlled and configurable from the Admin UI.
+### Auth behavior
 
-- Where to configure:
-  - Admin Panel -> `Edit Form` tab -> **Dashboard Visibility by Role**
-- Who can configure:
-  - `superadmin` and `admin`
-- Persistence:
-  - Stored in table `role_feature_visibility`
-- Enforcement:
-  - Frontend hides Dashboard action when role is disabled
-  - Frontend route guard blocks `/dashboard`
-  - Backend guard blocks analytics endpoint with `403`
-- Current-user behavior:
-  - If a user disables dashboard for their own role, access is removed immediately
-  - Admin Panel visibility card is compact and responsive for dense layouts
+- Token stored in browser `sessionStorage`
+  - Refresh keeps session
+  - Closing tab/window ends session
+- Server startup clears sessions by design
 
-## Save-and-Return Behavior
+### Login identifier handling
 
-- After successful **Register New Case** save, user is redirected to homepage (`/`).
-- After successful **Profile** save, user is redirected to homepage (`/`).
+- Username/email lookup is trim-safe and case-insensitive in repository layer.
 
-## Health and Readiness
+### Default admin bootstrap behavior
 
-- `GET /api/health`: process liveness, uptime, timestamp
-- `GET /api/ready`: DB readiness check (`SELECT 1`)
+When users table is empty:
 
-Use these endpoints for load balancer checks and monitoring.
+- Creates default superadmin only if:
+  - `NODE_ENV !== production`, or
+  - `ALLOW_DEFAULT_ADMIN=true`
 
-## Security Baseline
+When existing users exist:
 
-- `helmet` for secure HTTP headers
-- API rate limiting via `express-rate-limit`
-- Request body size limit for JSON payloads
-- Server-side session storage with expiry
-- Cryptographically secure token generation
-- Request ID propagation via `x-request-id`
-- Structured JSON API/error logs (with optional response-body logging)
+- If no superadmin exists and `admin` user exists with username `admin`, role may be elevated to superadmin.
 
-## API Pagination
+### Hidden superadmin behavior
 
-To reduce payload size on large datasets, these endpoints support optional pagination:
+- Optional hidden account can be enabled via env vars.
+- Account is hidden from admin user lists.
+- Account can be created/updated at startup from env settings.
 
-- `GET /api/cases`
+---
+
+## 9) Admin Panel Capabilities (Current)
+
+### A) Users
+
+- Pending approvals/rejections
+- All approved users list
+- Search/filter (name, username, email)
+- CSV download for filtered user list
+- Role change/edit/delete with role-based restrictions
+
+### B) Password Resets
+
+- Approve/reject reset requests
+- Resolver note support
+- Reset logs toggle in Password Reset tab
+- Compact logs table with:
+  - full name
+  - username
+  - decision
+  - resolved by
+  - AD date/time
+  - BS date/time
+  - resolver note
+- CSV export for reset logs
+
+### C) Form Builder
+
+- Add/move/delete sections
+- Add/move/delete custom questions
+- Toggle shown/hidden and compulsory/optional
+- Species/breed option management
+- Form edit audit log
+
+### D) Dashboard Visibility by Role
+
+- Toggle dashboard visibility per role in admin UI
+- Persisted in `role_feature_visibility`
+- Enforced by UI and backend checks
+
+### E) Notifications
+
+- Admin/superadmin notification center
+- Read/delete state stored server-side
+- Supports mark-read and delete-read operations
+
+---
+
+## 10) API Endpoint Index (Developer-facing)
+
+### Health
+
+- `GET /api/health`
+- `GET /api/ready`
+
+### Auth
+
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `GET /api/auth/dashboard-access`
+- `PATCH /api/users/me`
+- `POST /api/auth/password-reset-requests`
+
+### Admin
+
 - `GET /api/admin/users`
 - `GET /api/admin/users/pending`
+- `POST /api/admin/users/:id/approve`
+- `DELETE /api/admin/users/:id`
+- `PATCH /api/admin/users/:id/role`
+- `PATCH /api/admin/users/:id`
 - `GET /api/admin/download-requests`
+- `POST /api/admin/download-requests/:id/resolve`
 - `GET /api/admin/password-reset-requests`
+- `POST /api/admin/password-reset-requests/:id/resolve`
+- `GET /api/admin/feature-visibility/dashboard`
+- `PATCH /api/admin/feature-visibility/dashboard/:role`
+- `GET /api/admin/form-definition`
+- `POST /api/admin/form-sections`
+- `PATCH /api/admin/form-sections/:key/move`
+- `DELETE /api/admin/form-sections/:key`
+- `POST /api/admin/form-questions`
+- `PATCH /api/admin/form-questions/:id`
+- `PATCH /api/admin/form-questions/:id/move`
+- `DELETE /api/admin/form-questions/:id`
+- `GET /api/admin/form-edit-logs`
+- `GET /api/admin/species-options`
+- `POST /api/admin/species-options`
+- `DELETE /api/admin/species-options/:id`
+- `GET /api/admin/breed-options`
+- `POST /api/admin/breed-options`
+- `DELETE /api/admin/breed-options/:id`
+- `GET /api/admin/notifications/states`
+- `PATCH /api/admin/notifications/state`
+- `POST /api/admin/notifications/mark-read-all`
+- `POST /api/admin/notifications/delete-read`
+
+### Cases / Export / Breakpoints
+
+- Implemented under `server/routes/cases.ts` and `server/routes/breakpoints.ts`
+- Refer directly to those files for full endpoint list when extending behavior
+
+---
+
+## 11) Pagination Rules
+
+These endpoints support optional pagination:
+
+- `/api/cases`
+- `/api/admin/users`
+- `/api/admin/users/pending`
+- `/api/admin/download-requests`
+- `/api/admin/password-reset-requests`
 
 Query params:
 
 - `page` (1-based)
 - `pageSize` (default 50, max 200)
-- `paginated=true` (forces paginated response envelope)
+- `paginated=true`
 
-## CI
+---
 
-GitHub Actions workflow added at `.github/workflows/ci.yml`:
+## 12) How to Make Changes Safely
 
-- install dependencies
-- run tests
-- run type-check
-- run build
+### Backend change checklist
 
-All pull requests should pass CI before merge.
+1. Put new/changed route in proper domain file under `server/routes/`.
+2. Reuse shared middleware from `server/routes/context.ts`.
+3. Reuse shared messages from `server/routes/messages.ts` where possible.
+4. Ensure role checks exist both where data is read and where actions are performed.
+5. Add/update tests in `server/routes/*.test.ts`.
+6. Run:
+   - `npm run test`
+   - `npm run check`
 
-## Runbooks
+### Frontend change checklist
 
-- Release process: `docs/RELEASE.md`
-- Operations and incident basics: `docs/OPERATIONS.md`
+1. Keep auth/session flows consistent with `client/src/lib/auth.tsx`.
+2. Add/update pages in `client/src/pages/`.
+3. Register route updates in `client/src/App.tsx`.
+4. Reuse `client/src/components/ui/*` primitives.
+5. Keep error states visible to user (`toast` or inline message).
+6. Run:
+   - `npm run test`
+   - `npm run check`
 
-## Release Checklist (Quick Link)
+### DB/schema change checklist
 
-Before shipping:
+1. Update `shared/schema.ts`.
+2. Update server access points (`auth-session-repo.ts`, `storage.ts`, routes).
+3. Add migration in `migrations/` and/or `migrations-pg/`.
+4. Preserve compatibility with existing SQLite DB files.
+5. Verify bootstrap logic in `server/routes.ts` still works for existing databases.
 
-1. `npm run verify` passes locally
-2. Environment variables are set correctly for target environment
-3. Backup/restore commands are verified for current DB mode
-4. CI passes on GitHub
-5. Follow final release steps in `docs/RELEASE.md`
+---
 
-## Deployment Notes (Single Instance)
-
-This app is currently suitable for single-instance deployment with persistent disk.
+## 13) Deployment Guide (Single Instance Baseline)
 
 Recommended:
 
-- pin Node 20 LTS
-- mount persistent storage for `DB_FILE`
-- run behind reverse proxy (TLS termination)
-- monitor `/api/health` and `/api/ready`
-- schedule DB backups
+- Node.js 20 LTS
+- Reverse proxy + TLS termination
+- Persistent storage for DB file (if SQLite)
+- Health monitoring on:
+  - `/api/health`
+  - `/api/ready`
+- Scheduled backups
 
-Official server baseline:
+### Startup behavior to remember
 
-- Prefer managed Postgres for long-term production data durability and backup/restore workflows.
-- Do not rely on ephemeral filesystem SQLite for official deployment.
-- `npm start` no longer hard-forces SQLite; production provider is now controlled by environment variables.
+- Sessions are cleared at startup.
+- Hidden superadmin may be created/updated if enabled.
 
-Server runtime hardening included:
+---
 
-- `trust proxy` enabled for reverse-proxy deployments
-- API rate-limit response standardization
-- HTTP server timeouts configured:
-  - `requestTimeout=120s`
-  - `headersTimeout=65s`
-  - `keepAliveTimeout=60s`
-- graceful shutdown on `SIGTERM`/`SIGINT` with close timeout guard
-- startup warning if `ALLOW_DEFAULT_ADMIN=true` in production
-- process-level handlers for `unhandledRejection` and `uncaughtException`
+## 14) Backup and Restore (SQLite)
 
-## Backup Strategy (SQLite)
+- Backup:
+  - `npm run backup:db`
+- Restore:
+  - set `DB_RESTORE_FROM` and run `npm run restore:db`
+- Operational recommendation:
+  - Daily backups
+  - Retain multiple historical backups
+  - Prefer backup with app stopped for highest consistency
 
-- Backup command: `npm run backup:db`
-- Restore command:
-  - `cross-env DB_FILE=./data.db DB_RESTORE_FROM=./backups/<file>.db npm run restore:db`
-- Minimum: daily backup + retain at least 7–14 copies
-- Prefer backups with app stopped for highest consistency
+---
 
-## Change Management Guide
+## 15) CI and Release
 
-When editing backend behavior:
+### CI expectation
 
-1. Keep route logic in domain files under `server/routes/`.
-2. Put shared middleware and auth/session logic in `context.ts`.
-3. Reuse message constants from `messages.ts`.
-4. Prefer pure helper modules for transform/business logic (testable).
-5. Add/adjust tests in `server/routes/*.test.ts`.
+- Tests, type-check, and build should pass before merge.
 
-When editing frontend behavior:
+### Pre-release checklist
 
-1. Keep auth bootstrap flow intact (`client/src/lib/auth.tsx`).
-2. Use `apiRequest()` or explicit fetch with error handling.
-3. Preserve protected-route behavior in `client/src/App.tsx`.
+1. `npm run verify`
+2. Validate env vars for target environment
+3. Validate backup/restore path
+4. Ensure no debug flags left enabled (`LOG_RESPONSE_BODIES`, bootstrap admin setting)
+5. Follow `docs/RELEASE.md`
 
-## Production Hardening Roadmap (Next)
+---
 
-For mass-scale multi-instance use, prioritize:
+## 16) Known Operational Behaviors (Not Bugs)
 
-1. Move from SQLite to managed Postgres
-2. Move sessions to shared store (DB-backed table is already a bridge)
-3. Add structured logging and centralized monitoring
-4. Add audit logging for critical actions
-5. Add disaster recovery runbook
+- Users are logged out after server restart (session table cleared intentionally).
+- Closing browser tab logs out user (session token stored in sessionStorage).
+- Login accepts username/email with case-insensitive, trim-safe matching.
 
-## Known Warnings
+---
 
-- Bundle-size warning (`>500kb`) has been addressed with Vite chunk splitting.
-- PostCSS `from` warning is non-blocking and filtered from build logs in `script/build.ts` for clean CI/build output.
+## 17) Troubleshooting
 
-## Troubleshooting
+### App fails to start
 
-- Blank page in development:
-  - Ensure `NODE_ENV=development` for local run
-  - Confirm server is running and check browser console/network tab
+- Confirm `npm install` succeeded
+- Confirm Node version is compatible (Node 20 LTS recommended)
+- Check env values (`DB_PROVIDER`, `DB_FILE`, `DATABASE_URL`)
 
-- Unexpected logout:
-  - Closing tab/window logs out by design (`sessionStorage`)
-  - Server restart invalidates all sessions by design
-  - Inactivity timeout may auto-logout users based on profile setting
+### `/api/ready` fails
 
-- `/api/ready` returns non-ready:
-  - Verify DB path (`DB_FILE`) exists and is writable
-  - Check startup logs for database path and error details
+- SQLite: verify file path exists and is writable
+- Postgres: verify `DATABASE_URL`, network, and credentials
 
-- Deployed domain not active:
-  - Verify DNS records match host provider instructions exactly
-  - Wait for propagation and SSL issuance to complete
+### Can't log in
+
+- Confirm account is approved
+- Confirm password is correct
+- Check hidden superadmin env values if using hidden account
+
+### Admin actions failing with 403
+
+- Check role restrictions in `server/routes/admin.ts`
+- Some actions are superadmin-only by design
+
+---
+
+## 18) Documentation Map
+
+- Release process: `docs/RELEASE.md`
+- Operations/incident notes: `docs/OPERATIONS.md`
+- This file (`README.md`) is the primary development handover document.
+
+---
+
+## 19) Maintainer Notes
+
+- Keep this README updated when:
+  - adding new endpoint groups
+  - changing role permissions
+  - changing session/auth behavior
+  - changing DB bootstrap/seeding logic
+- For any new admin workflow, include:
+  - who can access it
+  - whether it is audited
+  - whether data can be exported (CSV/report)

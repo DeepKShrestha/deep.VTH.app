@@ -1209,11 +1209,15 @@ export function registerAdminRoutes(app: Express) {
       const enriched = await Promise.all(
         paged.map(async (r) => {
           const user = await authSessionRepo.getUserById(r.userId);
+          const resolver = r.resolvedBy
+            ? await authSessionRepo.getUserById(r.resolvedBy)
+            : undefined;
           return {
             ...r,
             userName: user?.fullName || "Unknown",
             userUsername: user?.username || "",
             userRole: user?.role || r.requestedByRole,
+            resolverName: resolver?.fullName || "",
           };
         }),
       );

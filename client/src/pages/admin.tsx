@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowDown, ArrowLeft, ArrowUp, Download, Plus, Trash2, UserCheck, UserX, Users, Clock } from "lucide-react";
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
+import { adToBs } from "@/lib/nepali-date";
 type FormEditLog = {
   id: number;
   actorUserId: number;
@@ -95,6 +96,14 @@ function roleBadge(role: string) {
   return <Badge className={`${colors[role] || colors.pending} border-0 text-xs`}>{labels[role] || role}</Badge>;
 }
 
+function csvEscape(value: string | number | null | undefined): string {
+  const raw = value == null ? "" : String(value);
+  if (/[",\r\n]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
 export default function AdminPanel() {
   const [location] = useLocation();
   const initialTabFromUrl = (() => {
@@ -118,6 +127,8 @@ export default function AdminPanel() {
   const [newQuestionTypeBySection, setNewQuestionTypeBySection] = useState<Record<string, string>>({});
   const [newQuestionOptionsBySection, setNewQuestionOptionsBySection] = useState<Record<string, string>>({});
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [showPasswordResetLogs, setShowPasswordResetLogs] = useState(false);
+  const [usersFilter, setUsersFilter] = useState("");
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -174,6 +185,7 @@ export default function AdminPanel() {
       userName: string;
       userUsername: string;
       userRole: string;
+      resolverName?: string;
     })[]
   >({
     queryKey: ["/api/admin/password-reset-requests"],
@@ -181,9 +193,21 @@ export default function AdminPanel() {
 
   const pendingUsers = allUsers.filter((u) => !u.approved);
   const approvedUsers = allUsers.filter((u) => u.approved);
+  const normalizedUsersFilter = usersFilter.trim().toLowerCase();
+  const filteredApprovedUsers = approvedUsers.filter((u) => {
+    if (!normalizedUsersFilter) return true;
+    return (
+      u.fullName.toLowerCase().includes(normalizedUsersFilter) ||
+      u.username.toLowerCase().includes(normalizedUsersFilter) ||
+      u.email.toLowerCase().includes(normalizedUsersFilter)
+    );
+  });
   const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending");
   const pendingPasswordResets = passwordResetRequests.filter(
     (r) => r.status === "pending",
+  );
+  const resolvedPasswordResetLogs = passwordResetRequests.filter(
+    (r) => r.status === "approved" || r.status === "rejected",
   );
 
   const approveMutation = useMutation({
@@ -498,6 +522,84 @@ export default function AdminPanel() {
     },
   });
 
+  const downloadUsersCsv = () => {
+    const headers = ["Name", "Username", "Address", "Phone", "Email", "Role", "Designation", "Status"];
+    const rows = filteredApprovedUsers.map((u) => [
+      u.fullName,
+      u.username,
+      u.address,
+      u.phone,
+      u.email,
+      u.role,
+      designationLabel(u.designation),
+      u.approved ? "Approved" : "Pending",
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => csvEscape(cell)).join(","))
+      .join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `users-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const formatAdDateTime = (isoDate: string | null | undefined): string => {
+    if (!isoDate) return "-";
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString();
+  };
+
+  const formatBsDateTime = (isoDate: string | null | undefined): string => {
+    if (!isoDate) return "-";
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) return "-";
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    const bsDate = adToBs(`${y}-${m}-${d}`) || "-";
+    const time = date.toLocaleTimeString();
+    return `${bsDate} ${time}`;
+  };
+
+  const downloadPasswordResetLogsCsv = () => {
+    const headers = [
+      "Full Name",
+      "Username",
+      "Decision",
+      "Resolved By",
+      "AD Date Time",
+      "BS Date Time",
+      "Resolver Note",
+    ];
+    const rows = resolvedPasswordResetLogs.map((r) => [
+      r.userName,
+      r.userUsername,
+      r.status === "approved" ? "Approved" : "Rejected",
+      r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : ""),
+      formatAdDateTime(r.resolvedAt),
+      formatBsDateTime(r.resolvedAt),
+      r.resolverNote || "",
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => csvEscape(cell)).join(","))
+      .join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `password-reset-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -613,88 +715,121 @@ export default function AdminPanel() {
 
           {/* All Users */}
         <TabsContent value="users" className="space-y-3 mt-4">
-          {approvedUsers.map((u) => (
-            <Card key={u.id}>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{u.fullName}</span>
-                      {roleBadge(u.role)}
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+            <Input
+              value={usersFilter}
+              onChange={(e) => setUsersFilter(e.target.value)}
+              placeholder="Search by name, username, or email"
+              data-testid="input-users-filter"
+              className="sm:max-w-sm"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={downloadUsersCsv}
+              disabled={filteredApprovedUsers.length === 0}
+              data-testid="button-download-users-csv"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download CSV
+            </Button>
+          </div>
+
+          {filteredApprovedUsers.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              {normalizedUsersFilter ? "No users match your search." : "No users found."}
+            </p>
+          ) : (
+            filteredApprovedUsers.map((u) => (
+              <Card key={u.id}>
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{u.fullName}</span>
+                        {roleBadge(u.role)}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        @{u.username} &middot; {designationLabel(u.designation)} &middot; {u.email}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      @{u.username} &middot; {designationLabel(u.designation)} &middot; {u.email}
-                    </div>
+
+                    {u.id !== currentUser?.id && (
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
+                        {(currentUser?.role === "superadmin" ||
+                          !["superadmin", "admin"].includes(u.role)) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            onClick={() => {
+                              setEditingUser(u);
+                              setEditForm({
+                                fullName: u.fullName,
+                                address: u.address,
+                                phone: u.phone,
+                                email: u.email,
+                                username: u.username,
+                                designation: u.designation,
+                              });
+                            }}
+                          >
+                            Edit
+                          </Button>
+                        )}
+
+                        {(currentUser?.role === "superadmin" ||
+                          !["superadmin", "admin"].includes(u.role)) ? (
+                          <Select
+                            value={u.role}
+                            onValueChange={(role) => changeRoleMutation.mutate({ id: u.id, role })}
+                          >
+                            <SelectTrigger
+                              className="w-32 h-8 text-xs"
+                              data-testid={`select-role-${u.id}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {currentUser?.role === "superadmin" && (
+                                <>
+                                  <SelectItem value="superadmin">Super Admin</SelectItem>
+                                  <SelectItem value="admin">Admin</SelectItem>
+                                </>
+                              )}
+                              <SelectItem value="staff">Staff</SelectItem>
+                              <SelectItem value="intern">Intern</SelectItem>
+                              <SelectItem value="student">Student</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          roleBadge(u.role)
+                        )}
+
+                        {(currentUser?.role === "superadmin" ||
+                          !["superadmin", "admin"].includes(u.role)) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-700 h-8"
+                            onClick={() => rejectMutation.mutate(u.id)}
+                            data-testid={`button-delete-user-${u.id}`}
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+
+                    {u.id === currentUser?.id && (
+                      <span className="text-xs text-muted-foreground italic">You</span>
+                    )}
                   </div>
-
-                  {u.id !== currentUser?.id && (
-                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
-                      {(currentUser?.role === "superadmin" || !["superadmin", "admin"].includes(u.role)) && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1"
-                          onClick={() => {
-                            setEditingUser(u);
-                            setEditForm({
-                              fullName: u.fullName,
-                              address: u.address,
-                              phone: u.phone,
-                              email: u.email,
-                              username: u.username,
-                              designation: u.designation,
-                            });
-                          }}
-                        >
-                          Edit
-                        </Button>
-                      )}
-
-                      {(currentUser?.role === "superadmin" || !["superadmin", "admin"].includes(u.role)) ? (
-                        <Select
-                          value={u.role}
-                          onValueChange={(role) => changeRoleMutation.mutate({ id: u.id, role })}
-                        >
-                          <SelectTrigger className="w-32 h-8 text-xs" data-testid={`select-role-${u.id}`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {currentUser?.role === "superadmin" && (
-                              <>
-                                <SelectItem value="superadmin">Super Admin</SelectItem>
-                                <SelectItem value="admin">Admin</SelectItem>
-                              </>
-                            )}
-                            <SelectItem value="staff">Staff</SelectItem>
-                            <SelectItem value="intern">Intern</SelectItem>
-                            <SelectItem value="student">Student</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        roleBadge(u.role)
-                      )}
-
-                      {(currentUser?.role === "superadmin" || !["superadmin", "admin"].includes(u.role)) && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-red-500 hover:text-red-700 h-8"
-                          onClick={() => rejectMutation.mutate(u.id)}
-                          data-testid={`button-delete-user-${u.id}`}
-                        >
-                          <UserX className="w-3.5 h-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
-
-                  {u.id === currentUser?.id && (
-                    <span className="text-xs text-muted-foreground italic">You</span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            ))
+          )}
         </TabsContent>
 
         {/* Download Requests */}
@@ -762,6 +897,75 @@ export default function AdminPanel() {
 
         {/* Password Reset Requests */}
         <TabsContent value="password-resets" className="space-y-3 mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPasswordResetLogs((v) => !v)}
+              data-testid="button-toggle-reset-logs"
+            >
+              {showPasswordResetLogs ? "Hide Reset Logs" : "View Reset Logs"}
+            </Button>
+            {showPasswordResetLogs && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={downloadPasswordResetLogsCsv}
+                disabled={resolvedPasswordResetLogs.length === 0}
+                data-testid="button-download-reset-logs-csv"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download CSV
+              </Button>
+            )}
+          </div>
+
+          {showPasswordResetLogs && (
+            <Card>
+              <CardContent className="pt-3 pb-3">
+                {resolvedPasswordResetLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No resolved password reset logs yet.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr className="text-left">
+                          <th className="px-2 py-1.5 font-medium">Full Name</th>
+                          <th className="px-2 py-1.5 font-medium">Username</th>
+                          <th className="px-2 py-1.5 font-medium">Decision</th>
+                          <th className="px-2 py-1.5 font-medium">Resolved By</th>
+                          <th className="px-2 py-1.5 font-medium">AD Date/Time</th>
+                          <th className="px-2 py-1.5 font-medium">BS Date/Time</th>
+                          <th className="px-2 py-1.5 font-medium">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resolvedPasswordResetLogs.map((r) => (
+                          <tr key={`reset-log-${r.id}`} className="border-t align-top">
+                            <td className="px-2 py-1.5">{r.userName}</td>
+                            <td className="px-2 py-1.5">@{r.userUsername}</td>
+                            <td className="px-2 py-1.5">
+                              {r.status === "approved" ? "Approved" : "Rejected"}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : "-")}
+                            </td>
+                            <td className="px-2 py-1.5">{formatAdDateTime(r.resolvedAt)}</td>
+                            <td className="px-2 py-1.5">{formatBsDateTime(r.resolvedAt)}</td>
+                            <td className="px-2 py-1.5">{r.resolverNote || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {passwordResetError && (
             <Card>
               <CardContent className="pt-4 pb-3 text-sm text-red-600">
