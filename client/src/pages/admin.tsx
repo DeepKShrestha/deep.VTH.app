@@ -128,6 +128,9 @@ export default function AdminPanel() {
   const [newQuestionOptionsBySection, setNewQuestionOptionsBySection] = useState<Record<string, string>>({});
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [showPasswordResetLogs, setShowPasswordResetLogs] = useState(false);
+  const [showDownloadLogs, setShowDownloadLogs] = useState(false);
+  const [passwordResetLogsFilter, setPasswordResetLogsFilter] = useState("");
+  const [downloadLogsFilter, setDownloadLogsFilter] = useState("");
   const [usersFilter, setUsersFilter] = useState("");
   const [editForm, setEditForm] = useState({
     fullName: "",
@@ -174,7 +177,14 @@ export default function AdminPanel() {
     if (!stillExists) setSelectedBreedSpecies("");
   }, [speciesOptions, selectedBreedSpecies]);
 
-  const { data: downloadRequests = [] } = useQuery<(DownloadRequest & { userName: string; userDesignation: string })[]>({
+  const { data: downloadRequests = [] } = useQuery<
+    (DownloadRequest & {
+      userName: string;
+      userUsername?: string;
+      userDesignation: string;
+      resolverName?: string;
+    })[]
+  >({
     queryKey: ["/api/admin/download-requests"],
   });
   const {
@@ -203,12 +213,33 @@ export default function AdminPanel() {
     );
   });
   const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending");
+  const resolvedDownloadLogs = downloadRequests.filter((r) => r.status !== "pending");
+  const normalizedDownloadLogsFilter = downloadLogsFilter.trim().toLowerCase();
+  const filteredResolvedDownloadLogs = resolvedDownloadLogs.filter((r) => {
+    if (!normalizedDownloadLogsFilter) return true;
+    return (
+      r.userName.toLowerCase().includes(normalizedDownloadLogsFilter) ||
+      String(r.userUsername || "")
+        .toLowerCase()
+        .includes(normalizedDownloadLogsFilter)
+    );
+  });
   const pendingPasswordResets = passwordResetRequests.filter(
     (r) => r.status === "pending",
   );
   const resolvedPasswordResetLogs = passwordResetRequests.filter(
     (r) => r.status === "approved" || r.status === "rejected",
   );
+  const normalizedPasswordResetLogsFilter = passwordResetLogsFilter.trim().toLowerCase();
+  const filteredResolvedPasswordResetLogs = resolvedPasswordResetLogs.filter((r) => {
+    if (!normalizedPasswordResetLogsFilter) return true;
+    return (
+      r.userName.toLowerCase().includes(normalizedPasswordResetLogsFilter) ||
+      String(r.userUsername || "")
+        .toLowerCase()
+        .includes(normalizedPasswordResetLogsFilter)
+    );
+  });
 
   const approveMutation = useMutation({
     mutationFn: async ({ id, role }: { id: number; role: string }) => {
@@ -566,6 +597,12 @@ export default function AdminPanel() {
     const time = date.toLocaleTimeString();
     return `${bsDate} ${time}`;
   };
+  const formatAdBsDateTime = (isoDate: string | null | undefined): string => {
+    const ad = formatAdDateTime(isoDate);
+    const bs = formatBsDateTime(isoDate);
+    if (ad === "-" || bs === "-") return "-";
+    return `${ad} | ${bs}`;
+  };
 
   const downloadPasswordResetLogsCsv = () => {
     const headers = [
@@ -573,17 +610,15 @@ export default function AdminPanel() {
       "Username",
       "Decision",
       "Resolved By",
-      "AD Date Time",
-      "BS Date Time",
+      "Resolved At (AD | BS)",
       "Resolver Note",
     ];
-    const rows = resolvedPasswordResetLogs.map((r) => [
+    const rows = filteredResolvedPasswordResetLogs.map((r) => [
       r.userName,
       r.userUsername,
       r.status === "approved" ? "Approved" : "Rejected",
       r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : ""),
-      formatAdDateTime(r.resolvedAt),
-      formatBsDateTime(r.resolvedAt),
+      formatAdBsDateTime(r.resolvedAt),
       r.resolverNote || "",
     ]);
     const csv = [headers, ...rows]
@@ -594,6 +629,39 @@ export default function AdminPanel() {
     const link = document.createElement("a");
     link.href = url;
     link.download = `password-reset-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadDownloadLogsCsv = () => {
+    const headers = [
+      "Full Name",
+      "Username",
+      "Decision",
+      "Requested At (AD | BS)",
+      "Resolved By",
+      "Resolved At (AD | BS)",
+      "Admin Note",
+    ];
+    const rows = filteredResolvedDownloadLogs.map((r) => [
+      r.userName,
+      r.userUsername || "",
+      r.status === "approved" ? "Approved" : r.status === "rejected" ? "Rejected" : "Downloaded",
+      formatAdBsDateTime(r.createdAt),
+      r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : ""),
+      formatAdBsDateTime(r.resolvedAt),
+      r.adminNote || "",
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => csvEscape(cell)).join(","))
+      .join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `download-logs-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -834,6 +902,86 @@ export default function AdminPanel() {
 
         {/* Download Requests */}
         <TabsContent value="downloads" className="space-y-3 mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDownloadLogs((v) => !v)}
+              data-testid="button-toggle-download-logs"
+            >
+              {showDownloadLogs ? "Hide Download Logs" : "View Download Logs"}
+            </Button>
+          </div>
+
+          {showDownloadLogs && (
+            <Card>
+              <CardContent className="pt-3 pb-3">
+                <div className="mb-2 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+                  <Input
+                    value={downloadLogsFilter}
+                    onChange={(e) => setDownloadLogsFilter(e.target.value)}
+                    placeholder="Search by requester name or username"
+                    className="sm:max-w-sm h-8 text-xs"
+                    data-testid="input-download-logs-filter"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={downloadDownloadLogsCsv}
+                    disabled={filteredResolvedDownloadLogs.length === 0}
+                    data-testid="button-download-download-logs-csv"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download CSV
+                  </Button>
+                </div>
+                {filteredResolvedDownloadLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No resolved download logs yet.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/40">
+                        <tr className="text-left">
+                          <th className="px-2 py-1.5 font-medium">Full Name</th>
+                          <th className="px-2 py-1.5 font-medium">Username</th>
+                          <th className="px-2 py-1.5 font-medium">Decision</th>
+                          <th className="px-2 py-1.5 font-medium">Requested At (AD | BS)</th>
+                          <th className="px-2 py-1.5 font-medium">Resolved By</th>
+                          <th className="px-2 py-1.5 font-medium">Resolved At (AD | BS)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredResolvedDownloadLogs.map((r) => (
+                          <tr key={`download-log-${r.id}`} className="border-t align-top">
+                            <td className="px-2 py-1.5">{r.userName}</td>
+                            <td className="px-2 py-1.5">
+                              {r.userUsername ? `@${r.userUsername}` : "-"}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {r.status === "approved"
+                                ? "Approved"
+                                : r.status === "rejected"
+                                  ? "Rejected"
+                                  : "Downloaded"}
+                            </td>
+                            <td className="px-2 py-1.5">{formatAdBsDateTime(r.createdAt)}</td>
+                            <td className="px-2 py-1.5">
+                              {r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : "-")}
+                            </td>
+                            <td className="px-2 py-1.5">{formatAdBsDateTime(r.resolvedAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {downloadRequests.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No download requests yet</p>
           ) : (
@@ -926,7 +1074,16 @@ export default function AdminPanel() {
           {showPasswordResetLogs && (
             <Card>
               <CardContent className="pt-3 pb-3">
-                {resolvedPasswordResetLogs.length === 0 ? (
+                <div className="mb-2">
+                  <Input
+                    value={passwordResetLogsFilter}
+                    onChange={(e) => setPasswordResetLogsFilter(e.target.value)}
+                    placeholder="Search by requester name or username"
+                    className="sm:max-w-sm h-8 text-xs"
+                    data-testid="input-password-reset-logs-filter"
+                  />
+                </div>
+                {filteredResolvedPasswordResetLogs.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No resolved password reset logs yet.</p>
                 ) : (
                   <div className="overflow-x-auto rounded border">
@@ -937,13 +1094,12 @@ export default function AdminPanel() {
                           <th className="px-2 py-1.5 font-medium">Username</th>
                           <th className="px-2 py-1.5 font-medium">Decision</th>
                           <th className="px-2 py-1.5 font-medium">Resolved By</th>
-                          <th className="px-2 py-1.5 font-medium">AD Date/Time</th>
-                          <th className="px-2 py-1.5 font-medium">BS Date/Time</th>
+                          <th className="px-2 py-1.5 font-medium">Resolved At (AD | BS)</th>
                           <th className="px-2 py-1.5 font-medium">Note</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {resolvedPasswordResetLogs.map((r) => (
+                        {filteredResolvedPasswordResetLogs.map((r) => (
                           <tr key={`reset-log-${r.id}`} className="border-t align-top">
                             <td className="px-2 py-1.5">{r.userName}</td>
                             <td className="px-2 py-1.5">@{r.userUsername}</td>
@@ -953,8 +1109,7 @@ export default function AdminPanel() {
                             <td className="px-2 py-1.5">
                               {r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : "-")}
                             </td>
-                            <td className="px-2 py-1.5">{formatAdDateTime(r.resolvedAt)}</td>
-                            <td className="px-2 py-1.5">{formatBsDateTime(r.resolvedAt)}</td>
+                            <td className="px-2 py-1.5">{formatAdBsDateTime(r.resolvedAt)}</td>
                             <td className="px-2 py-1.5">{r.resolverNote || "-"}</td>
                           </tr>
                         ))}

@@ -47,6 +47,7 @@ type DownloadRequestRow = {
   reason: string | null;
   status: string;
   admin_note: string | null;
+  resolved_by: number | null;
   created_at: string;
   resolved_at: string | null;
 };
@@ -60,6 +61,7 @@ function toDownloadRequest(row: DownloadRequestRow) {
     reason: row.reason,
     status: row.status,
     adminNote: row.admin_note,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
@@ -1119,7 +1121,7 @@ export function registerAdminRoutes(app: Express) {
     async (req, res) => {
       const pagination = getPaginationParams(req);
       const rows = await dbAll<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             ORDER BY created_at DESC`,
       );
@@ -1130,10 +1132,15 @@ export function registerAdminRoutes(app: Express) {
       const enriched = await Promise.all(
         paged.map(async (r) => {
           const user = await authSessionRepo.getUserById(r.userId);
+          const resolver = r.resolvedBy
+            ? await authSessionRepo.getUserById(r.resolvedBy)
+            : undefined;
           return {
             ...r,
             userName: user?.fullName || "Unknown",
+            userUsername: user?.username || "",
             userDesignation: user?.designation || "",
+            resolverName: resolver?.fullName || "",
           };
         }),
       );
@@ -1156,6 +1163,7 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
       const { status, adminNote } = req.body;
       if (!["approved", "rejected"].includes(status)) {
         return res
@@ -1164,7 +1172,7 @@ export function registerAdminRoutes(app: Express) {
       }
       const id = getIdParam(req);
       const existing = await dbGet<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE id = ${id}`,
       );
@@ -1173,11 +1181,12 @@ export function registerAdminRoutes(app: Express) {
         sql`UPDATE download_requests
             SET status = ${status},
                 admin_note = ${adminNote || null},
+                resolved_by = ${currentUser.id},
                 resolved_at = ${new Date().toISOString()}
             WHERE id = ${id}`,
       );
       const updated = await dbGet<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE id = ${id}`,
       );

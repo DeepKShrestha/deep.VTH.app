@@ -231,6 +231,7 @@ When existing users exist:
 - Approve/reject reset requests
 - Resolver note support
 - Reset logs toggle in Password Reset tab
+- Reset logs search box (searches only request initiator: full name/username)
 - Compact logs table with:
   - full name
   - username
@@ -239,9 +240,29 @@ When existing users exist:
   - AD date/time
   - BS date/time
   - resolver note
-- CSV export for reset logs
+- CSV export for reset logs (exports currently filtered initiator results)
 
-### C) Form Builder
+### C) Downloads
+
+- Request list with approve/reject actions
+- Download logs toggle in Downloads tab
+- Download logs search box (searches only request initiator: full name/username)
+- Compact logs table with:
+  - full name
+  - username
+  - decision (approved/rejected/downloaded)
+  - requested at (AD | BS in same column)
+  - resolved by
+  - resolved at (AD | BS in same column)
+  - admin note
+- CSV export for download logs (exports currently filtered initiator results)
+
+Backend note:
+
+- `download_requests.resolved_by` is now used to track who approved/rejected downloads.
+- Bootstrap logic applies this safely for both SQLite and Postgres (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on Postgres).
+
+### D) Form Builder
 
 - Add/move/delete sections
 - Add/move/delete custom questions
@@ -249,13 +270,13 @@ When existing users exist:
 - Species/breed option management
 - Form edit audit log
 
-### D) Dashboard Visibility by Role
+### E) Dashboard Visibility by Role
 
 - Toggle dashboard visibility per role in admin UI
 - Persisted in `role_feature_visibility`
 - Enforced by UI and backend checks
 
-### E) Notifications
+### F) Notifications
 
 - Admin/superadmin notification center
 - Read/delete state stored server-side

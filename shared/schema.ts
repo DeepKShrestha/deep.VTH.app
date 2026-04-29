@@ -26,6 +26,7 @@ export const downloadRequests = sqliteTable("download_requests", {
   dateTo: text("date_to"),
   reason: text("reason"),
   adminNote: text("admin_note"),
+  resolvedBy: integer("resolved_by"),
   createdAt: text("created_at").notNull(),
   resolvedAt: text("resolved_at"),
 });
@@ -132,6 +133,7 @@ export const insertDownloadRequestSchema = createInsertSchema(downloadRequests).
   createdAt: true,
   status: true,
   adminNote: true,
+  resolvedBy: true,
   resolvedAt: true,
 });
 

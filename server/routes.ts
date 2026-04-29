@@ -187,6 +187,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       // download_requests table may not exist on old DBs until migration is applied
     }
     try {
+      await dbRun(sql`SELECT resolved_by FROM download_requests LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE download_requests ADD COLUMN resolved_by INTEGER`);
+    }
+    try {
       await dbRun(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
@@ -257,6 +262,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       date_to TEXT,
       reason TEXT,
       admin_note TEXT,
+      resolved_by INTEGER,
       created_at TEXT NOT NULL,
       resolved_at TEXT
     )`);
@@ -265,6 +271,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     await dbRun(
       sql`CREATE INDEX IF NOT EXISTS download_requests_user_id_idx ON download_requests(user_id)`,
+    );
+    await dbRun(
+      sql`ALTER TABLE download_requests ADD COLUMN IF NOT EXISTS resolved_by INTEGER`,
     );
 
     await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (

@@ -26,6 +26,7 @@ type DownloadRequestRow = {
   reason: string | null;
   status: string;
   admin_note: string | null;
+  resolved_by: number | null;
   created_at: string;
   resolved_at: string | null;
 };
@@ -39,6 +40,7 @@ function toDownloadRequest(row: DownloadRequestRow) {
     reason: row.reason,
     status: row.status,
     adminNote: row.admin_note,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
@@ -673,7 +675,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
           )`,
     );
     const created = await dbGet<DownloadRequestRow>(
-      sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+      sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
           FROM download_requests
           ORDER BY id DESC
           LIMIT 1`,
@@ -691,7 +693,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     async (req: Request, res: Response) => {
       const user = (req as AuthenticatedRequest).currentUser;
       const rows = await dbAll<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, created_at, resolved_at
+        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE user_id = ${user.id}
             ORDER BY created_at DESC`,
