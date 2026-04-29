@@ -95,11 +95,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   getUserByUsername(username: string): User | undefined {
-    return db.select().from(users).where(eq(users.username, username)).get();
+    const normalized = username.trim().toLowerCase();
+    if (!normalized) return undefined;
+    return this.getUsers().find((user) => user.username.toLowerCase() === normalized);
   }
 
   getUserByEmail(email: string): User | undefined {
-    return db.select().from(users).where(eq(users.email, email)).get();
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return undefined;
+    return this.getUsers().find((user) => user.email.toLowerCase() === normalized);
   }
 
   getUserById(id: number): User | undefined {

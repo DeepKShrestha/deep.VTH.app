@@ -54,15 +54,26 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.post("/api/auth/login", async (req, res) => {
-    const { usernameOrEmail, password } = req.body;
-    if (!usernameOrEmail || !password) {
+    const { usernameOrEmail, password } = req.body as {
+      usernameOrEmail?: string;
+      password?: string;
+    };
+    const identifier = (usernameOrEmail || "").trim();
+    if (!identifier || !password) {
       return res
         .status(400)
         .json({ message: "Username/email and password required" });
     }
 
-    let user = await authSessionRepo.getUserByUsername(usernameOrEmail);
-    if (!user) user = await authSessionRepo.getUserByEmail(usernameOrEmail);
+    let user = await authSessionRepo.getUserByUsername(identifier);
+    if (!user) user = await authSessionRepo.getUserByEmail(identifier);
+    if (!user) {
+      const normalized = identifier.toLowerCase();
+      user = (await authSessionRepo.getUsers()).find(
+        (u) =>
+          u.username.toLowerCase() === normalized || u.email.toLowerCase() === normalized,
+      );
+    }
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
     if (!bcrypt.compareSync(password, user.passwordHash)) {

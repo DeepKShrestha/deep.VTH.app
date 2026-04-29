@@ -136,6 +136,38 @@ describe("auth routes", () => {
     expect(typeof payload.token).toBe("string");
   });
 
+  it("login accepts email with extra spaces and different case", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+    vi.spyOn(bcrypt, "compareSync").mockReturnValue(true);
+
+    const user = makeUser({
+      id: 8,
+      username: "jane",
+      email: "jane@example.com",
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(undefined);
+    vi.mocked(authSessionRepo.getUserByEmail).mockResolvedValue(undefined);
+    vi.mocked(authSessionRepo.getUsers).mockResolvedValue([user]);
+    vi.mocked(authSessionRepo.setSession).mockResolvedValue();
+
+    const req = {
+      body: {
+        usernameOrEmail: "  JANE@EXAMPLE.COM  ",
+        password: "admin123",
+      },
+    } as Request;
+    const res = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](req, res);
+
+    const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.user.passwordHash).toBeUndefined();
+    expect(payload.user.email).toBe("jane@example.com");
+    expect(typeof payload.token).toBe("string");
+  });
+
   it("auth me returns session expired for unknown token", async () => {
     vi.mocked(authSessionRepo.getSessionUserId).mockResolvedValue(undefined);
 

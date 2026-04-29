@@ -125,24 +125,28 @@ export const authSessionRepo = {
   },
 
   async getUserByUsername(username: string): Promise<User | undefined> {
+    const normalized = username.trim();
+    if (!normalized) return undefined;
     if (getProvider() === "sqlite") {
-      return storage.getUserByUsername(username);
+      return storage.getUserByUsername(normalized);
     }
     const result = await getPgPool().query(
-      "SELECT * FROM users WHERE username = $1 LIMIT 1",
-      [username],
+      "SELECT * FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1",
+      [normalized],
     );
     const row = result.rows[0];
     return row ? mapPgUser(row) : undefined;
   },
 
   async getUserByEmail(email: string): Promise<User | undefined> {
+    const normalized = email.trim();
+    if (!normalized) return undefined;
     if (getProvider() === "sqlite") {
-      return storage.getUserByEmail(email);
+      return storage.getUserByEmail(normalized);
     }
     const result = await getPgPool().query(
-      "SELECT * FROM users WHERE email = $1 LIMIT 1",
-      [email],
+      "SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+      [normalized],
     );
     const row = result.rows[0];
     return row ? mapPgUser(row) : undefined;
