@@ -97,6 +97,59 @@ export function isAdminRole(role: string): boolean {
   return role === "superadmin" || role === "admin";
 }
 
+export type PermissionCapability =
+  | "hospital.case.create"
+  | "hospital.case.view"
+  | "ast.case.create"
+  | "ast.case.view"
+  | "ast.download"
+  | "ast.admin";
+
+export function resolveCapabilitiesForRole(role: string): PermissionCapability[] {
+  const isAdmin = role === "superadmin" || role === "admin";
+  const base: PermissionCapability[] = ["hospital.case.view", "ast.case.view"];
+  if (role === "student" || role === "intern" || role === "staff" || isAdmin) {
+    base.push("hospital.case.create");
+  }
+  if (role === "staff" || role === "intern" || isAdmin) {
+    base.push("ast.case.create");
+  }
+  if (role === "intern" || role === "staff" || isAdmin) {
+    base.push("ast.download");
+  }
+  if (isAdmin) {
+    base.push("ast.admin");
+  }
+  return base;
+}
+
+export function hasCapability(role: string, capability: PermissionCapability): boolean {
+  return resolveCapabilitiesForRole(role).includes(capability);
+}
+
+export function requireCapability(capability: PermissionCapability) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+    if (!hasCapability(user.role, capability)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    next();
+  };
+}
+
+export function requireAnyCapability(...capabilities: PermissionCapability[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+    const allowed = capabilities.some((capability) => hasCapability(user.role, capability));
+    if (!allowed) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    next();
+  };
+}
+
 export async function isDashboardVisibleForRole(role: string): Promise<boolean> {
   if (!role) return false;
   if (DB_PROVIDER === "postgres") {
@@ -159,15 +212,28 @@ export function getPaginationParams(
 export function canRegister(req: Request, res: Response, next: NextFunction) {
   const user = (req as AuthenticatedRequest).currentUser;
   if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
-  if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
+  if (hasCapability(user.role, "ast.case.create")) {
     return next();
   }
-  return res.status(403).json({ message: "Students cannot register cases" });
+  return res.status(403).json({ message: "Insufficient permissions for AST registration" });
+}
+
+export function canRegisterHospital(req: Request, res: Response, next: NextFunction) {
+  const user = (req as AuthenticatedRequest).currentUser;
+  if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+  if (hasCapability(user.role, "hospital.case.create")) {
+    return next();
+  }
+  return res.status(403).json({ message: "Insufficient permissions for hospital case registration" });
 }
 
 export function canDownload(req: Request, res: Response, next: NextFunction) {
   const user = (req as AuthenticatedRequest).currentUser;
   if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+
+  if (user.role !== "student" && !hasCapability(user.role, "ast.download")) {
+    return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+  }
 
   if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
     return next();
@@ -175,7 +241,10 @@ export function canDownload(req: Request, res: Response, next: NextFunction) {
 
   void (async () => {
     const requests = await dbAll<{ id: number; status: string }>(
-      sql`SELECT id, status FROM download_requests WHERE user_id = ${user.id} ORDER BY created_at DESC`,
+      sql`SELECT id, status FROM download_requests
+          WHERE user_id = ${user.id}
+            AND request_source = ${"ast_report"}
+          ORDER BY created_at DESC`,
     );
     const approved = requests.find((r) => r.status === "approved");
     if (!approved) {

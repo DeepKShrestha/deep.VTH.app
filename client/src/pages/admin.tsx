@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -65,6 +65,55 @@ const DEFAULT_BUILTIN_QUESTIONS = [
   { sectionTitle: "Sample Information", key: "cultureResult", label: "Culture / Organism Isolated" },
   { sectionTitle: "General Remarks", key: "remarks", label: "General Remarks" },
 ];
+const AST_HOSPITAL_ONLY_QUESTION_KEYWORDS = [
+  "history",
+  "previousmedication",
+  "testsuggested",
+  "vital",
+  "temperature",
+  "heartrate",
+  "respiratoryrate",
+  "respirationrate",
+  "resprate",
+  "rumenmotility",
+  "dehydration",
+  "crt",
+  "capillaryrefilltime",
+  "flock",
+  "hatchery",
+  "feedsupplier",
+  "feedintake",
+  "waterintake",
+  "mortality",
+];
+
+function normalizeAstKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isHospitalOnlyQuestionInAstEditor(question: { key: string; label: string }): boolean {
+  const normalizedKey = normalizeAstKey(question.key || "");
+  const normalizedLabel = normalizeAstKey(question.label || "");
+  return AST_HOSPITAL_ONLY_QUESTION_KEYWORDS.some(
+    (keyword) => normalizedKey.includes(keyword) || normalizedLabel.includes(keyword),
+  );
+}
+
+function isHospitalOnlySectionInAstEditor(section: { key: string; title: string }): boolean {
+  const normalizedKey = normalizeAstKey(section.key || "");
+  const normalizedTitle = normalizeAstKey(section.title || "");
+  return (
+    normalizedKey === "history" ||
+    normalizedKey === "avian" ||
+    normalizedKey === "vitals" ||
+    normalizedKey === "testssuggested" ||
+    normalizedKey === "testsuggested" ||
+    normalizedTitle.includes("historyandpreviousmedication") ||
+    normalizedTitle.includes("avianinformation") ||
+    normalizedTitle.includes("vitals") ||
+    normalizedTitle.includes("testsuggested")
+  );
+}
 
 function designationLabel(d: string) {
   const map: Record<string, string> = {
@@ -74,6 +123,10 @@ function designationLabel(d: string) {
     student: "Student",
   };
   return map[d] || d;
+}
+
+function requestSourceLabel(source: string | null | undefined) {
+  return source === "hospital_case" ? "Hospital Case" : "AST Report";
 }
 
 function roleBadge(role: string) {
@@ -104,18 +157,68 @@ function csvEscape(value: string | number | null | undefined): string {
   return raw;
 }
 
-export default function AdminPanel() {
+export default function AdminPanel({
+  forcedTab,
+  mode = "full",
+}: {
+  forcedTab?: string;
+  mode?: "full" | "form-only";
+} = {}) {
+  const [astEditorPanel, setAstEditorPanel] = useState<
+    "layout" | "fields" | "species" | null
+  >("layout");
+  const [openLayoutSectionKey, setOpenLayoutSectionKey] = useState<string | null>(null);
+  const [openFieldSectionKey, setOpenFieldSectionKey] = useState<string | null>(null);
+  const [openCatalogPanel, setOpenCatalogPanel] = useState<"species" | "breeds" | null>(null);
+  const editorRootRef = useRef<HTMLDivElement | null>(null);
   const [location] = useLocation();
   const initialTabFromUrl = (() => {
+    if (forcedTab) return forcedTab;
     const qIndex = location.indexOf("?");
-    if (qIndex < 0) return "pending";
+    if (qIndex < 0) return mode === "form-only" ? "form-options" : "pending";
     const qs = location.slice(qIndex + 1);
     const tab = new URLSearchParams(qs).get("tab");
-    const allowed = ["pending", "users", "downloads", "password-resets", "form-options"];
-    return tab && allowed.includes(tab) ? tab : "pending";
+    const allowed =
+      mode === "form-only"
+        ? ["form-options"]
+        : ["pending", "users", "downloads", "password-resets", "access-control", "form-options"];
+    return tab && allowed.includes(tab) ? tab : mode === "form-only" ? "form-options" : "pending";
   })();
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+  useEffect(() => {
+    setActiveTab(initialTabFromUrl);
+  }, [initialTabFromUrl]);
+  useEffect(() => {
+    if (mode !== "form-only") return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const insideCollapsible = target.closest("[data-editor-collapsible='true']");
+      const insideRoot = editorRootRef.current?.contains(target);
+      if (insideRoot && !insideCollapsible) {
+        setOpenLayoutSectionKey(null);
+        setOpenFieldSectionKey(null);
+        setOpenCatalogPanel(null);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [mode]);
+  useEffect(() => {
+    if (mode !== "form-only") return;
+    setOpenLayoutSectionKey(null);
+    setOpenFieldSectionKey(null);
+    setOpenCatalogPanel(null);
+  }, [astEditorPanel, mode]);
+  const backHref = mode === "form-only" ? "/ast-report/settings" : "/";
+  const pageTitle = mode === "form-only" ? "AST Form Editor" : "Admin Panel";
+  const pageSubtitle =
+    mode === "form-only"
+      ? "Manage AST form layout, fields, and options."
+      : "Manage users and permissions";
   const { toast } = useToast();
   const { user: currentUser, updateCurrentUser } = useAuth();
+  const formScope = mode === "form-only" ? "ast" : "hospital";
 
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
   const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
@@ -131,6 +234,7 @@ export default function AdminPanel() {
   const [showDownloadLogs, setShowDownloadLogs] = useState(false);
   const [passwordResetLogsFilter, setPasswordResetLogsFilter] = useState("");
   const [downloadLogsFilter, setDownloadLogsFilter] = useState("");
+  const [downloadSourceFilter, setDownloadSourceFilter] = useState<"all" | "ast_report" | "hospital_case">("all");
   const [usersFilter, setUsersFilter] = useState("");
   const [editForm, setEditForm] = useState({
     fullName: "",
@@ -143,17 +247,23 @@ export default function AdminPanel() {
 
   const { data: allUsers = [] } = useQuery<SafeUser[]>({
     queryKey: ["/api/admin/users"],
+    enabled: mode === "full",
   });
   const { data: speciesOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/species-options"],
   });
   const { data: formDefinition } = useQuery<AdminFormDefinition>({
-    queryKey: ["/api/admin/form-definition"],
+    queryKey: ["/api/admin/form-definition", formScope],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/form-definition?scope=${formScope}`);
+      return res.json();
+    },
   });
   const { data: dashboardVisibility = [] } = useQuery<
     Array<{ role: string; dashboardVisible: boolean }>
   >({
     queryKey: ["/api/admin/feature-visibility/dashboard"],
+    enabled: mode === "full",
   });
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
@@ -179,6 +289,7 @@ export default function AdminPanel() {
 
   const { data: downloadRequests = [] } = useQuery<
     (DownloadRequest & {
+      requestSource?: string;
       userName: string;
       userUsername?: string;
       userDesignation: string;
@@ -186,6 +297,7 @@ export default function AdminPanel() {
     })[]
   >({
     queryKey: ["/api/admin/download-requests"],
+    enabled: mode === "full",
   });
   const {
     data: passwordResetRequests = [],
@@ -199,9 +311,23 @@ export default function AdminPanel() {
     })[]
   >({
     queryKey: ["/api/admin/password-reset-requests"],
+    enabled: mode === "full",
   });
 
   const pendingUsers = allUsers.filter((u) => !u.approved);
+  const scopedFormSections = (formDefinition?.sections ?? [])
+    .filter((section) =>
+      mode === "form-only" ? !isHospitalOnlySectionInAstEditor(section) : true,
+    )
+    .map((section) => ({
+      ...section,
+      questions:
+        mode === "form-only"
+          ? (section.questions ?? []).filter(
+              (question) => !isHospitalOnlyQuestionInAstEditor(question),
+            )
+          : section.questions ?? [],
+    }));
   const approvedUsers = allUsers.filter((u) => u.approved);
   const normalizedUsersFilter = usersFilter.trim().toLowerCase();
   const filteredApprovedUsers = approvedUsers.filter((u) => {
@@ -212,8 +338,10 @@ export default function AdminPanel() {
       u.email.toLowerCase().includes(normalizedUsersFilter)
     );
   });
-  const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending");
-  const resolvedDownloadLogs = downloadRequests.filter((r) => r.status !== "pending");
+  const sourceMatches = (r: { requestSource?: string }) =>
+    downloadSourceFilter === "all" || (r.requestSource || "ast_report") === downloadSourceFilter;
+  const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending" && sourceMatches(r));
+  const resolvedDownloadLogs = downloadRequests.filter((r) => r.status !== "pending" && sourceMatches(r));
   const normalizedDownloadLogsFilter = downloadLogsFilter.trim().toLowerCase();
   const filteredResolvedDownloadLogs = resolvedDownloadLogs.filter((r) => {
     if (!normalizedDownloadLogsFilter) return true;
@@ -394,12 +522,12 @@ export default function AdminPanel() {
 
   const addSectionMutation = useMutation({
     mutationFn: async (title: string) => {
-      const res = await apiRequest("POST", "/api/admin/form-sections", { title });
+      const res = await apiRequest("POST", "/api/admin/form-sections", { title, scope: formScope });
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
       setNewSectionTitle("");
       toast({ title: "Section added" });
@@ -408,11 +536,11 @@ export default function AdminPanel() {
 
   const moveSectionMutation = useMutation({
     mutationFn: async (payload: { key: string; direction: "up" | "down" }) => {
-      await apiRequest("PATCH", `/api/admin/form-sections/${payload.key}/move`, payload);
+      await apiRequest("PATCH", `/api/admin/form-sections/${payload.key}/move`, { ...payload, scope: formScope });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
     },
   });
@@ -424,12 +552,12 @@ export default function AdminPanel() {
       inputType: string;
       options?: string[];
     }) => {
-      const res = await apiRequest("POST", "/api/admin/form-questions", payload);
+      const res = await apiRequest("POST", "/api/admin/form-questions", { ...payload, scope: formScope });
       return res.json();
     },
     onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
       setNewQuestionLabelBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
       setNewQuestionOptionsBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
@@ -439,11 +567,11 @@ export default function AdminPanel() {
 
   const updateQuestionMutation = useMutation({
     mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean }) => {
-      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}`, payload);
+      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}`, { ...payload, scope: formScope });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
       toast({ title: "Question updated" });
     },
@@ -451,24 +579,24 @@ export default function AdminPanel() {
 
   const moveQuestionMutation = useMutation({
     mutationFn: async (payload: { id: number; direction: "up" | "down" }) => {
-      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}/move`, payload);
+      await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}/move`, { ...payload, scope: formScope });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
     },
   });
 
   const deleteSectionMutation = useMutation({
     mutationFn: async (sectionKey: string) => {
-      const res = await apiRequest("DELETE", `/api/admin/form-sections/${sectionKey}`);
+      const res = await apiRequest("DELETE", `/api/admin/form-sections/${sectionKey}?scope=${formScope}`);
       return res.json() as Promise<{ deletedKey?: string }>;
     },
     onSuccess: async (data, sectionKey) => {
       const deletedKey = data?.deletedKey || sectionKey;
       queryClient.setQueryData<AdminFormDefinition | undefined>(
-        ["/api/admin/form-definition"],
+        ["/api/admin/form-definition", formScope],
         (prev) => {
           if (!prev) return prev;
           return {
@@ -477,10 +605,10 @@ export default function AdminPanel() {
           };
         },
       );
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
       toast({ title: "Section deleted" });
     },
     onError: (err: unknown) => {
@@ -493,13 +621,13 @@ export default function AdminPanel() {
 
   const deleteQuestionMutation = useMutation({
     mutationFn: async (questionId: number) => {
-      const res = await apiRequest("DELETE", `/api/admin/form-questions/${questionId}`);
+      const res = await apiRequest("DELETE", `/api/admin/form-questions/${questionId}?scope=${formScope}`);
       return res.json() as Promise<{ deletedId?: number }>;
     },
     onSuccess: async (data, questionId) => {
       const deletedId = data?.deletedId ?? questionId;
       queryClient.setQueryData<AdminFormDefinition | undefined>(
-        ["/api/admin/form-definition"],
+        ["/api/admin/form-definition", formScope],
         (prev) => {
           if (!prev) return prev;
           return {
@@ -511,10 +639,10 @@ export default function AdminPanel() {
           };
         },
       );
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
       toast({ title: "Question deleted" });
     },
     onError: (err: unknown) => {
@@ -603,6 +731,20 @@ export default function AdminPanel() {
     if (ad === "-" || bs === "-") return "-";
     return `${ad} | ${bs}`;
   };
+  const formatDateParts = (isoDate: string | null | undefined): { adBsDate: string; time: string } => {
+    if (!isoDate) return { adBsDate: "-", time: "-" };
+    const dt = new Date(isoDate);
+    if (Number.isNaN(dt.getTime())) return { adBsDate: "-", time: "-" };
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const d = String(dt.getDate()).padStart(2, "0");
+    const adDate = `${y}-${m}-${d}`;
+    const bsDate = adToBs(adDate) || "-";
+    return {
+      adBsDate: `${adDate} | ${bsDate}`,
+      time: dt.toLocaleTimeString(),
+    };
+  };
 
   const downloadPasswordResetLogsCsv = () => {
     const headers = [
@@ -639,6 +781,7 @@ export default function AdminPanel() {
     const headers = [
       "Full Name",
       "Username",
+      "Source",
       "Decision",
       "Requested At (AD | BS)",
       "Resolved By",
@@ -648,6 +791,7 @@ export default function AdminPanel() {
     const rows = filteredResolvedDownloadLogs.map((r) => [
       r.userName,
       r.userUsername || "",
+      requestSourceLabel(r.requestSource),
       r.status === "approved" ? "Approved" : r.status === "rejected" ? "Rejected" : "Downloaded",
       formatAdBsDateTime(r.createdAt),
       r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : ""),
@@ -669,20 +813,21 @@ export default function AdminPanel() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+    <div ref={editorRootRef} className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div className="flex items-center gap-3">
-        <Link href="/">
+        <Link href={backHref}>
           <Button variant="ghost" size="icon" data-testid="button-back">
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
         <div>
-          <h1 className="text-lg font-semibold" data-testid="text-admin-title">Admin Panel</h1>
-          <p className="text-sm text-muted-foreground">Manage users and permissions</p>
+          <h1 className="text-lg font-semibold" data-testid="text-admin-title">{pageTitle}</h1>
+          <p className="text-sm text-muted-foreground">{pageSubtitle}</p>
         </div>
       </div>
 
       {/* Summary cards */}
+      {mode === "full" && (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
           <CardContent className="pt-4 pb-3 text-center">
@@ -706,8 +851,10 @@ export default function AdminPanel() {
           </CardContent>
         </Card>
       </div>
+      )}
 
-      <Tabs defaultValue={initialTabFromUrl}>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        {mode === "full" && (
         <TabsList className="w-full h-auto flex overflow-x-auto gap-1 whitespace-nowrap p-1">
           <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="pending" data-testid="tab-pending">
             Pending ({pendingUsers.length})
@@ -721,10 +868,11 @@ export default function AdminPanel() {
           <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="password-resets" data-testid="tab-password-resets">
             Password Resets ({pendingPasswordResets.length})
           </TabsTrigger>
-          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="form-options" data-testid="tab-form-options">
-            Edit Form
+          <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="access-control" data-testid="tab-access-control">
+            Access Control
           </TabsTrigger>
         </TabsList>
+        )}
 
         {/* Pending Signups */}
         <TabsContent value="pending" className="space-y-3 mt-4">
@@ -903,6 +1051,22 @@ export default function AdminPanel() {
         {/* Download Requests */}
         <TabsContent value="downloads" className="space-y-3 mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Source</Label>
+              <Select
+                value={downloadSourceFilter}
+                onValueChange={(v: "all" | "ast_report" | "hospital_case") => setDownloadSourceFilter(v)}
+              >
+                <SelectTrigger className="h-8 w-40 text-xs" data-testid="select-download-source-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="ast_report">AST Report</SelectItem>
+                  <SelectItem value="hospital_case">Hospital Case</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -945,21 +1109,28 @@ export default function AdminPanel() {
                     <table className="w-full text-xs">
                       <thead className="bg-muted/40">
                         <tr className="text-left">
-                          <th className="px-2 py-1.5 font-medium">Full Name</th>
+                          <th className="px-2 py-1.5 font-medium">Requester</th>
                           <th className="px-2 py-1.5 font-medium">Username</th>
+                          <th className="px-2 py-1.5 font-medium">Source</th>
                           <th className="px-2 py-1.5 font-medium">Decision</th>
-                          <th className="px-2 py-1.5 font-medium">Requested At (AD | BS)</th>
-                          <th className="px-2 py-1.5 font-medium">Resolved By</th>
-                          <th className="px-2 py-1.5 font-medium">Resolved At (AD | BS)</th>
+                          <th className="px-2 py-1.5 font-medium">Requested Date (AD | BS)</th>
+                          <th className="px-2 py-1.5 font-medium">Requested Time</th>
+                          <th className="px-2 py-1.5 font-medium">Approved/Resolved By</th>
+                          <th className="px-2 py-1.5 font-medium">Approved/Resolved Date (AD | BS)</th>
+                          <th className="px-2 py-1.5 font-medium">Approved/Resolved Time</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredResolvedDownloadLogs.map((r) => (
+                        {filteredResolvedDownloadLogs.map((r) => {
+                          const requested = formatDateParts(r.createdAt);
+                          const resolved = formatDateParts(r.resolvedAt);
+                          return (
                           <tr key={`download-log-${r.id}`} className="border-t align-top">
-                            <td className="px-2 py-1.5">{r.userName}</td>
+                            <td className="px-2 py-1.5">{r.userName || "-"}</td>
                             <td className="px-2 py-1.5">
                               {r.userUsername ? `@${r.userUsername}` : "-"}
                             </td>
+                            <td className="px-2 py-1.5">{requestSourceLabel(r.requestSource)}</td>
                             <td className="px-2 py-1.5">
                               {r.status === "approved"
                                 ? "Approved"
@@ -967,13 +1138,15 @@ export default function AdminPanel() {
                                   ? "Rejected"
                                   : "Downloaded"}
                             </td>
-                            <td className="px-2 py-1.5">{formatAdBsDateTime(r.createdAt)}</td>
+                            <td className="px-2 py-1.5">{requested.adBsDate}</td>
+                            <td className="px-2 py-1.5">{requested.time}</td>
                             <td className="px-2 py-1.5">
                               {r.resolverName || (r.resolvedBy ? `User ${r.resolvedBy}` : "-")}
                             </td>
-                            <td className="px-2 py-1.5">{formatAdBsDateTime(r.resolvedAt)}</td>
+                            <td className="px-2 py-1.5">{resolved.adBsDate}</td>
+                            <td className="px-2 py-1.5">{resolved.time}</td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody>
                     </table>
                   </div>
@@ -982,10 +1155,10 @@ export default function AdminPanel() {
             </Card>
           )}
 
-          {downloadRequests.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No download requests yet</p>
+          {pendingDlRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No pending download requests for selected source</p>
           ) : (
-            downloadRequests.map((r) => (
+            pendingDlRequests.map((r) => (
               <Card key={r.id}>
                 <CardContent className="pt-4 pb-3">
                   <div className="flex flex-col sm:flex-row items-start sm:items-start justify-between gap-3">
@@ -993,6 +1166,7 @@ export default function AdminPanel() {
                       <div className="font-medium text-sm">{r.userName}</div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {designationLabel(r.userDesignation)}
+                        {` · ${requestSourceLabel(r.requestSource)}`}
                         {r.dateFrom && ` \u00b7 From: ${r.dateFrom}`}
                         {r.dateTo && ` \u00b7 To: ${r.dateTo}`}
                       </div>
@@ -1223,12 +1397,12 @@ export default function AdminPanel() {
           )}
         </TabsContent>
 
-        <TabsContent value="form-options" className="space-y-3 mt-4">
-          <Card>
+        <TabsContent value="access-control" className="space-y-3 mt-4">
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Dashboard Visibility by Role</CardTitle>
+              <CardTitle className="text-base">AST Dashboard Visibility by Role</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Compact role-level dashboard access control.
+                Control which roles can access the AST dashboard page.
               </p>
             </CardHeader>
             <CardContent className="space-y-2">
@@ -1267,12 +1441,56 @@ export default function AdminPanel() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
 
-          <Card>
+        <TabsContent value="form-options" className="space-y-3 mt-4">
+          {mode === "form-only" && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">AST Form Editor</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Choose a section to edit. This keeps the editor cleaner and easier to use.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    variant={astEditorPanel === "layout" ? "default" : "outline"}
+                    onClick={() =>
+                      setAstEditorPanel((prev) => (prev === "layout" ? null : "layout"))
+                    }
+                  >
+                    Form Layout (Sections & Questions)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={astEditorPanel === "fields" ? "default" : "outline"}
+                    onClick={() =>
+                      setAstEditorPanel((prev) => (prev === "fields" ? null : "fields"))
+                    }
+                  >
+                    Edit Register Form Field
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={astEditorPanel === "species" ? "default" : "outline"}
+                    onClick={() =>
+                      setAstEditorPanel((prev) => (prev === "species" ? null : "species"))
+                    }
+                  >
+                    Species and Breed by Species
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {(mode !== "form-only" || astEditorPanel === "layout") && (
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Register Form Layout (Sections & Questions)</CardTitle>
+              <CardTitle className="text-base">Form Layout (Sections & Questions)</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Add custom sections and questions, and rearrange them. Built-in questions can be hidden/required, and custom questions will appear in Register New Case.
+                Add custom sections and questions, and rearrange them. Built-in questions can be hidden/required, and custom questions will appear in AST Case Registration.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1294,15 +1512,25 @@ export default function AdminPanel() {
                 </Button>
               </div>
 
-              {(formDefinition?.sections ?? []).length === 0 ? (
+              {scopedFormSections.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No server form-definition found yet. Built-in questions still available below.</p>
               ) : (
                 <div className="space-y-3">
-                  {(formDefinition?.sections ?? []).map((section, idx, arr) => (
-                    <div key={section.key} className="rounded border">
+                  {scopedFormSections.map((section, idx, arr) => (
+                    <div key={section.key} className="rounded border" data-editor-collapsible="true">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 border-b">
                         <div className="min-w-0">
-                          <div className="text-sm font-medium truncate">{section.title}</div>
+                          <button
+                            type="button"
+                            className="text-sm font-medium truncate text-left hover:underline"
+                            onClick={() =>
+                              setOpenLayoutSectionKey((prev) =>
+                                prev === section.key ? null : section.key,
+                              )
+                            }
+                          >
+                            {section.title}
+                          </button>
                           <div className="text-xs text-muted-foreground truncate">
                             key: {section.key}
                           </div>
@@ -1343,6 +1571,7 @@ export default function AdminPanel() {
                         </div>
                       </div>
 
+                      {openLayoutSectionKey === section.key && (
                       <div className="p-3 space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <div className="sm:col-span-2">
@@ -1490,14 +1719,17 @@ export default function AdminPanel() {
                           )}
                         </div>
                       </div>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
             </CardContent>
           </Card>
+          )}
 
-          <Card>
+          {(mode !== "form-only" || astEditorPanel === "fields") && (
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Edit Existing Register Form Fields</CardTitle>
               <p className="text-xs text-muted-foreground">
@@ -1505,15 +1737,23 @@ export default function AdminPanel() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              {(formDefinition?.sections ?? []).map((section) => {
+              {scopedFormSections.map((section) => {
                 const builtinQuestions = (section.questions ?? []).filter((q) => q.isBuiltin);
                 if (builtinQuestions.length === 0) return null;
                 return (
-                  <div key={`builtin-${section.key}`} className="space-y-2">
-                    <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div key={`builtin-${section.key}`} className="space-y-2" data-editor-collapsible="true">
+                    <button
+                      type="button"
+                      className="w-full text-left text-xs uppercase tracking-wide text-muted-foreground rounded border px-3 py-2 hover:bg-muted/40"
+                      onClick={() =>
+                        setOpenFieldSectionKey((prev) =>
+                          prev === section.key ? null : section.key,
+                        )
+                      }
+                    >
                       {section.title}
-                    </h4>
-                    {builtinQuestions.map((q) => (
+                    </button>
+                    {openFieldSectionKey === section.key && builtinQuestions.map((q) => (
                       <div
                         key={q.id}
                         className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
@@ -1556,7 +1796,7 @@ export default function AdminPanel() {
                   </div>
                 );
               })}
-              {(formDefinition?.sections ?? []).length === 0 && (
+              {scopedFormSections.length === 0 && (
                 <div className="space-y-2">
                   {DEFAULT_BUILTIN_QUESTIONS.map((q) => (
                     <div
@@ -1573,8 +1813,10 @@ export default function AdminPanel() {
               )}
             </CardContent>
           </Card>
+          )}
 
-          <Card>
+          {(mode !== "form-only" || astEditorPanel === "fields") && (
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Edit Custom Register Form Fields</CardTitle>
               <p className="text-xs text-muted-foreground">
@@ -1582,15 +1824,23 @@ export default function AdminPanel() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              {(formDefinition?.sections ?? []).map((section) => {
+              {scopedFormSections.map((section) => {
                 const customQuestions = (section.questions ?? []).filter((q) => !q.isBuiltin);
                 if (customQuestions.length === 0) return null;
                 return (
-                  <div key={`custom-${section.key}`} className="space-y-2">
-                    <h4 className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div key={`custom-${section.key}`} className="space-y-2" data-editor-collapsible="true">
+                    <button
+                      type="button"
+                      className="w-full text-left text-xs uppercase tracking-wide text-muted-foreground rounded border px-3 py-2 hover:bg-muted/40"
+                      onClick={() =>
+                        setOpenFieldSectionKey((prev) =>
+                          prev === `custom-${section.key}` ? null : `custom-${section.key}`,
+                        )
+                      }
+                    >
                       {section.title}
-                    </h4>
-                    {customQuestions.map((q) => (
+                    </button>
+                    {openFieldSectionKey === `custom-${section.key}` && customQuestions.map((q) => (
                       <div
                         key={`custom-toggle-${q.id}`}
                         className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded border px-3 py-2"
@@ -1647,16 +1897,28 @@ export default function AdminPanel() {
               )}
             </CardContent>
           </Card>
+          )}
 
-          <Card>
+          {(mode !== "form-only" || astEditorPanel === "species") && (
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Edit Register Form: Species</CardTitle>
+              <button
+                type="button"
+                className="text-left"
+                data-editor-collapsible="true"
+                onClick={() =>
+                  setOpenCatalogPanel((prev) => (prev === "species" ? null : "species"))
+                }
+              >
+                <CardTitle className="text-base">Species</CardTitle>
+              </button>
               <p className="text-xs text-muted-foreground">
                 Controls species values used in Register New Case. This is kept in
                 Admin Panel so case entry users can register cases without form
                 configuration controls in the same screen.
               </p>
             </CardHeader>
+            {openCatalogPanel === "species" && (
             <CardContent className="space-y-3">
               <div className="flex flex-col sm:flex-row gap-2">
                 <Input
@@ -1701,15 +1963,28 @@ export default function AdminPanel() {
                 )}
               </div>
             </CardContent>
+            )}
           </Card>
+          )}
 
-          <Card>
+          {(mode !== "form-only" || astEditorPanel === "species") && (
+          <Card data-editor-collapsible="true">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Edit Register Form: Breeds by Species</CardTitle>
+              <button
+                type="button"
+                className="text-left"
+                data-editor-collapsible="true"
+                onClick={() =>
+                  setOpenCatalogPanel((prev) => (prev === "breeds" ? null : "breeds"))
+                }
+              >
+                <CardTitle className="text-base">Breeds by Species</CardTitle>
+              </button>
               <p className="text-xs text-muted-foreground">
                 Manage breed dropdown options for each species. Users can still choose "Other" and type manually.
               </p>
             </CardHeader>
+            {openCatalogPanel === "breeds" && (
             <CardContent className="space-y-3">
               <div className="space-y-1.5">
                 <Label>Species</Label>
@@ -1783,8 +2058,11 @@ export default function AdminPanel() {
                 </div>
               )}
             </CardContent>
+            )}
           </Card>
+          )}
 
+          {(mode !== "form-only" || astEditorPanel === "species") && (
           <div className="flex justify-end">
             <Button
               type="button"
@@ -1795,8 +2073,9 @@ export default function AdminPanel() {
               {showAuditLog ? "Hide Form Edit Audit Log" : "Show Form Edit Audit Log"}
             </Button>
           </div>
+          )}
 
-          {showAuditLog && (
+          {(mode !== "form-only" || astEditorPanel === "species") && showAuditLog && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Form Edit Audit Log</CardTitle>

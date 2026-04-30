@@ -115,6 +115,14 @@ export const authSessionRepo = {
     await getPgPool().query("DELETE FROM sessions");
   },
 
+  async deleteSessionsByUserId(userId: number): Promise<void> {
+    if (getProvider() === "sqlite") {
+      await sessionsSqlite.deleteByUserId(userId);
+      return;
+    }
+    await getPgPool().query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+  },
+
   async getUserById(id: number): Promise<User | undefined> {
     if (getProvider() === "sqlite") {
       return storage.getUserById(id);
@@ -288,5 +296,8 @@ const sessionsSqlite = {
   },
   async clear(): Promise<void> {
     await dbRun(sql`DELETE FROM sessions`);
+  },
+  async deleteByUserId(userId: number): Promise<void> {
+    await dbRun(sql`DELETE FROM sessions WHERE user_id = ${userId}`);
   },
 };

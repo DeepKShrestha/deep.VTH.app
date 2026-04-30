@@ -48,6 +48,7 @@ export default function ExportDataPage() {
         dateFrom: dateFrom || null,
         dateTo: dateTo || null,
         reason: reason || null,
+        requestSource: "ast_report",
       });
     },
     onSuccess: () => {
@@ -112,7 +113,7 @@ export default function ExportDataPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
-        <Link href="/">
+        <Link href="/ast-report">
           <Button variant="ghost" size="icon" data-testid="button-back">
             <ArrowLeft className="w-4 h-4" />
           </Button>

@@ -31,10 +31,10 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-export default function CaseList() {
+export default function CaseList({ backHref = "/" }: { backHref?: string }) {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const { isAdmin, canRegisterCase } = useAuth();
+  const { isAdmin, isStudent, canRegisterAstCase, canRegisterHospitalCase } = useAuth();
   const { toast } = useToast();
 
   const { data: cases, isLoading } = useQuery<Case[]>({
@@ -62,13 +62,19 @@ export default function CaseList() {
       (c.billNumber && c.billNumber.toLowerCase().includes(q))
     );
   });
+  const isHospitalHistory = backHref === "/new-case";
+  const canCreateFromThisList = isHospitalHistory
+    ? canRegisterHospitalCase
+    : canRegisterAstCase && !isStudent;
+  const createCaseHref = isHospitalHistory ? "/new-case/register" : "/register";
+  const emptyStateCaseLabel = isHospitalHistory ? "VTH case" : "AST case";
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href="/">
+          <Link href={backHref}>
             <Button variant="ghost" size="icon" data-testid="button-back">
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -77,8 +83,8 @@ export default function CaseList() {
             Previous Cases
           </h1>
         </div>
-        {canRegisterCase && (
-          <Link href="/register" className="w-full sm:w-auto">
+        {canCreateFromThisList && (
+          <Link href={createCaseHref} className="w-full sm:w-auto">
             <Button size="sm" className="gap-1.5" data-testid="button-new-case">
               <ClipboardPlus className="w-3.5 h-3.5" />
               New Case
@@ -125,11 +131,11 @@ export default function CaseList() {
             <p className="text-sm text-muted-foreground">
               {search
                 ? "Try a different search term."
-                : "Register your first AST case to get started."}
+                : `Register your first ${emptyStateCaseLabel} to get started.`}
             </p>
           </div>
-          {!search && canRegisterCase && (
-            <Link href="/register">
+          {!search && canCreateFromThisList && (
+            <Link href={createCaseHref}>
               <Button size="sm" className="gap-1.5">
                 <ClipboardPlus className="w-3.5 h-3.5" />
                 Register Case

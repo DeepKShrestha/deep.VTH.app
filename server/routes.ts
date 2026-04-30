@@ -55,6 +55,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(
     sql`CREATE INDEX IF NOT EXISTS password_reset_requests_status_idx ON password_reset_requests(status)`,
   );
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS download_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    request_source TEXT NOT NULL DEFAULT 'ast_report',
+    status TEXT NOT NULL DEFAULT 'pending',
+    date_from TEXT,
+    date_to TEXT,
+    reason TEXT,
+    admin_note TEXT,
+    resolved_by INTEGER,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  )`);
 
     await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +105,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
     key TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    display_order INTEGER NOT NULL
+    display_order INTEGER NOT NULL,
+    form_scope TEXT NOT NULL DEFAULT 'shared'
   )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,7 +119,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     required INTEGER NOT NULL DEFAULT 0,
     display_order INTEGER NOT NULL,
     is_builtin INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    form_scope TEXT NOT NULL DEFAULT 'shared'
   )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +207,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       await dbRun(sql`ALTER TABLE download_requests ADD COLUMN resolved_by INTEGER`);
     }
     try {
+      await dbRun(sql`SELECT request_source FROM download_requests LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE download_requests ADD COLUMN request_source TEXT NOT NULL DEFAULT 'ast_report'`);
+    }
+    try {
       await dbRun(sql`SELECT last_updated_by_name FROM cases LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN last_updated_by_name TEXT`);
@@ -210,6 +230,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT form_scope FROM form_sections LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE form_sections ADD COLUMN form_scope TEXT NOT NULL DEFAULT 'shared'`);
+    }
+    try {
+      await dbRun(sql`SELECT form_scope FROM form_questions LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE form_questions ADD COLUMN form_scope TEXT NOT NULL DEFAULT 'shared'`);
     }
   } else {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS users (
@@ -257,6 +287,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS download_requests (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL,
+      request_source TEXT NOT NULL DEFAULT 'ast_report',
       status TEXT NOT NULL DEFAULT 'pending',
       date_from TEXT,
       date_to TEXT,
@@ -274,6 +305,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     await dbRun(
       sql`ALTER TABLE download_requests ADD COLUMN IF NOT EXISTS resolved_by INTEGER`,
+    );
+    await dbRun(
+      sql`ALTER TABLE download_requests ADD COLUMN IF NOT EXISTS request_source TEXT NOT NULL DEFAULT 'ast_report'`,
     );
 
     await dbRun(sql`CREATE TABLE IF NOT EXISTS breakpoints (
@@ -311,7 +345,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_sections (
       key TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      display_order INTEGER NOT NULL
+      display_order INTEGER NOT NULL,
+      form_scope TEXT NOT NULL DEFAULT 'shared'
     )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_questions (
       id SERIAL PRIMARY KEY,
@@ -324,7 +359,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       required INTEGER NOT NULL DEFAULT 0,
       display_order INTEGER NOT NULL,
       is_builtin INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      form_scope TEXT NOT NULL DEFAULT 'shared'
     )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
       id SERIAL PRIMARY KEY,
@@ -381,6 +417,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
     await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
     await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS options_json TEXT`);
+    await dbRun(sql`ALTER TABLE form_sections ADD COLUMN IF NOT EXISTS form_scope TEXT NOT NULL DEFAULT 'shared'`);
+    await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS form_scope TEXT NOT NULL DEFAULT 'shared'`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by INTEGER`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by_name TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at TEXT`);
@@ -450,6 +488,22 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["animalName", "animal", "Animal Name", 1, 0],
     ["age", "animal", "Age", 1, 0],
     ["sex", "animal", "Sex", 1, 0],
+    ["historyNotes", "history", "History", 1, 0],
+    ["previousMedicationNotes", "history", "Previous Medication", 1, 0],
+    ["flockSize", "avian", "Flock Size", 1, 0],
+    ["hatchery", "avian", "Hatchery", 1, 0],
+    ["feedSupplier", "avian", "Feed Supplier", 1, 0],
+    ["feedIntake", "avian", "Feed Intake", 1, 0],
+    ["waterIntake", "avian", "Water Intake", 1, 0],
+    ["mortality", "avian", "Mortality", 1, 0],
+    ["testsSuggested", "tests_suggested", "Please select the required tests", 1, 0],
+    ["enzymePanelTests", "tests_suggested", "Enzyme Panel Tests", 1, 0],
+    ["rapidDiagnosticTests", "tests_suggested", "Rapid Diagnostic Tests", 1, 0],
+    ["biopsyDetails", "tests_suggested", "Biopsy Details", 1, 0],
+    ["cytologyDetails", "tests_suggested", "Cytology Details", 1, 0],
+    ["xrayDetails", "tests_suggested", "X-Ray Details", 1, 0],
+    ["ultrasoundDetails", "tests_suggested", "Ultrasound Details", 1, 0],
+    ["cultureDetails", "tests_suggested", "Culture Details", 1, 0],
     ["sampleType", "sample", "Sample Type", 1, 0],
     ["sampleDate", "sample", "Sample Date", 1, 0],
     ["cultureResult", "sample", "Culture Result", 1, 0],
@@ -470,8 +524,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   const sectionSeeds = [
     ["owner", "Owner Information", 1000],
     ["animal", "Animal Information", 2000],
+    ["history", "History and Previous Medication", 2500],
+    ["avian", "Avian Information", 2600],
     ["sample", "Sample Information", 3000],
     ["ast", "AST Results", 4000],
+    ["tests_suggested", "Tests Suggested", 4500],
     ["final", "General Remarks", 5000],
   ] as const;
   for (const [key, title, displayOrder] of sectionSeeds) {
@@ -504,6 +561,76 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     { key: "animalName", sectionKey: "animal", label: "Animal Name", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
     { key: "age", sectionKey: "animal", label: "Age", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1, optionsJson: null },
     { key: "sex", sectionKey: "animal", label: "Sex", inputType: "sex", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
+    { key: "historyNotes", sectionKey: "history", label: "History", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "previousMedicationNotes", sectionKey: "history", label: "Previous Medication", inputType: "textarea", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    { key: "flockSize", sectionKey: "avian", label: "Flock Size", inputType: "number", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
+    { key: "hatchery", sectionKey: "avian", label: "Hatchery", inputType: "text", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    { key: "feedSupplier", sectionKey: "avian", label: "Feed Supplier", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
+    { key: "feedIntake", sectionKey: "avian", label: "Feed Intake", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1, optionsJson: null },
+    { key: "waterIntake", sectionKey: "avian", label: "Water Intake", inputType: "text", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
+    { key: "mortality", sectionKey: "avian", label: "Mortality", inputType: "number", enabled: 1, required: 0, displayOrder: 6000, isBuiltin: 1, optionsJson: null },
+    {
+      key: "testsSuggested",
+      sectionKey: "tests_suggested",
+      label: "Please select the required tests",
+      inputType: "multiSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 1000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify([
+        "Complete Blood Count (CBC)",
+        "Enzyme Panel Test",
+        "Fecal Test",
+        "Urinalysis",
+        "Rapid Diagnostic Test",
+        "X-Ray",
+        "Ultrasound",
+        "Electro Cardio Gram (ECG)",
+        "Skin Scraping",
+        "Cytology",
+        "Biopsy",
+        "Culture",
+      ]),
+    },
+    {
+      key: "enzymePanelTests",
+      sectionKey: "tests_suggested",
+      label: "Enzyme Panel Tests",
+      inputType: "multiSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 2000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify([
+        "Liver Function Test (LFT)",
+        "Kidney Function Test (KFT)",
+        "Thyroid Test",
+      ]),
+    },
+    {
+      key: "rapidDiagnosticTests",
+      sectionKey: "tests_suggested",
+      label: "Rapid Diagnostic Tests",
+      inputType: "multiSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 3000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify([
+        "Parvo",
+        "Distemper",
+        "Rabies",
+        "Anaplasma",
+        "Babesia",
+        "Ehrlichia",
+      ]),
+    },
+    { key: "biopsyDetails", sectionKey: "tests_suggested", label: "Biopsy Details", inputType: "text", enabled: 1, required: 0, displayOrder: 4000, isBuiltin: 1, optionsJson: null },
+    { key: "cytologyDetails", sectionKey: "tests_suggested", label: "Cytology Details", inputType: "text", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
+    { key: "xrayDetails", sectionKey: "tests_suggested", label: "X-Ray Details", inputType: "text", enabled: 1, required: 0, displayOrder: 6000, isBuiltin: 1, optionsJson: null },
+    { key: "ultrasoundDetails", sectionKey: "tests_suggested", label: "Ultrasound Details", inputType: "text", enabled: 1, required: 0, displayOrder: 7000, isBuiltin: 1, optionsJson: null },
+    { key: "cultureDetails", sectionKey: "tests_suggested", label: "Culture Details", inputType: "text", enabled: 1, required: 0, displayOrder: 8000, isBuiltin: 1, optionsJson: null },
     { key: "sampleType", sectionKey: "sample", label: "Sample Type", inputType: "text", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
     { key: "sampleDate", sectionKey: "sample", label: "Sample Collection Date (BS)", inputType: "sampleDate", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
     { key: "cultureResult", sectionKey: "sample", label: "Culture / Organism Isolated", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
@@ -533,6 +660,174 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       );
     }
   }
+  await dbRun(
+    sql`UPDATE form_questions
+        SET is_builtin = 1
+        WHERE
+          LOWER(section_key) = 'vitals'
+          OR
+          LOWER(key) IN (
+            'temperature',
+            'crt',
+            'dehydrationpercentage',
+            'heartrate',
+            'respiratoryrate',
+            'respirationrate',
+            'resprate',
+            'rumenmotility',
+            'chiefcomplaint',
+            'colour',
+            'color',
+            'weight'
+          )
+          OR LOWER(label) IN (
+            'temperature',
+            'crt',
+            'dehydration percentage',
+            'heart rate',
+            'respiratory rate',
+            'respiration rate',
+            'resp rate',
+            'rumen motility',
+            'chief complaint',
+            'colour',
+            'color',
+            'weight'
+          )`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET label = CASE
+          WHEN LOWER(key) = 'crt' OR LOWER(label) = 'crt' THEN 'CRT'
+          WHEN LOWER(key) = 'heartrate' OR LOWER(label) IN ('heart rate', 'heart rate (beats per minute)') THEN 'Heart Rate'
+          WHEN LOWER(key) IN ('respiratoryrate', 'respirationrate', 'resprate')
+            OR LOWER(label) IN ('respiratory rate', 'respiration rate', 'resp rate', 'respiratory rate (breaths per minute)')
+            THEN 'Respiration'
+          WHEN LOWER(key) = 'rumenmotility' OR LOWER(label) IN ('rumen motility', 'rumen motility (per minute)')
+            THEN 'Rumen Motility'
+          WHEN LOWER(key) = 'chiefcomplaint' OR LOWER(label) = 'chief complaint'
+            THEN 'Chief Complaint'
+          WHEN LOWER(key) IN ('colour', 'color') OR LOWER(label) IN ('colour', 'color')
+            THEN 'Colour'
+          WHEN LOWER(key) = 'weight' OR LOWER(label) = 'weight'
+            THEN 'Weight'
+          ELSE label
+        END
+        WHERE LOWER(section_key) = 'vitals'
+          OR LOWER(key) IN ('crt', 'heartrate', 'respiratoryrate', 'respirationrate', 'resprate', 'rumenmotility', 'chiefcomplaint', 'colour', 'color', 'weight')
+          OR LOWER(label) IN (
+            'crt',
+            'heart rate',
+            'heart rate (beats per minute)',
+            'respiratory rate',
+            'respiration rate',
+            'resp rate',
+            'respiratory rate (breaths per minute)',
+            'rumen motility',
+            'rumen motility (per minute)',
+            'chief complaint',
+            'colour',
+            'color',
+            'weight'
+          )`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET input_type = 'number'
+        WHERE LOWER(key) = 'mortality' AND LOWER(section_key) = 'avian'`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET input_type = 'number'
+        WHERE LOWER(key) IN ('heartrate')
+          OR LOWER(label) IN ('heart rate', 'heart rate (beats per minute)')`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET options_json = ${JSON.stringify([
+          "Complete Blood Count (CBC)",
+          "Enzyme Panel Test",
+          "Fecal Test",
+          "Urinalysis",
+          "Rapid Diagnostic Test",
+          "X-Ray",
+          "Ultrasound",
+          "Electro Cardio Gram (ECG)",
+          "Skin Scraping",
+          "Cytology",
+          "Biopsy",
+          "Culture",
+        ])}
+        WHERE LOWER(key) = 'testssuggested' AND LOWER(section_key) = 'tests_suggested'`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET options_json = ${JSON.stringify([
+          "Liver Function Test (LFT)",
+          "Kidney Function Test (KFT)",
+          "Thyroid Test",
+        ])}
+        WHERE LOWER(key) = 'enzymepaneltests' AND LOWER(section_key) = 'tests_suggested'`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET options_json = ${JSON.stringify([
+          "Parvo",
+          "Distemper",
+          "Rabies",
+          "Anaplasma",
+          "Babesia",
+          "Ehrlichia",
+        ])}
+        WHERE LOWER(key) = 'rapiddiagnostictests' AND LOWER(section_key) = 'tests_suggested'`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET is_builtin = 1
+        WHERE LOWER(section_key) = 'tests_suggested'
+          OR LOWER(key) IN (
+            'testssuggested',
+            'enzymepaneltests',
+            'rapiddiagnostictests',
+            'xraydetails',
+            'ultrasounddetails',
+            'biopsydetails',
+            'cytologydetails',
+            'culturedetails'
+          )`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET label = 'Please select the required tests'
+        WHERE LOWER(key) = 'testssuggested' AND LOWER(section_key) = 'tests_suggested'`,
+  );
+  await dbRun(
+    sql`DELETE FROM form_questions
+        WHERE LOWER(input_type) = 'textarea'
+          AND (
+            LOWER(REPLACE(REPLACE(REPLACE(label, ' ', ''), '-', ''), '_', '')) = 'testssuggested'
+            OR LOWER(key) LIKE '%testssuggested%'
+          )`,
+  );
+  await dbRun(
+    sql`UPDATE form_sections
+        SET form_scope = 'hospital'
+        WHERE LOWER(key) IN ('history', 'avian', 'vitals', 'tests_suggested')
+           OR LOWER(REPLACE(REPLACE(REPLACE(title, ' ', ''), '-', ''), '_', '')) IN ('historyandpreviousmedication', 'avianinformation', 'vitals', 'testsuggested', 'testssuggested')`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET form_scope = 'hospital'
+        WHERE LOWER(section_key) IN ('history', 'avian', 'vitals', 'tests_suggested')
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%history%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%previousmedication%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%testsuggested%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%flock%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%hatchery%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%feedintake%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%waterintake%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%mortality%'`,
+  );
 
   const roleVisibilityDefaults = [
     "superadmin",

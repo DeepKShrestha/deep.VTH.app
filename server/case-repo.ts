@@ -72,6 +72,12 @@ function toCase(row: CaseRow): Case {
 
 const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, monthly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields FROM cases`;
 
+type CaseScope = "ast" | "hospital";
+
+function getScopePrefix(scope: CaseScope): string {
+  return scope === "hospital" ? "CASE" : "AST";
+}
+
 export const caseRepo = {
   async getCases(): Promise<Case[]> {
     const rows = await dbAll<CaseRow>(sql`${CASE_SELECT} ORDER BY created_at DESC`);
@@ -188,12 +194,12 @@ export const caseRepo = {
     return rows.map(toCase);
   },
 
-  async getNextCaseNumber(): Promise<string> {
+  async getNextCaseNumber(scope: CaseScope = "ast"): Promise<string> {
     const NepaliDate = getNepaliDateClass();
     const nd = new NepaliDate();
     const bsYear = nd.getYear();
     const bsMonth = String(nd.getMonth() + 1).padStart(2, "0");
-    const prefix = `AST-${bsYear}${bsMonth}`;
+    const prefix = `${getScopePrefix(scope)}-${bsYear}${bsMonth}`;
     const row = await dbGet<{ count: number | string }>(
       sql`SELECT COUNT(*) as count FROM cases WHERE case_number LIKE ${`${prefix}%`}`,
     );
@@ -201,16 +207,18 @@ export const caseRepo = {
     return `${prefix}-${String(count + 1).padStart(3, "0")}`;
   },
 
-  async getDailyNumber(date: string): Promise<number> {
+  async getDailyNumber(date: string, scope: CaseScope = "ast"): Promise<number> {
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
     const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE date = ${date}`,
+      sql`SELECT COUNT(*) as count FROM cases WHERE date = ${date} AND case_number LIKE ${scopePrefix}`,
     );
     return Number(row?.count ?? 0) + 1;
   },
 
-  async getMonthlyNumber(yearMonth: string): Promise<number> {
+  async getMonthlyNumber(yearMonth: string, scope: CaseScope = "ast"): Promise<number> {
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
     const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${yearMonth}%`}`,
+      sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${yearMonth}%`} AND case_number LIKE ${scopePrefix}`,
     );
     return Number(row?.count ?? 0) + 1;
   },

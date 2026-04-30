@@ -7,6 +7,11 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import Welcome from "@/pages/welcome";
+import AstReportHome from "@/pages/ast-report-home";
+import AstSettingsPage from "@/pages/ast-settings";
+import AstFormEditorPage from "@/pages/ast-form-editor";
+import NewCaseHome from "@/pages/new-case-home";
+import HospitalFormEditorPage from "@/pages/hospital-form-editor";
 import RegisterCase from "@/pages/register-case";
 import CaseList from "@/pages/case-list";
 import CaseView from "@/pages/case-view";
@@ -20,7 +25,15 @@ import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import ProfilePage from "./pages/profile";
 
 function ProtectedRoutes() {
-  const { user, isAdmin, canRegisterCase, canViewDashboard, isLoading } = useAuth();
+  const {
+    user,
+    isAdmin,
+    isStudent,
+    canRegisterAstCase,
+    canRegisterHospitalCase,
+    canViewDashboard,
+    isLoading,
+  } = useAuth();
 
   if (isLoading) {
     return (
@@ -49,17 +62,64 @@ function ProtectedRoutes() {
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Welcome} />
+          <Route path="/new-case" component={NewCaseHome} />
+          <Route path="/new-case/form-editor" component={HospitalFormEditorPage} />
+          <Route path="/new-case/register">
+            {canRegisterHospitalCase ? (
+              <RegisterCase
+                pageTitle="Register New Hospital Case"
+                backHref="/new-case"
+                onSuccessRedirect="/new-case"
+                mode="hospital"
+                createEndpoint="/api/cases"
+                caseScope="hospital"
+              />
+            ) : (
+              <Redirect to="/new-case" />
+            )}
+          </Route>
+          <Route path="/ast-report" component={AstReportHome} />
+          <Route path="/ast-report/settings" component={AstSettingsPage} />
+          {isAdmin && (
+            <Route path="/ast-report/form-editor" component={AstFormEditorPage} />
+          )}
           <Route path="/profile" component={ProfilePage} />
-          {canRegisterCase && <Route path="/register" component={RegisterCase} />}
-          <Route path="/cases" component={CaseList} />
+          {canRegisterAstCase && !isStudent && (
+            <Route path="/register">
+              <RegisterCase
+                createEndpoint="/api/ast/cases"
+                caseScope="ast"
+                backHref="/ast-report"
+                onSuccessRedirect="/ast-report"
+              />
+            </Route>
+          )}
+          <Route path="/new-case/cases">
+            <CaseList backHref="/new-case" />
+          </Route>
+          <Route path="/ast-report/cases">
+            <CaseList backHref="/ast-report" />
+          </Route>
+          <Route path="/cases">
+            <CaseList />
+          </Route>
           <Route path="/dashboard">
-            {canViewDashboard ? <DashboardPage /> : <Redirect to="/" />}
+            {canViewDashboard ? <DashboardPage /> : <Redirect to="/ast-report" />}
           </Route>
           <Route path="/cases/:id" component={CaseView} />
           <Route path="/print/:id" component={PrintReport} />
           <Route path="/export" component={ExportDataPage} />
           {isAdmin && <Route path="/breakpoints" component={BreakpointsPage} />}
-          {isAdmin && <Route path="/admin" component={AdminPanel} />}
+          {isAdmin && (
+            <Route path="/admin/downloads">
+              <AdminPanel forcedTab="downloads" />
+            </Route>
+          )}
+          {isAdmin && (
+            <Route path="/admin">
+              <AdminPanel />
+            </Route>
+          )}
           <Route path="/login">
             <Redirect to="/" />
           </Route>

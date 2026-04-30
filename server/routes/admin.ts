@@ -22,6 +22,10 @@ function slugifyKey(input: string) {
     .slice(0, 48);
 }
 
+function resolveFormScope(raw: unknown): "ast" | "hospital" {
+  return String(raw ?? "hospital").toLowerCase() === "ast" ? "ast" : "hospital";
+}
+
 const HIDDEN_SUPERADMIN_USERNAME =
   process.env.HIDDEN_SUPERADMIN_USERNAME?.trim() || "system_superadmin";
 const HIDDEN_SUPERADMIN_EMAIL =
@@ -42,6 +46,7 @@ function isHiddenSuperadminUser(user: {
 type DownloadRequestRow = {
   id: number;
   user_id: number;
+  request_source: string;
   date_from: string | null;
   date_to: string | null;
   reason: string | null;
@@ -56,6 +61,7 @@ function toDownloadRequest(row: DownloadRequestRow) {
   return {
     id: row.id,
     userId: row.user_id,
+    requestSource: row.request_source,
     dateFrom: row.date_from,
     dateTo: row.date_to,
     reason: row.reason,
@@ -256,9 +262,12 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/form-definition",
     requireAuth,
     requireRole("superadmin", "admin"),
-    async (_req, res) => {
+    async (req, res) => {
+      const scope = resolveFormScope(req.query.scope);
       const sections = await dbAll<{ key: string; title: string; display_order: number }>(
-        sql`SELECT key, title, display_order FROM form_sections ORDER BY display_order ASC`,
+        sql`SELECT key, title, display_order FROM form_sections
+            WHERE form_scope = 'shared' OR form_scope = ${scope}
+            ORDER BY display_order ASC`,
       );
       const questions = await dbAll<{
         id: number;
@@ -274,6 +283,7 @@ export function registerAdminRoutes(app: Express) {
       }>(
         sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin
             FROM form_questions
+            WHERE form_scope = 'shared' OR form_scope = ${scope}
             ORDER BY section_key ASC, display_order ASC`,
       );
       const bySection = new Map<string, typeof questions>();
@@ -309,6 +319,7 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
       const title = String(req.body?.title ?? "").trim();
       if (!title) return res.status(400).json({ message: "Section title is required" });
       const rawKey = slugifyKey(title);
@@ -319,7 +330,7 @@ export function registerAdminRoutes(app: Express) {
       );
       const displayOrder = Number(maxOrderRow?.max ?? 0) + 1000;
       await dbRun(
-        sql`INSERT INTO form_sections (key, title, display_order) VALUES (${key}, ${title}, ${displayOrder})`,
+        sql`INSERT INTO form_sections (key, title, display_order, form_scope) VALUES (${key}, ${title}, ${displayOrder}, ${scope})`,
       );
       await dbRun(
         sql`INSERT INTO form_edit_audit_logs
@@ -344,26 +355,27 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
       const key = String(req.params.key);
       const direction = String(req.body?.direction ?? "");
       if (!["up", "down"].includes(direction)) {
         return res.status(400).json({ message: "direction must be up or down" });
       }
       const current = await dbGet<{ key: string; display_order: number }>(
-        sql`SELECT key, display_order FROM form_sections WHERE key = ${key}`,
+        sql`SELECT key, display_order FROM form_sections WHERE key = ${key} AND form_scope = ${scope}`,
       );
       if (!current) return res.status(404).json({ message: "Section not found" });
       const neighbor =
         direction === "up"
           ? await dbGet<{ key: string; display_order: number }>(
               sql`SELECT key, display_order FROM form_sections
-                  WHERE display_order < ${current.display_order}
+                  WHERE (form_scope = ${scope}) AND display_order < ${current.display_order}
                   ORDER BY display_order DESC
                   LIMIT 1`,
             )
           : await dbGet<{ key: string; display_order: number }>(
               sql`SELECT key, display_order FROM form_sections
-                  WHERE display_order > ${current.display_order}
+                  WHERE (form_scope = ${scope}) AND display_order > ${current.display_order}
                   ORDER BY display_order ASC
                   LIMIT 1`,
             );
@@ -397,19 +409,36 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.query.scope);
       const key = String(req.params.key);
       const section = await dbGet<{ key: string; title: string }>(
-        sql`SELECT key, title FROM form_sections WHERE key = ${key}`,
+        sql`SELECT key, title FROM form_sections WHERE key = ${key} AND form_scope = ${scope}`,
       );
       if (!section) return res.status(404).json({ message: "Section not found" });
-      if (["owner", "animal", "sample", "ast", "final"].includes(section.key)) {
+      if (
+        [
+          "owner",
+          "animal",
+          "history",
+          "avian",
+          "vitals",
+          "sample",
+          "ast",
+          "tests_suggested",
+          "final",
+        ].includes(section.key)
+      ) {
+        return res.status(403).json({ message: "Built-in sections cannot be deleted" });
+      }
+      const normalizedTitle = section.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normalizedTitle.includes("testsuggested") || normalizedTitle.includes("testssuggested")) {
         return res.status(403).json({ message: "Built-in sections cannot be deleted" });
       }
       const questionCount = await dbGet<{ count: number }>(
-        sql`SELECT COUNT(*) as count FROM form_questions WHERE section_key = ${key}`,
+        sql`SELECT COUNT(*) as count FROM form_questions WHERE section_key = ${key} AND form_scope = ${scope}`,
       );
-      await dbRun(sql`DELETE FROM form_questions WHERE section_key = ${key}`);
-      const deleteSectionResult = await dbRun(sql`DELETE FROM form_sections WHERE key = ${key}`);
+      await dbRun(sql`DELETE FROM form_questions WHERE section_key = ${key} AND form_scope = ${scope}`);
+      const deleteSectionResult = await dbRun(sql`DELETE FROM form_sections WHERE key = ${key} AND form_scope = ${scope}`);
       if (Number(deleteSectionResult.changes ?? 0) === 0) {
         return res.status(404).json({ message: "Section not found" });
       }
@@ -436,6 +465,7 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
       const sectionKey = String(req.body?.sectionKey ?? "").trim();
       const label = String(req.body?.label ?? "").trim();
       const inputType = String(req.body?.inputType ?? "text").trim();
@@ -463,7 +493,7 @@ export function registerAdminRoutes(app: Express) {
         return res.status(400).json({ message: "At least 2 options are required" });
       }
       const section = await dbGet<{ key: string }>(
-        sql`SELECT key FROM form_sections WHERE key = ${sectionKey}`,
+        sql`SELECT key FROM form_sections WHERE key = ${sectionKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       if (!section) return res.status(404).json({ message: "Section not found" });
 
@@ -471,12 +501,12 @@ export function registerAdminRoutes(app: Express) {
       const suffix = Math.random().toString(36).slice(2, 6);
       const key = `custom_${base}_${suffix}`;
       const maxOrderRow = await dbGet<{ max: number }>(
-        sql`SELECT COALESCE(MAX(display_order), 0) as max FROM form_questions WHERE section_key = ${sectionKey}`,
+        sql`SELECT COALESCE(MAX(display_order), 0) as max FROM form_questions WHERE section_key = ${sectionKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       const displayOrder = Number(maxOrderRow?.max ?? 0) + 1000;
       await dbRun(
         sql`INSERT INTO form_questions
-            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at)
+            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at, form_scope)
             VALUES (
               ${key},
               ${sectionKey},
@@ -487,7 +517,8 @@ export function registerAdminRoutes(app: Express) {
               ${0},
               ${displayOrder},
               ${0},
-              ${new Date().toISOString()}
+              ${new Date().toISOString()},
+              ${scope}
             )`,
       );
       await dbRun(
@@ -513,23 +544,44 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
       const id = getIdParam(req);
       const existing = await dbGet<{
         id: number;
         key: string;
+        input_type: string;
+        options_json: string | null;
         enabled: number;
         required: number;
-      }>(sql`SELECT id, key, enabled, required FROM form_questions WHERE id = ${id}`);
+      }>(sql`SELECT id, key, input_type, options_json, enabled, required FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`);
       if (!existing) return res.status(404).json({ message: "Question not found" });
-      const patch = req.body as { enabled?: boolean; required?: boolean };
+      const patch = req.body as { enabled?: boolean; required?: boolean; options?: string[] };
       const nextEnabled =
         typeof patch.enabled === "boolean" ? patch.enabled : Boolean(existing.enabled);
       const nextRequired =
         typeof patch.required === "boolean" ? patch.required : Boolean(existing.required);
+      const nextOptions =
+        Array.isArray(patch.options)
+          ? patch.options.map((v) => String(v ?? "").trim()).filter(Boolean)
+          : existing.options_json
+            ? (JSON.parse(existing.options_json) as string[])
+            : [];
+      if (
+        Array.isArray(patch.options) &&
+        (existing.input_type === "singleSelect" || existing.input_type === "multiSelect") &&
+        nextOptions.length < 2
+      ) {
+        return res.status(400).json({ message: "At least 2 options are required" });
+      }
       await dbRun(
         sql`UPDATE form_questions
             SET enabled = ${nextEnabled ? 1 : 0},
-                required = ${nextRequired ? 1 : 0}
+                required = ${nextRequired ? 1 : 0},
+                options_json = ${
+                  existing.input_type === "singleSelect" || existing.input_type === "multiSelect"
+                    ? JSON.stringify(nextOptions)
+                    : existing.options_json
+                }
             WHERE id = ${id}`,
       );
       await dbRun(
@@ -540,8 +592,12 @@ export function registerAdminRoutes(app: Express) {
               ${currentUser.role},
               ${"update_form_question"},
               ${existing.key},
-              ${JSON.stringify({ enabled: Boolean(existing.enabled), required: Boolean(existing.required) })},
-              ${JSON.stringify({ enabled: nextEnabled, required: nextRequired })},
+              ${JSON.stringify({
+                enabled: Boolean(existing.enabled),
+                required: Boolean(existing.required),
+                options: existing.options_json ? JSON.parse(existing.options_json) : [],
+              })},
+              ${JSON.stringify({ enabled: nextEnabled, required: nextRequired, options: nextOptions })},
               ${new Date().toISOString()}
             )`,
       );
@@ -555,6 +611,7 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
       const id = getIdParam(req);
       const direction = String(req.body?.direction ?? "");
       if (!["up", "down"].includes(direction)) {
@@ -566,7 +623,7 @@ export function registerAdminRoutes(app: Express) {
         section_key: string;
         display_order: number;
       }>(
-        sql`SELECT id, key, section_key, display_order FROM form_questions WHERE id = ${id}`,
+        sql`SELECT id, key, section_key, display_order FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       if (!current) return res.status(404).json({ message: "Question not found" });
       const neighbor =
@@ -574,6 +631,7 @@ export function registerAdminRoutes(app: Express) {
           ? await dbGet<{ id: number; display_order: number }>(
               sql`SELECT id, display_order FROM form_questions
                   WHERE section_key = ${current.section_key}
+                    AND (form_scope = 'shared' OR form_scope = ${scope})
                     AND display_order < ${current.display_order}
                   ORDER BY display_order DESC
                   LIMIT 1`,
@@ -581,6 +639,7 @@ export function registerAdminRoutes(app: Express) {
           : await dbGet<{ id: number; display_order: number }>(
               sql`SELECT id, display_order FROM form_questions
                   WHERE section_key = ${current.section_key}
+                    AND (form_scope = 'shared' OR form_scope = ${scope})
                     AND display_order > ${current.display_order}
                   ORDER BY display_order ASC
                   LIMIT 1`,
@@ -615,6 +674,7 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.query.scope);
       const id = getIdParam(req);
       const question = await dbGet<{
         id: number;
@@ -623,13 +683,13 @@ export function registerAdminRoutes(app: Express) {
         section_key: string;
         is_builtin: number;
       }>(
-        sql`SELECT id, key, label, section_key, is_builtin FROM form_questions WHERE id = ${id}`,
+        sql`SELECT id, key, label, section_key, is_builtin FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       if (!question) return res.status(404).json({ message: "Question not found" });
       if (Boolean(question.is_builtin)) {
         return res.status(403).json({ message: "Built-in questions cannot be deleted" });
       }
-      const deleteQuestionResult = await dbRun(sql`DELETE FROM form_questions WHERE id = ${id}`);
+      const deleteQuestionResult = await dbRun(sql`DELETE FROM form_questions WHERE id = ${id} AND form_scope = ${scope}`);
       if (Number(deleteQuestionResult.changes ?? 0) === 0) {
         return res.status(404).json({ message: "Question not found" });
       }
@@ -1121,7 +1181,7 @@ export function registerAdminRoutes(app: Express) {
     async (req, res) => {
       const pagination = getPaginationParams(req);
       const rows = await dbAll<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+        sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             ORDER BY created_at DESC`,
       );
@@ -1172,7 +1232,7 @@ export function registerAdminRoutes(app: Express) {
       }
       const id = getIdParam(req);
       const existing = await dbGet<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+        sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE id = ${id}`,
       );
@@ -1186,7 +1246,7 @@ export function registerAdminRoutes(app: Express) {
             WHERE id = ${id}`,
       );
       const updated = await dbGet<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+        sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE id = ${id}`,
       );

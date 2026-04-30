@@ -21,6 +21,7 @@ export const users = sqliteTable("users", {
 export const downloadRequests = sqliteTable("download_requests", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),
+  requestSource: text("request_source").notNull().default("ast_report"), // ast_report, hospital_case
   status: text("status").notNull().default("pending"), // pending, approved, rejected, 
   dateFrom: text("date_from"), // BS date filter
   dateTo: text("date_to"),

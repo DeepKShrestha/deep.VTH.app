@@ -7,20 +7,27 @@ import { authSessionRepo } from "../auth-session-repo";
 import {
   canDownload,
   canRegister,
+  canRegisterHospital,
   getIdParam,
   getPaginationParams,
   getTodayBs,
   isDashboardVisibleForRole,
+  requireAnyCapability,
   requireAuth,
   requireRole,
 } from "./context";
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
+
+function resolveFormScope(raw: unknown): "ast" | "hospital" {
+  return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
+}
 import { rowsToCsv, toExportRows } from "./cases-export";
 
 type DownloadRequestRow = {
   id: number;
   user_id: number;
+  request_source: string;
   date_from: string | null;
   date_to: string | null;
   reason: string | null;
@@ -35,6 +42,7 @@ function toDownloadRequest(row: DownloadRequestRow) {
   return {
     id: row.id,
     userId: row.user_id,
+    requestSource: row.request_source,
     dateFrom: row.date_from,
     dateTo: row.date_to,
     reason: row.reason,
@@ -576,14 +584,22 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     });
   });
 
-  app.get("/api/species-options", requireAuth, canRegister, async (_req, res) => {
+  app.get(
+    "/api/species-options",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
     const rows = await dbAll<{ name: string }>(
       sql`SELECT name FROM species_options ORDER BY name ASC`,
     );
     res.json(rows.map((r) => r.name));
   });
 
-  app.get("/api/breed-options", requireAuth, canRegister, async (req, res) => {
+  app.get(
+    "/api/breed-options",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (req, res) => {
     const species = String(req.query.species ?? "").trim();
     if (!species) return res.json([]);
     const rows = await dbAll<{ name: string }>(
@@ -592,7 +608,11 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     res.json(rows.map((r) => r.name));
   });
 
-  app.get("/api/form-config", requireAuth, canRegister, async (_req, res) => {
+  app.get(
+    "/api/form-config",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
     const rows = await dbAll<{
       key: string;
       section: string;
@@ -613,9 +633,16 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     );
   });
 
-  app.get("/api/form-definition", requireAuth, canRegister, async (_req, res) => {
+  app.get(
+    "/api/form-definition",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (req, res) => {
+    const scope = resolveFormScope(req.query.scope);
     const sections = await dbAll<{ key: string; title: string; display_order: number }>(
-      sql`SELECT key, title, display_order FROM form_sections ORDER BY display_order ASC`,
+      sql`SELECT key, title, display_order FROM form_sections
+          WHERE form_scope = 'shared' OR form_scope = ${scope}
+          ORDER BY display_order ASC`,
     );
     const questions = await dbAll<{
       id: number;
@@ -631,6 +658,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     }>(
       sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin
           FROM form_questions
+          WHERE form_scope = 'shared' OR form_scope = ${scope}
           ORDER BY section_key ASC, display_order ASC`,
     );
     const bySection = new Map<string, typeof questions>();
@@ -662,11 +690,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
   app.post("/api/download-requests", requireAuth, async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const { dateFrom, dateTo, reason } = req.body;
+    const requestSourceRaw = String(req.body?.requestSource ?? "ast_report").trim().toLowerCase();
+    const requestSource = requestSourceRaw === "hospital_case" ? "hospital_case" : "ast_report";
     await dbRun(
       sql`INSERT INTO download_requests
-          (user_id, date_from, date_to, reason, status, created_at)
+          (user_id, request_source, date_from, date_to, reason, status, created_at)
           VALUES (
             ${user.id},
+            ${requestSource},
             ${dateFrom || null},
             ${dateTo || null},
             ${reason || null},
@@ -675,7 +706,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
           )`,
     );
     const created = await dbGet<DownloadRequestRow>(
-      sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+      sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
           FROM download_requests
           ORDER BY id DESC
           LIMIT 1`,
@@ -693,7 +724,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     async (req: Request, res: Response) => {
       const user = (req as AuthenticatedRequest).currentUser;
       const rows = await dbAll<DownloadRequestRow>(
-        sql`SELECT id, user_id, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+        sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
             FROM download_requests
             WHERE user_id = ${user.id}
             ORDER BY created_at DESC`,
@@ -723,19 +754,52 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     res.json(caseData);
   });
 
-  app.get("/api/next-case-info", requireAuth, canRegister, async (_req, res) => {
+  app.get(
+    "/api/next-case-info",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (req, res) => {
     const todayBs = getTodayBs();
     const bsYearMonth = todayBs.substring(0, 7);
+    const scopeRaw = String(req.query.scope ?? "ast").toLowerCase();
+    const scope: "ast" | "hospital" = scopeRaw === "hospital" ? "hospital" : "ast";
     res.json({
-      caseNumber: await caseRepo.getNextCaseNumber(),
-      dailyNumber: await caseRepo.getDailyNumber(todayBs),
-      monthlyNumber: await caseRepo.getMonthlyNumber(bsYearMonth),
+      caseNumber: await caseRepo.getNextCaseNumber(scope),
+      dailyNumber: await caseRepo.getDailyNumber(todayBs, scope),
+      monthlyNumber: await caseRepo.getMonthlyNumber(bsYearMonth, scope),
       todayBs,
       todayAd: new Date().toISOString().split("T")[0],
     });
   });
 
-  app.post("/api/cases", requireAuth, canRegister, async (req: Request, res: Response) => {
+  app.post("/api/cases", requireAuth, canRegisterHospital, async (req: Request, res: Response) => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    const now = new Date().toISOString();
+    const fullUser = await authSessionRepo.getUserById(user.id);
+
+    const parsed = insertCaseSchema.safeParse({
+      ...req.body,
+      registeredBy: user.id,
+    });
+
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
+    }
+
+    const newCase = await caseRepo.createCase({
+      ...parsed.data,
+      astResults: "[]",
+      lastUpdatedBy: user.id,
+      lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
+      updatedAt: now,
+    });
+
+    res.status(201).json(newCase);
+  });
+
+  app.post("/api/ast/cases", requireAuth, canRegister, async (req: Request, res: Response) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
     const fullUser = await authSessionRepo.getUserById(user.id);

@@ -17,6 +17,33 @@ export type InactivityTimeoutOption =
   | "30m"
   | "never";
 export type ConfirmLogoutPreference = "always" | "never";
+export type PermissionCapability =
+  | "hospital.case.create"
+  | "hospital.case.view"
+  | "ast.case.create"
+  | "ast.case.view"
+  | "ast.download"
+  | "ast.admin";
+type AuthUser = SafeUser & {
+  dashboardVisible?: boolean;
+  capabilities?: PermissionCapability[];
+};
+
+function resolveCapabilitiesFromRole(role?: string): PermissionCapability[] {
+  const isAdmin = role === "superadmin" || role === "admin";
+  const base: PermissionCapability[] = ["hospital.case.view", "ast.case.view"];
+  if (role === "student" || role === "intern" || role === "staff" || isAdmin) {
+    base.push("hospital.case.create");
+  }
+  if (role === "intern" || role === "staff" || isAdmin) {
+    base.push("ast.case.create");
+    base.push("ast.download");
+  }
+  if (isAdmin) {
+    base.push("ast.admin");
+  }
+  return base;
+}
 
 export const INACTIVITY_TIMEOUT_LABELS: Record<InactivityTimeoutOption, string> = {
   "1m": "1 minute",
@@ -50,6 +77,12 @@ interface AuthContextType {
   canRegisterCase: boolean;
   canDownload: boolean;
   canViewDashboard: boolean;
+  canRegisterHospitalCase: boolean;
+  canViewHospitalCases: boolean;
+  canRegisterAstCase: boolean;
+  canViewAstCases: boolean;
+  canDownloadAst: boolean;
+  canManageAstAdmin: boolean;
 }
 
 interface SignupData {
@@ -64,9 +97,10 @@ interface SignupData {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// In-memory token + sessionStorage (persists on reload, clears when tab/window closes)
+// In-memory token + localStorage (persists across reloads and new tabs/windows)
 let storedToken: string | null = null;
 const TOKEN_STORAGE_KEY = "auth_token";
+const LAST_LOGIN_AT_KEY = "auth_last_login_at";
 export const INACTIVITY_LOGOUT_FLAG_KEY = "logged_out_inactivity";
 const INACTIVITY_TIMEOUT_STORAGE_KEY = "inactivity_timeout";
 const CONFIRM_LOGOUT_STORAGE_KEY = "confirm_logout_preference";
@@ -85,18 +119,18 @@ const INACTIVITY_TIMEOUT_MS: Record<
 
 export function getAuthToken(): string | null {
   if (storedToken) return storedToken;
-  // Fallback for page reload/HMR race: token may already be in sessionStorage
+  // Fallback for page reload/HMR race: token may already be in storage
   // before in-memory state is rehydrated.
-  return sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<SafeUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => {
-    return sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
   });
   const [isLoading, setIsLoading] = useState<boolean>(() => {
-    return Boolean(sessionStorage.getItem(TOKEN_STORAGE_KEY));
+    return Boolean(localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY));
   });
   const [inactivityTimeout, setInactivityTimeoutState] =
     useState<InactivityTimeoutOption>(() => {
@@ -121,11 +155,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   const inactivityTimerRef = useRef<number | null>(null);
 
-  const setAuth = useCallback((t: string | null, u: SafeUser | null) => {
+  const setAuth = useCallback((t: string | null, u: AuthUser | null) => {
     storedToken = t;
     if (t) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, t);
       sessionStorage.setItem(TOKEN_STORAGE_KEY, t);
     } else {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
     setToken(t);
@@ -147,9 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAuth(null, null);
           return;
         }
-        const safeUser = (await res.json()) as SafeUser & {
-          dashboardVisible?: boolean;
-        };
+        const safeUser = (await res.json()) as AuthUser;
         setAuth(token, safeUser);
       } catch {
         setAuth(null, null);
@@ -180,6 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         }
         setAuth(data.token, data.user);
+        localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
         return { success: true, message: "Login successful" };
       } catch {
         return { success: false, message: "Network error" };
@@ -216,6 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }).catch(() => {});
     }
     sessionStorage.removeItem(INACTIVITY_LOGOUT_FLAG_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     setAuth(null, null);
   }, [setAuth]);
 
@@ -231,11 +267,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isStaff = user?.role === "staff";
   const isIntern = user?.role === "intern";
   const isStudent = user?.role === "student";
-  const canRegisterCase = isAdmin || isStaff || isIntern;
-  const canDownload = isAdmin || isStaff || isIntern; // students must request
+  const capabilities = new Set(
+    (user?.capabilities?.length ? user.capabilities : resolveCapabilitiesFromRole(user?.role)),
+  );
+  const canRegisterHospitalCase = capabilities.has("hospital.case.create");
+  const canViewHospitalCases = capabilities.has("hospital.case.view");
+  const canRegisterAstCase = capabilities.has("ast.case.create");
+  const canViewAstCases = capabilities.has("ast.case.view");
+  const canDownloadAst = capabilities.has("ast.download");
+  const canManageAstAdmin = capabilities.has("ast.admin");
+  const canRegisterCase = canRegisterAstCase;
+  const canDownload = canDownloadAst;
   const canViewDashboard =
-    Boolean((user as (SafeUser & { dashboardVisible?: boolean }) | null)?.dashboardVisible) !==
-    false;
+    Boolean(user?.dashboardVisible) !== false;
 
   const setInactivityTimeout = useCallback(
     (value: InactivityTimeoutOption) => {
@@ -318,6 +362,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     canRegisterCase,
     canDownload,
     canViewDashboard,
+    canRegisterHospitalCase,
+    canViewHospitalCases,
+    canRegisterAstCase,
+    canViewAstCases,
+    canDownloadAst,
+    canManageAstAdmin,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

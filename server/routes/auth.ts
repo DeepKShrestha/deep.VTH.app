@@ -3,6 +3,7 @@ import { insertUserSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import {
   generateToken,
+  resolveCapabilitiesForRole,
   isDashboardVisibleForRole,
   requireAuth,
   sessions,
@@ -95,6 +96,7 @@ export function registerAuthRoutes(app: Express) {
       user: {
         ...safeUser,
         dashboardVisible: await isDashboardVisibleForRole(user.role),
+        capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
   });
@@ -105,6 +107,12 @@ export function registerAuthRoutes(app: Express) {
       await sessions.delete(authHeader.substring(7));
     }
     res.json({ message: "Logged out" });
+  });
+
+  app.post("/api/auth/logout-all-sessions", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    await authSessionRepo.deleteSessionsByUserId(currentUser.id);
+    return res.json({ message: "All sessions logged out" });
   });
 
   app.get("/api/auth/me", async (req, res) => {
@@ -121,6 +129,7 @@ export function registerAuthRoutes(app: Express) {
     res.json({
       ...safeUser,
       dashboardVisible: await isDashboardVisibleForRole(user.role),
+      capabilities: resolveCapabilitiesForRole(user.role),
     });
   });
 

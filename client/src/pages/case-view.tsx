@@ -69,6 +69,24 @@ export default function CaseView() {
       .sort((a, b) => parseFloat(b.zoneSize || "0") - parseFloat(a.zoneSize || "0"))
       .slice(0, 3);
   }, [astResults]);
+  const customFieldEntries = useMemo(() => {
+    if (!caseData?.customFields) return [] as Array<[string, string | string[]]>;
+    try {
+      const parsed = JSON.parse(caseData.customFields) as Record<string, string | string[]>;
+      return Object.entries(parsed).filter(([, value]) =>
+        Array.isArray(value) ? value.length > 0 : String(value ?? "").trim().length > 0,
+      );
+    } catch {
+      return [] as Array<[string, string | string[]]>;
+    }
+  }, [caseData?.customFields]);
+  const formatCustomFieldLabel = (key: string) =>
+    key
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
 
   if (isLoading) {
     return (
@@ -307,6 +325,32 @@ export default function CaseView() {
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Remarks</CardTitle></CardHeader>
           <CardContent><p className="text-sm whitespace-pre-wrap">{caseData.remarks}</p></CardContent>
+        </Card>
+      )}
+
+      {customFieldEntries.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Additional Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {customFieldEntries.map(([key, value]) => (
+              <div key={key}>
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  {formatCustomFieldLabel(key)}
+                </p>
+                {Array.isArray(value) ? (
+                  <ul className="list-disc pl-5 text-sm space-y-1">
+                    {value.map((item, idx) => (
+                      <li key={`${key}-${idx}`}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{value}</p>
+                )}
+              </div>
+            ))}
+          </CardContent>
         </Card>
       )}
     </div>

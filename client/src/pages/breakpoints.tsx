@@ -109,7 +109,7 @@ export default function BreakpointsPage() {
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href="/"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+          <Link href="/ast-report/settings"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
             <h1 className="text-lg font-semibold">Breakpoint Data</h1>
             <p className="text-sm text-muted-foreground">Manage antibiotic zone diameter interpretive criteria</p>
