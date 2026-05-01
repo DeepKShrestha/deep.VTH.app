@@ -524,10 +524,38 @@ These changes were applied to prevent cross-module leakage and privilege issues:
   - Yearly counter added to shared schema and print/detail UI.
   - Repair script added: `script/normalize-case-counters.cjs` for historical counter normalization.
 
+- **Database identity constraints for cases**
+  - Migration-enforced uniqueness now protects:
+    - `case_number` (global uniqueness)
+    - scoped daily counter (`scope + date + daily_number`)
+    - scoped monthly counter (`scope + year-month + monthly_number`)
+    - scoped yearly counter (`scope + year + yearly_number`)
+  - This prevents counter collisions at DB layer even under concurrent requests.
+
+- **Explicit migration runner introduced**
+  - New `server/migration-runner.ts` executes pending `.sql` files from:
+    - `migrations/` (SQLite)
+    - `migrations-pg/` (Postgres)
+  - Applied migration IDs are tracked in `schema_migrations`.
+  - Startup rewrites for constraints/backfills are now handled via migration files.
+
+- **Centralized admin action audit log**
+  - New `admin_action_logs` table records sensitive admin actions with:
+    - actor (`actor_user_id`, `actor_role`)
+    - action + target metadata (`action_type`, `target_type`, `target_id`)
+    - structured details (`details_json`)
+    - timestamp (`created_at`)
+  - Currently logged actions:
+    - user approval
+    - user role change
+    - download request resolution
+    - password reset request resolution
+
 - **Regression test coverage added**
   - `server/routes/cases.scope-permissions.test.ts`
   - `server/routes/cases.module-scope.e2e.test.ts`
   - `server/routes/frontend-route-contract.test.ts`
+  - `server/routes/admin.notifications.test.ts` (notification lifecycle)
 
 ---
 

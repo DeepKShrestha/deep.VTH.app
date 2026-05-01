@@ -95,6 +95,29 @@ type PasswordResetRequestRow = {
   resolved_at: string | null;
 };
 
+async function logAdminAction(args: {
+  actorUserId: number;
+  actorRole: string;
+  actionType: string;
+  targetType: string;
+  targetId?: string | number | null;
+  details?: Record<string, unknown>;
+}) {
+  await dbRun(
+    sql`INSERT INTO admin_action_logs
+        (actor_user_id, actor_role, action_type, target_type, target_id, details_json, created_at)
+        VALUES (
+          ${args.actorUserId},
+          ${args.actorRole},
+          ${args.actionType},
+          ${args.targetType},
+          ${args.targetId == null ? null : String(args.targetId)},
+          ${args.details ? JSON.stringify(args.details) : null},
+          ${new Date().toISOString()}
+        )`,
+  );
+}
+
 
 function toPasswordResetRequest(row: PasswordResetRequestRow) {
   return {
@@ -111,27 +134,122 @@ function toPasswordResetRequest(row: PasswordResetRequestRow) {
 }
 
 export function registerAdminRoutes(app: Express) {
+  const buildAdminNotifications = async (
+    currentUserId: number,
+  ): Promise<
+    Array<{
+      key: string;
+      type: "pending-approval" | "download-request" | "password-reset";
+      title: string;
+      message: string;
+      href: string;
+      createdAt: string;
+      isRead: boolean;
+      isDeleted: boolean;
+    }>
+  > => {
+    const pendingUsers = (await authSessionRepo.getUsers())
+      .filter((u) => !u.approved && !isHiddenSuperadminUser(u))
+      .map((u) => ({
+        baseKey: `pending-approval:${u.id}`,
+        type: "pending-approval" as const,
+        title: "New account approval request",
+        message: `${u.fullName} (@${u.username}) is waiting for approval.`,
+        href: `/admin?tab=pending&focus=user-${u.id}`,
+        createdAt: u.createdAt,
+      }));
+
+    const pendingDownloadRows = await dbAll<DownloadRequestRow>(
+      sql`SELECT id, user_id, request_source, date_from, date_to, reason, status, admin_note, resolved_by, created_at, resolved_at
+          FROM download_requests
+          WHERE status = ${"pending"}
+          ORDER BY created_at DESC`,
+    );
+    const pendingDownloads = await Promise.all(
+      pendingDownloadRows.map(async (row) => {
+        const requester = await authSessionRepo.getUserById(row.user_id);
+        return {
+          baseKey: `download-request:${row.id}`,
+          type: "download-request" as const,
+          title: "Pending download request",
+          message: `${requester?.fullName || "Unknown user"} requested ${
+            row.request_source === "hospital_case" ? "hospital" : "AST"
+          } data download.`,
+          href: `/admin?tab=downloads&focus=download-${row.id}`,
+          createdAt: row.created_at,
+        };
+      }),
+    );
+
+    const pendingResetRows = await dbAll<PasswordResetRequestRow>(
+      sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
+          FROM password_reset_requests
+          WHERE status = ${"pending"}
+          ORDER BY created_at DESC`,
+    );
+    const pendingResets = await Promise.all(
+      pendingResetRows.map(async (row) => {
+        const requester = await authSessionRepo.getUserById(row.user_id);
+        return {
+          baseKey: `password-reset:${row.id}`,
+          type: "password-reset" as const,
+          title: "Pending password reset request",
+          message: `${requester?.fullName || "Unknown user"} requested password reset.`,
+          href: `/admin?tab=password-resets&focus=reset-${row.id}`,
+          createdAt: row.created_at,
+        };
+      }),
+    );
+
+    const baseItems = [...pendingUsers, ...pendingDownloads, ...pendingResets].sort((a, b) =>
+      String(b.createdAt).localeCompare(String(a.createdAt)),
+    );
+    if (baseItems.length === 0) return [];
+
+    const stateRows = await dbAll<{
+      notification_key: string;
+      is_read: number;
+      is_deleted: number;
+    }>(
+      sql`SELECT notification_key, is_read, is_deleted
+          FROM notification_states
+          WHERE notification_key LIKE ${`${currentUserId}:%`}`,
+    );
+    const stateMap = new Map(
+      stateRows.map((r) => [
+        r.notification_key,
+        { isRead: Boolean(r.is_read), isDeleted: Boolean(r.is_deleted) },
+      ]),
+    );
+
+    return baseItems.map((item) => {
+      const scopedKey = `${currentUserId}:${item.baseKey}`;
+      const state = stateMap.get(scopedKey);
+      return {
+        key: item.baseKey,
+        type: item.type,
+        title: item.title,
+        message: item.message,
+        href: item.href,
+        createdAt: item.createdAt,
+        isRead: state?.isRead ?? false,
+        isDeleted: state?.isDeleted ?? false,
+      };
+    });
+  };
+
   app.get(
-    "/api/admin/notifications/states",
+    "/api/admin/notifications",
     requireAuth,
     requireRole("superadmin", "admin"),
-    async (_req, res) => {
-      const rows = await dbAll<{
-        notification_key: string;
-        is_read: number;
-        is_deleted: number;
-      }>(
-        sql`SELECT notification_key, is_read, is_deleted
-            FROM notification_states
-            WHERE is_read = 1 OR is_deleted = 1`,
-      );
-      return res.json(
-        rows.map((r) => ({
-          key: r.notification_key,
-          isRead: Boolean(r.is_read),
-          isDeleted: Boolean(r.is_deleted),
-        })),
-      );
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const allItems = await buildAdminNotifications(currentUser.id);
+      const visibleItems = allItems.filter((item) => !item.isDeleted);
+      return res.json({
+        items: visibleItems,
+        unreadCount: visibleItems.filter((item) => !item.isRead).length,
+      });
     },
   );
 
@@ -141,8 +259,9 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
-      const key = String(req.body?.key ?? "").trim();
-      if (!key) return res.status(400).json({ message: "key is required" });
+      const baseKey = String(req.body?.key ?? "").trim();
+      if (!baseKey) return res.status(400).json({ message: "key is required" });
+      const key = `${currentUser.id}:${baseKey}`;
       const isRead =
         req.body?.isRead === undefined ? undefined : Boolean(req.body?.isRead);
       const isDeleted =
@@ -171,21 +290,20 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
-      const keysRaw = Array.isArray(req.body?.keys) ? req.body.keys : [];
-      const keys = keysRaw
-        .map((k: unknown) => String(k ?? "").trim())
-        .filter(Boolean);
-      for (const key of keys) {
+      const allItems = await buildAdminNotifications(currentUser.id);
+      const unreadItems = allItems.filter((item) => !item.isDeleted && !item.isRead);
+      for (const item of unreadItems) {
+        const scopedKey = `${currentUser.id}:${item.key}`;
         await dbRun(
           sql`INSERT INTO notification_states (notification_key, is_read, is_deleted, updated_by, updated_at)
-              VALUES (${key}, ${1}, ${0}, ${currentUser.id}, ${new Date().toISOString()})
+              VALUES (${scopedKey}, ${1}, ${0}, ${currentUser.id}, ${new Date().toISOString()})
               ON CONFLICT(notification_key) DO UPDATE SET
                 is_read = 1,
                 updated_by = excluded.updated_by,
                 updated_at = excluded.updated_at`,
         );
       }
-      return res.json({ updated: keys.length });
+      return res.json({ updated: unreadItems.length });
     },
   );
 
@@ -195,14 +313,13 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
-      const keysRaw = Array.isArray(req.body?.keys) ? req.body.keys : [];
-      const keys = keysRaw
-        .map((k: unknown) => String(k ?? "").trim())
-        .filter(Boolean);
-      for (const key of keys) {
+      const allItems = await buildAdminNotifications(currentUser.id);
+      const readVisibleItems = allItems.filter((item) => !item.isDeleted && item.isRead);
+      for (const item of readVisibleItems) {
+        const scopedKey = `${currentUser.id}:${item.key}`;
         await dbRun(
           sql`INSERT INTO notification_states (notification_key, is_read, is_deleted, updated_by, updated_at)
-              VALUES (${key}, ${1}, ${1}, ${currentUser.id}, ${new Date().toISOString()})
+              VALUES (${scopedKey}, ${1}, ${1}, ${currentUser.id}, ${new Date().toISOString()})
               ON CONFLICT(notification_key) DO UPDATE SET
                 is_read = 1,
                 is_deleted = 1,
@@ -210,7 +327,7 @@ export function registerAdminRoutes(app: Express) {
                 updated_at = excluded.updated_at`,
         );
       }
-      return res.json({ updated: keys.length });
+      return res.json({ updated: readVisibleItems.length });
     },
   );
 
@@ -1135,6 +1252,14 @@ export function registerAdminRoutes(app: Express) {
         approved: true,
       });
       if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.approve",
+        targetType: "user",
+        targetId: user.id,
+        details: { assignedRole: parsedRole },
+      });
       const { passwordHash, ...safeUser } = user;
       res.json(safeUser);
     },
@@ -1194,6 +1319,14 @@ export function registerAdminRoutes(app: Express) {
       }
       const user = await authSessionRepo.updateUser(id, { role });
       if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.role.change",
+        targetType: "user",
+        targetId: user.id,
+        details: { fromRole: targetUser.role, toRole: role },
+      });
       const { passwordHash, ...safeUser } = user;
       res.json(safeUser);
     },
@@ -1331,6 +1464,18 @@ export function registerAdminRoutes(app: Express) {
             WHERE id = ${id}`,
       );
       if (!updated) return res.status(404).json({ message: "Request not found" });
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "download.request.resolve",
+        targetType: "download_request",
+        targetId: updated.id,
+        details: {
+          status,
+          requestSource: updated.request_source,
+          userId: updated.user_id,
+        },
+      });
       res.json(toDownloadRequest(updated));
     },
   );
@@ -1441,6 +1586,18 @@ export function registerAdminRoutes(app: Express) {
             WHERE id = ${targetMapped.id}`,
       );
       if (!resolved) return res.status(404).json({ message: "Request not found" });
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "password.reset.request.resolve",
+        targetType: "password_reset_request",
+        targetId: resolved.id,
+        details: {
+          status,
+          requestedByRole: resolved.requested_by_role,
+          userId: resolved.user_id,
+        },
+      });
       res.json(toPasswordResetRequest(resolved));
     },
   );

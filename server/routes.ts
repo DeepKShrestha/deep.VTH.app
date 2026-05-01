@@ -11,6 +11,7 @@ import { SEED_BREAKPOINTS } from "./routes/context";
 import { dbGet, dbRun } from "./db-query";
 import { authSessionRepo } from "./auth-session-repo";
 import { domainRepo } from "./domain-repo";
+import { runPendingMigrations } from "./migration-runner";
 
 export async function registerRoutes(_httpServer: Server, app: Express) {
   if (DB_PROVIDER === "sqlite") {
@@ -263,24 +264,6 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN yearly_number INTEGER`);
     }
-    await dbRun(sql`
-      WITH ranked AS (
-        SELECT
-          id,
-          ROW_NUMBER() OVER (
-            PARTITION BY
-              CASE WHEN UPPER(case_number) LIKE 'CASE-%' THEN 'hospital' ELSE 'ast' END,
-              substr(date, 1, 4)
-            ORDER BY created_at, id
-          ) AS rn
-        FROM cases
-      )
-      UPDATE cases
-      SET yearly_number = (
-        SELECT rn FROM ranked WHERE ranked.id = cases.id
-      )
-      WHERE yearly_number IS NULL
-    `);
     try {
       await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
     } catch {
@@ -496,23 +479,6 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS custom_fields TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS yearly_number INTEGER`);
-    await dbRun(sql`
-      WITH ranked AS (
-        SELECT
-          id,
-          ROW_NUMBER() OVER (
-            PARTITION BY
-              CASE WHEN UPPER(case_number) LIKE 'CASE-%' THEN 'hospital' ELSE 'ast' END,
-              substr(date, 1, 4)
-            ORDER BY created_at, id
-          ) AS rn
-        FROM cases
-      )
-      UPDATE cases
-      SET yearly_number = ranked.rn
-      FROM ranked
-      WHERE cases.id = ranked.id AND cases.yearly_number IS NULL
-    `);
     await dbRun(
       sql`CREATE INDEX IF NOT EXISTS case_change_logs_created_at_idx ON case_change_logs(created_at)`,
     );
@@ -520,6 +486,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       sql`CREATE INDEX IF NOT EXISTS case_change_logs_scope_idx ON case_change_logs(case_scope)`,
     );
   }
+
+  await runPendingMigrations();
 
   const existingBps = await domainRepo.getBreakpoints();
   if (existingBps.length === 0) {

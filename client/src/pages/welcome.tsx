@@ -1,8 +1,20 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ClipboardPlus,
   FileSpreadsheet,
@@ -10,6 +22,7 @@ import {
   LogOut,
   User,
   Shield,
+  Bell,
 } from "lucide-react";
 
 function designationLabel(d: string) {
@@ -53,8 +66,144 @@ function roleBadgeClass(role: string) {
   return map[role] || "bg-muted text-muted-foreground";
 }
 
+function formatTimeAgo(iso: string): string {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return "just now";
+  const diffMs = Date.now() - ts;
+  if (diffMs < 60_000) return "just now";
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function playNotificationBeep() {
+  try {
+    const audioCtx = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.value = 0.05;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.12);
+  } catch {
+    // Optional enhancement only; silently ignore when audio isn't allowed.
+  }
+}
+
 export default function Welcome() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const { user, logout, canRegisterHospitalCase, confirmBeforeLogout, isAdmin } = useAuth();
+  const [enableToastAlerts, setEnableToastAlerts] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("vth:notifications:toast") !== "0";
+  });
+  const [enableSoundAlerts, setEnableSoundAlerts] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("vth:notifications:sound") === "1";
+  });
+  const previousUnreadKeysRef = useRef<Set<string> | null>(null);
+  const {
+    data: notificationsData,
+    isLoading: notificationsLoading,
+  } = useQuery<{
+    items: Array<{
+      key: string;
+      type: "pending-approval" | "download-request" | "password-reset";
+      title: string;
+      message: string;
+      href: string;
+      createdAt: string;
+      isRead: boolean;
+    }>;
+    unreadCount: number;
+  }>({
+    queryKey: ["/api/admin/notifications"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/notifications");
+      return res.json();
+    },
+    enabled: isAdmin,
+    refetchInterval: 5000,
+  });
+  const markNotificationReadMutation = useMutation({
+    mutationFn: async (key: string) => {
+      await apiRequest("PATCH", "/api/admin/notifications/state", {
+        key,
+        isRead: true,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/notifications"] });
+    },
+  });
+  const markAllReadMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/admin/notifications/mark-read-all", {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/notifications"] });
+      toast({ title: "All notifications marked as read" });
+    },
+  });
+  const deleteReadMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/admin/notifications/delete-read", {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/notifications"] });
+      toast({ title: "All read notifications deleted" });
+    },
+  });
+  const notificationItems = notificationsData?.items ?? [];
+  const unreadCount = notificationsData?.unreadCount ?? 0;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("vth:notifications:toast", enableToastAlerts ? "1" : "0");
+  }, [enableToastAlerts]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("vth:notifications:sound", enableSoundAlerts ? "1" : "0");
+  }, [enableSoundAlerts]);
+
+  useEffect(() => {
+    if (!isAdmin || !notificationsData) return;
+    const unreadKeys = new Set(
+      notificationsData.items.filter((item) => !item.isRead).map((item) => item.key),
+    );
+    const prev = previousUnreadKeysRef.current;
+    previousUnreadKeysRef.current = unreadKeys;
+    if (!prev) return; // don't notify on initial load
+    let newItems = 0;
+    unreadKeys.forEach((key) => {
+      if (!prev.has(key)) newItems += 1;
+    });
+    if (newItems <= 0) return;
+    if (enableToastAlerts) {
+      toast({
+        title: "New admin notifications",
+        description: `${newItems} new request${newItems > 1 ? "s" : ""} waiting for review.`,
+      });
+    }
+    if (enableSoundAlerts) {
+      playNotificationBeep();
+    }
+  }, [isAdmin, notificationsData, enableToastAlerts, enableSoundAlerts, toast]);
+
+  const handleOpenNotification = (key: string, href: string) => {
+    if (!key) return;
+    markNotificationReadMutation.mutate(key);
+    setLocation(href);
+  };
+
   const handleLogout = () => {
     if (confirmBeforeLogout === "always") {
       const ok = window.confirm("Are you sure you want to log out?");
@@ -91,6 +240,77 @@ export default function Welcome() {
                 Profile
               </Button>
             </Link>
+            {isAdmin && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="relative gap-1.5"
+                    data-testid="button-notifications"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    Notifications
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-[11px] leading-5 text-center">
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[360px]">
+                  <DropdownMenuLabel className="flex items-center justify-between">
+                    <span>Admin notifications</span>
+                    <span className="text-xs text-muted-foreground">
+                      {notificationsLoading ? "Loading..." : `${unreadCount} unread`}
+                    </span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={markAllReadMutation.isPending || notificationItems.length === 0}
+                    onClick={() => markAllReadMutation.mutate()}
+                  >
+                    Mark all as read
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={deleteReadMutation.isPending || notificationItems.length === 0}
+                    onClick={() => deleteReadMutation.mutate()}
+                  >
+                    Delete all read
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setEnableToastAlerts((v) => !v)}>
+                    Toast alerts: {enableToastAlerts ? "On" : "Off"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setEnableSoundAlerts((v) => !v)}>
+                    Sound alerts: {enableSoundAlerts ? "On" : "Off"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {notificationItems.length === 0 ? (
+                    <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                      No pending notifications.
+                    </div>
+                  ) : (
+                    notificationItems.slice(0, 12).map((item) => (
+                      <DropdownMenuItem
+                        key={item.key}
+                        className="items-start whitespace-normal py-2 cursor-pointer"
+                        onClick={() => handleOpenNotification(item.key, item.href)}
+                      >
+                        <div className="space-y-0.5">
+                          <p className={`text-sm ${item.isRead ? "font-normal" : "font-semibold"}`}>
+                            {item.title}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{item.message}</p>
+                          <p className="text-[11px] text-muted-foreground/80">
+                            {formatTimeAgo(item.createdAt)}
+                          </p>
+                        </div>
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <Button
               variant="ghost"
               size="sm"
