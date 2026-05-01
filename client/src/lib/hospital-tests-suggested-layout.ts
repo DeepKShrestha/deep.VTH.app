@@ -6,11 +6,11 @@
  * Always use raw customFields keys (e.g. testsSuggested), not display labels — labels can be customized in the form editor.
  */
 
-export type HospitalTestsLayoutRow =
+type HospitalTestsLayoutRow =
   | { kind: "simple-row"; cells: [string, string, string] }
   | { kind: "detail"; label: string; value: string };
 
-export type HospitalTestCustomEntry = [string, string | string[] | number];
+type HospitalTestCustomEntry = [string, string | string[] | number];
 
 function normalizeKey(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]/g, "");

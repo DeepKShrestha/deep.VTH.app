@@ -1,4 +1,4 @@
-export type ModuleScope = "ast" | "hospital";
+type ModuleScope = "ast" | "hospital";
 
 export type AstToggleDefaults = {
   quickRegisterMode: boolean;
