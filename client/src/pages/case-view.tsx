@@ -16,6 +16,7 @@ import {
 import { ArrowLeft, Printer, Trash2, Sparkles } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import { useAuth } from "@/lib/auth";
+import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 
 interface AstRow {
   antibiotic: string;
@@ -24,6 +25,160 @@ interface AstRow {
   sensitivity: "S" | "I" | "R";
   zoneSize?: string;
   manualOverride?: boolean;
+}
+
+type CustomEntry = [string, string | string[] | number];
+type HospitalSectionKey =
+  | "historyMedication"
+  | "clinicalSigns"
+  | "vitalsExam"
+  | "avianDetails"
+  | "testsSuggested"
+  | "other";
+
+function normalizeKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function prettifyCustomFieldLabel(key: string): string {
+  let cleaned = key
+    .replace(/^custom[_\-\s]*/i, "")
+    .replace(/[_\-]?[a-z0-9]{3,6}$/i, (suffix) => {
+      const hasLetter = /[a-z]/i.test(suffix);
+      const hasDigit = /\d/.test(suffix);
+      return hasLetter && hasDigit ? "" : suffix;
+    });
+  cleaned = cleaned
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned
+    ? cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
+    : key.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function resolveHospitalSectionKey(key: string): HospitalSectionKey {
+  const n = normalizeKey(key);
+  if (n.includes("history") || n.includes("previousmedication")) return "historyMedication";
+  if (n.includes("clinical") || n.includes("symptom") || n.includes("chiefcomplaint")) {
+    return "clinicalSigns";
+  }
+  if (
+    n.includes("temperature") ||
+    n.includes("heartrate") ||
+    n.includes("respiration") ||
+    n.includes("resprate") ||
+    n.includes("rumenmotility") ||
+    n.includes("dehydration") ||
+    n.includes("crt") ||
+    n.includes("weight") ||
+    n.includes("chiefcomplaint")
+  ) {
+    return "vitalsExam";
+  }
+  if (
+    n.includes("flock") ||
+    n.includes("hatchery") ||
+    n.includes("feedsupplier") ||
+    n.includes("feedintake") ||
+    n.includes("waterintake") ||
+    n.includes("mortality")
+  ) {
+    return "avianDetails";
+  }
+  if (
+    n.includes("testssuggest") ||
+    n.includes("testsuggest") ||
+    n.includes("enzymepanel") ||
+    n.includes("rapiddiagnostic") ||
+    n.includes("xray") ||
+    n.includes("ultrasound") ||
+    n.includes("biopsy") ||
+    n.includes("cytology") ||
+    n.includes("culturedetails")
+  ) {
+    return "testsSuggested";
+  }
+  return "other";
+}
+
+const HOSPITAL_SECTION_TITLES: Record<HospitalSectionKey, string> = {
+  historyMedication: "History & Previous Medication",
+  clinicalSigns: "Chief Complaint / Clinical Signs",
+  vitalsExam: "Physical Exam / Vitals",
+  avianDetails: "Avian Details",
+  testsSuggested: "Tests Suggested",
+  other: "Other Clinical Details",
+};
+
+function resolveFieldOrderAndLabel(rawLabel: string, rawKey: string) {
+  const source = normalizeKey(`${rawLabel}${rawKey}`);
+  if (source.includes("history")) return { order: 10, label: "History" };
+  if (source.includes("previousmedication")) {
+    return { order: 20, label: "Previous Medication" };
+  }
+  if (source.includes("chiefcomplaint")) return { order: 30, label: "Chief Complaint" };
+  if (source.includes("clinicalsign") || source.includes("symptom")) {
+    return { order: 40, label: "Clinical Signs & Symptoms" };
+  }
+  if (source.includes("temperature")) return { order: 50, label: "Temperature" };
+  if (source.includes("heartrate")) return { order: 60, label: "Heart Rate" };
+  if (
+    source.includes("respiratoryrate") ||
+    source.includes("respirationrate") ||
+    source.includes("resprate")
+  ) {
+    return { order: 70, label: "Respiration" };
+  }
+  if (source.includes("rumenmotility")) return { order: 80, label: "Rumen Motility" };
+  if (source.includes("crt")) return { order: 90, label: "CRT" };
+  if (source.includes("dehydration")) return { order: 100, label: "Dehydration %" };
+  if (source.includes("weight")) return { order: 110, label: "Weight" };
+  if (source.includes("testssuggested")) return { order: 120, label: "Tests Suggested" };
+  if (source.includes("enzymepanel")) return { order: 130, label: "Enzyme Panel Tests" };
+  if (source.includes("rapiddiagnostic")) return { order: 140, label: "Rapid Diagnostic Tests" };
+  if (source.includes("xraydetails")) return { order: 150, label: "X-Ray Details" };
+  if (source.includes("ultrasounddetails")) return { order: 160, label: "Ultrasound Details" };
+  if (source.includes("biopsydetails")) return { order: 170, label: "Biopsy Details" };
+  if (source.includes("cytologydetails")) return { order: 180, label: "Cytology Details" };
+  if (source.includes("culturedetails")) return { order: 190, label: "Culture Details" };
+  return { order: 999, label: rawLabel };
+}
+
+function withClinicalUnit(label: string, rawValue: string): string {
+  const value = String(rawValue || "").trim();
+  const n = normalizeKey(label);
+  if (!value) return value;
+  if (n === "temperature") {
+    if (/°\s*[cf]/i.test(value)) return value;
+    return `${value} °C`;
+  }
+  if (n === "heartrate") {
+    if (/bpm/i.test(value)) return value;
+    return `${value} bpm`;
+  }
+  if (n === "respiration") {
+    if (/breath|\/min|per\s*min|bpm/i.test(value)) return value;
+    return `${value} breaths/min`;
+  }
+  if (n === "rumenmotility") {
+    if (/\/min|per\s*min/i.test(value)) return value;
+    return `${value} /min`;
+  }
+  if (n === "crt") {
+    if (/\bsec|second|s\b/i.test(value)) return value;
+    return `${value} sec`;
+  }
+  if (n === "dehydrationpercentage") {
+    if (/%/.test(value)) return value;
+    return `${value}%`;
+  }
+  if (n === "weight") {
+    if (/\bkg|g\b/i.test(value)) return value;
+    return `${value} kg`;
+  }
+  return value;
 }
 
 function sensitivityBadge(s: string) {
@@ -40,21 +195,36 @@ export default function CaseView() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { isAdmin } = useAuth();
+  const scopeParam = useMemo(() => {
+    const value = new URLSearchParams(window.location.search).get("scope");
+    return value === "hospital" || value === "ast" ? value : null;
+  }, []);
+  const scopeFromPath = useMemo(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes("/new-case/")) return "hospital" as const;
+    if (path.includes("/ast-report/")) return "ast" as const;
+    return null;
+  }, []);
+  const requestedScope = scopeParam ?? scopeFromPath;
 
   const { data: caseData, isLoading } = useQuery<Case>({
-    queryKey: ["/api/cases", params.id],
+    queryKey: ["/api/cases", params.id, requestedScope ?? "all"],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/cases/${params.id}`);
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      const res = await apiRequest("GET", `/api/cases/${params.id}${scopeQuery}`);
       return res.json();
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async () => { await apiRequest("DELETE", `/api/cases/${params.id}`); },
+    mutationFn: async () => {
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      await apiRequest("DELETE", `/api/cases/${params.id}${scopeQuery}`);
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", effectiveScope] });
       toast({ title: "Case deleted" });
-      setLocation("/cases");
+      setLocation(scopedBackHref);
     },
   });
 
@@ -69,24 +239,55 @@ export default function CaseView() {
       .sort((a, b) => parseFloat(b.zoneSize || "0") - parseFloat(a.zoneSize || "0"))
       .slice(0, 3);
   }, [astResults]);
+  const isHospitalCase = (caseData?.caseNumber || "").toUpperCase().startsWith("CASE-");
+  const effectiveScope: "hospital" | "ast" =
+    requestedScope ?? (isHospitalCase ? "hospital" : "ast");
+  const scopedBackHref =
+    effectiveScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
   const customFieldEntries = useMemo(() => {
-    if (!caseData?.customFields) return [] as Array<[string, string | string[]]>;
+    if (!caseData?.customFields) return [] as CustomEntry[];
     try {
-      const parsed = JSON.parse(caseData.customFields) as Record<string, string | string[]>;
+      const parsed = JSON.parse(caseData.customFields) as Record<
+        string,
+        string | string[] | number
+      >;
       return Object.entries(parsed).filter(([, value]) =>
-        Array.isArray(value) ? value.length > 0 : String(value ?? "").trim().length > 0,
+        Array.isArray(value)
+          ? value.length > 0
+          : String(value ?? "").trim().length > 0,
       );
     } catch {
-      return [] as Array<[string, string | string[]]>;
+      return [] as CustomEntry[];
     }
   }, [caseData?.customFields]);
-  const formatCustomFieldLabel = (key: string) =>
-    key
-      .replace(/([a-z])([A-Z])/g, "$1 $2")
-      .replace(/[_-]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+  const groupedHospitalCustomFields = useMemo(() => {
+    const grouped: Record<
+      HospitalSectionKey,
+      Array<{ label: string; value: string | string[] | number; order: number }>
+    > = {
+      historyMedication: [],
+      clinicalSigns: [],
+      vitalsExam: [],
+      avianDetails: [],
+      testsSuggested: [],
+      other: [],
+    };
+    for (const [key, value] of customFieldEntries) {
+      const normalizedLabel = prettifyCustomFieldLabel(key);
+      const normalizedMeta = resolveFieldOrderAndLabel(normalizedLabel, key);
+      grouped[resolveHospitalSectionKey(key)].push({
+        label: normalizedMeta.label,
+        value,
+        order: normalizedMeta.order,
+      });
+    }
+    for (const sectionKey of Object.keys(grouped) as HospitalSectionKey[]) {
+      grouped[sectionKey].sort((a, b) =>
+        a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order,
+      );
+    }
+    return grouped;
+  }, [customFieldEntries]);
 
   if (isLoading) {
     return (
@@ -100,7 +301,7 @@ export default function CaseView() {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
         <p className="text-muted-foreground">Case not found.</p>
-        <Link href="/cases"><Button variant="outline">Back to Cases</Button></Link>
+        <Link href={scopedBackHref}><Button variant="outline">Back to Cases</Button></Link>
       </div>
     );
   }
@@ -110,7 +311,7 @@ export default function CaseView() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href="/cases">
+          <Link href={scopedBackHref}>
             <Button
               variant="ghost"
               size="icon"
@@ -139,6 +340,9 @@ export default function CaseView() {
               {caseData.monthlyNumber && (
                 <span>Month #{caseData.monthlyNumber}</span>
               )}
+              {caseData.yearlyNumber != null && (
+                <span>Year #{caseData.yearlyNumber}</span>
+              )}
             </div>
           </div>
         </div>
@@ -155,7 +359,10 @@ export default function CaseView() {
           )}
 
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-            <Link href={`/print/${caseData.id}`} className="w-full sm:w-auto">
+            <Link
+              href={`${effectiveScope === "hospital" ? "/new-case/print" : "/ast-report/print"}/${caseData.id}?scope=${effectiveScope}`}
+              className="w-full sm:w-auto"
+            >
               <Button
                 variant="outline"
                 size="sm"
@@ -251,7 +458,7 @@ export default function CaseView() {
       </Card>
 
       {/* Sample Information */}
-      {(caseData.sampleType || caseData.sampleDate || caseData.cultureResult) && (
+      {!isHospitalCase && (caseData.sampleType || caseData.sampleDate || caseData.cultureResult) && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Sample Information</CardTitle></CardHeader>
           <CardContent>
@@ -265,7 +472,7 @@ export default function CaseView() {
       )}
 
       {/* AST Results */}
-      {astResults.length > 0 && (
+      {!isHospitalCase && astResults.length > 0 && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">AST Results</CardTitle></CardHeader>
           <CardContent>
@@ -298,7 +505,7 @@ export default function CaseView() {
       )}
 
       {/* Recommendations */}
-      {recommendations.length > 0 && (
+      {!isHospitalCase && recommendations.length > 0 && (
         <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -320,15 +527,196 @@ export default function CaseView() {
         </Card>
       )}
 
-      {/* Remarks */}
-      {caseData.remarks && (
+      {/* Remarks (AST flow) */}
+      {caseData.remarks && !isHospitalCase && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Remarks</CardTitle></CardHeader>
           <CardContent><p className="text-sm whitespace-pre-wrap">{caseData.remarks}</p></CardContent>
         </Card>
       )}
 
-      {customFieldEntries.length > 0 && (
+      {customFieldEntries.length > 0 && isHospitalCase && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Hospital Clinical Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {(Object.keys(HOSPITAL_SECTION_TITLES) as HospitalSectionKey[]).map((sectionKey) => {
+              const items = groupedHospitalCustomFields[sectionKey];
+              if (!items || items.length === 0) return null;
+              if (sectionKey === "other") return null;
+              if (sectionKey === "vitalsExam") {
+                const byLabel = new Map(items.map((item) => [normalizeKey(item.label), item.value]));
+                const vitalsCells = [
+                  ["Temperature", byLabel.get("temperature")],
+                  ["Heart Rate", byLabel.get("heartrate")],
+                  ["Respiration", byLabel.get("respiration")],
+                  ["Rumen Motility", byLabel.get("rumenmotility")],
+                  ["CRT", byLabel.get("crt")],
+                  ["Dehydration %", byLabel.get("dehydrationpercentage")],
+                  ["Weight", byLabel.get("weight")],
+                ]
+                  .filter(([, v]) => v !== undefined && String(v).trim().length > 0)
+                  .map(([k, v]) => ({
+                    label: String(k),
+                    value: withClinicalUnit(String(k), String(v ?? "")),
+                  }));
+                const fallback = items
+                  .map((item) => `${item.label}: ${withClinicalUnit(item.label, String(item.value))}`)
+                  .join(" | ");
+                return (
+                  <div key={sectionKey} className="space-y-2 border-t border-slate-300 pt-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                      {HOSPITAL_SECTION_TITLES[sectionKey]}
+                    </h3>
+                    {vitalsCells.length > 0 ? (
+                      <div className="rounded-md border overflow-hidden">
+                        <table className="w-full text-xs">
+                          <tbody>
+                            <tr className="border-b">
+                              {vitalsCells.slice(0, 4).map((cell) => (
+                                <td key={cell.label} className="p-2 align-top border-r last:border-r-0">
+                                  <p className="font-medium leading-4">
+                                    <span className="text-slate-600">{cell.label}:</span>{" "}
+                                    <span>{cell.value}</span>
+                                  </p>
+                                </td>
+                              ))}
+                            </tr>
+                            <tr>
+                              {[...vitalsCells.slice(4, 8), ...Array(Math.max(0, 4 - vitalsCells.slice(4, 8).length)).fill(null)].map((cell, idx) => (
+                                <td key={cell ? cell.label : `empty-${idx}`} className="p-2 align-top border-r last:border-r-0">
+                                  {cell ? (
+                                    <p className="font-medium leading-4">
+                                      <span className="text-slate-600">{cell.label}:</span>{" "}
+                                      <span>{cell.value}</span>
+                                    </p>
+                                  ) : (
+                                    <span>&nbsp;</span>
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="rounded-md border p-2.5 text-sm leading-5">
+                        <p>{fallback}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div key={sectionKey} className="space-y-2 border-t border-slate-300 pt-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                    {HOSPITAL_SECTION_TITLES[sectionKey]}
+                  </h3>
+                  {sectionKey === "testsSuggested" ? (
+                    <div className="rounded-md border overflow-hidden text-xs">
+                      {(() => {
+                        let mainTestSerial = 0;
+                        return (
+                      <table className="w-full table-fixed">
+                        <thead>
+                          <tr className="bg-muted/50 border-b">
+                            <th className="text-left px-2 py-1 font-semibold text-slate-800" colSpan={3}>
+                              {HOSPITAL_SECTION_TITLES[sectionKey]}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {buildHospitalTestsSuggestedLayout(
+                            customFieldEntries.filter(
+                              ([key]) => resolveHospitalSectionKey(key) === "testsSuggested",
+                            ),
+                          ).map((row, idx) =>
+                            row.kind === "simple-row" ? (
+                              <tr key={`ts-s-${idx}`} className="border-b last:border-b-0">
+                                {row.cells.map((cell, j) => (
+                                  <td
+                                    key={`ts-s-${idx}-${j}`}
+                                    className="px-2 py-1 align-top w-1/3 bg-slate-50 text-slate-800 font-semibold"
+                                  >
+                                    {cell ? `${++mainTestSerial}. ${cell}` : "\u00a0"}
+                                  </td>
+                                ))}
+                              </tr>
+                            ) : (
+                              <tr key={`ts-d-${idx}`} className="border-b last:border-b-0">
+                                <td className="px-2 py-1 font-medium bg-slate-50 text-slate-800 align-top w-[22%] whitespace-nowrap">
+                                  {`${++mainTestSerial}. ${row.label}`}
+                                </td>
+                                <td
+                                  colSpan={2}
+                                  className="px-2 py-1 font-normal text-slate-700 align-top whitespace-pre-wrap break-words leading-4"
+                                >
+                                  {row.value}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                        );
+                      })()}
+                    </div>
+                  ) : (sectionKey === "historyMedication" || sectionKey === "clinicalSigns") ? (
+                    <div className="space-y-2">
+                      {items.map((entry) => (
+                        <div key={`${sectionKey}-${entry.label}`} className="text-xs">
+                          <p className="text-[11px] font-medium text-slate-700 mb-0.5">
+                            {entry.label}
+                          </p>
+                          {Array.isArray(entry.value) ? (
+                            <p className="whitespace-pre-wrap break-words leading-4">
+                              {entry.value.join(", ")}
+                            </p>
+                          ) : (
+                            <p className="whitespace-pre-wrap break-words leading-4">
+                              {withClinicalUnit(entry.label, String(entry.value))}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2">
+                      {items.map((entry) => (
+                        <div key={`${sectionKey}-${entry.label}`} className="text-xs">
+                          <p className="text-[11px] font-medium text-slate-700 mb-0.5">
+                            {entry.label}
+                          </p>
+                          {Array.isArray(entry.value) ? (
+                            <p className="whitespace-pre-wrap break-words leading-4">
+                              {entry.value.join(", ")}
+                            </p>
+                          ) : (
+                            <p className="whitespace-pre-wrap break-words leading-4">
+                              {withClinicalUnit(entry.label, String(entry.value))}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Remarks (Hospital flow follows register order) */}
+      {caseData.remarks && isHospitalCase && (
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Remarks</CardTitle></CardHeader>
+          <CardContent><p className="text-xs whitespace-pre-wrap break-words leading-5">{caseData.remarks}</p></CardContent>
+        </Card>
+      )}
+
+      {customFieldEntries.length > 0 && !isHospitalCase && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Additional Details</CardTitle>
@@ -337,7 +725,7 @@ export default function CaseView() {
             {customFieldEntries.map(([key, value]) => (
               <div key={key}>
                 <p className="text-xs font-medium text-muted-foreground mb-1">
-                  {formatCustomFieldLabel(key)}
+                  {prettifyCustomFieldLabel(key)}
                 </p>
                 {Array.isArray(value) ? (
                   <ul className="list-disc pl-5 text-sm space-y-1">
@@ -346,7 +734,7 @@ export default function CaseView() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-sm whitespace-pre-wrap">{value}</p>
+                  <p className="text-sm whitespace-pre-wrap">{String(value)}</p>
                 )}
               </div>
             ))}

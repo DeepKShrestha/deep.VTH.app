@@ -6,12 +6,15 @@ import { caseRepo } from "../case-repo";
 import { authSessionRepo } from "../auth-session-repo";
 import {
   canDownload,
+  canDownloadHospital,
   canRegister,
   canRegisterHospital,
   getIdParam,
   getPaginationParams,
   getTodayBs,
+  hasCapability,
   isDashboardVisibleForRole,
+  isVthDashboardVisibleForRole,
   requireAnyCapability,
   requireAuth,
   requireRole,
@@ -22,7 +25,7 @@ import { MESSAGES } from "./messages";
 function resolveFormScope(raw: unknown): "ast" | "hospital" {
   return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
 }
-import { rowsToCsv, toExportRows } from "./cases-export";
+import { rowsToCsv, toExportRows, toHospitalExportRows } from "./cases-export";
 
 type DownloadRequestRow = {
   id: number;
@@ -36,6 +39,19 @@ type DownloadRequestRow = {
   resolved_by: number | null;
   created_at: string;
   resolved_at: string | null;
+};
+
+type CaseChangeLogRow = {
+  id: number;
+  case_id: number | null;
+  case_number: string;
+  case_scope: string;
+  action: string;
+  actor_user_id: number;
+  actor_role: string;
+  actor_name: string;
+  actor_username: string;
+  created_at: string;
 };
 
 function toDownloadRequest(row: DownloadRequestRow) {
@@ -54,10 +70,44 @@ function toDownloadRequest(row: DownloadRequestRow) {
   };
 }
 
+function resolveCaseScopeFromCaseNumber(caseNumber: string): "ast" | "hospital" {
+  return String(caseNumber || "")
+    .toUpperCase()
+    .startsWith("CASE-")
+    ? "hospital"
+    : "ast";
+}
+
+function resolveCaseScopeQuery(raw: unknown): "ast" | "hospital" | undefined {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (value === "ast" || value === "hospital") return value;
+  return undefined;
+}
+
+function userCanViewScope(role: string, scope: "ast" | "hospital"): boolean {
+  return scope === "hospital"
+    ? hasCapability(role, "hospital.case.view")
+    : hasCapability(role, "ast.case.view");
+}
+
+function userCanEditScope(role: string, scope: "ast" | "hospital"): boolean {
+  return scope === "hospital"
+    ? hasCapability(role, "hospital.case.create")
+    : hasCapability(role, "ast.case.create");
+}
+
 export function registerCaseAndDownloadRoutes(app: Express) {
   app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    if (!(await isDashboardVisibleForRole(currentUser.role))) {
+    const dashboardScope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, dashboardScope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const hasDashboardAccess =
+      dashboardScope === "hospital"
+        ? await isVthDashboardVisibleForRole(currentUser.role)
+        : await isDashboardVisibleForRole(currentUser.role);
+    if (!hasDashboardAccess) {
       return res.status(403).json({ message: "Dashboard is disabled for your role" });
     }
     const preset = String(req.query.preset ?? "all");
@@ -154,7 +204,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return y;
     };
 
-    const allCases = await caseRepo.getCases();
+    const allCases = await caseRepo.getCases(dashboardScope);
     const speciesSet = new Set<string>();
     const breedSet = new Set<string>();
     const sexSet = new Set<string>();
@@ -733,12 +783,70 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     },
   );
 
+  app.get(
+    "/api/case-change-logs",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const scopeRaw = String(req.query.scope ?? "all")
+        .trim()
+        .toLowerCase();
+      const scopeFilter = scopeRaw === "ast" || scopeRaw === "hospital" ? scopeRaw : "all";
+      const rows = await dbAll<CaseChangeLogRow>(
+        scopeFilter === "all"
+          ? sql`SELECT id, case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at
+                FROM case_change_logs
+                ORDER BY created_at DESC
+                LIMIT 300`
+          : sql`SELECT id, case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at
+                FROM case_change_logs
+                WHERE (
+                  ${scopeFilter} = 'hospital'
+                  AND (
+                    LOWER(TRIM(COALESCE(case_scope, ''))) IN ('hospital', 'hospital_case')
+                    OR UPPER(TRIM(COALESCE(case_number, ''))) LIKE 'CASE-%'
+                  )
+                ) OR (
+                  ${scopeFilter} = 'ast'
+                  AND (
+                    LOWER(TRIM(COALESCE(case_scope, ''))) = 'ast'
+                    OR (
+                      TRIM(COALESCE(case_scope, '')) = ''
+                      AND UPPER(TRIM(COALESCE(case_number, ''))) NOT LIKE 'CASE-%'
+                    )
+                  )
+                )
+                ORDER BY created_at DESC
+                LIMIT 300`,
+      );
+      return res.json(
+        rows.map((row) => ({
+          id: row.id,
+          caseId: row.case_id,
+          caseNumber: row.case_number,
+          caseScope: row.case_scope,
+          action: row.action,
+          actorUserId: row.actor_user_id,
+          actorRole: row.actor_role,
+          actorName: row.actor_name,
+          actorUsername: row.actor_username,
+          createdAt: row.created_at,
+        })),
+      );
+    },
+  );
+
   app.get("/api/cases", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
     const pagination = getPaginationParams(req);
     if (!pagination.shouldPaginate) {
-      return res.json(await caseRepo.getCases());
+      return res.json(await caseRepo.getCases(scope));
     }
-    const pageData = await caseRepo.getCasesPage(pagination.pageSize, pagination.offset);
+    const pageData = await caseRepo.getCasesPage(pagination.pageSize, pagination.offset, scope);
     return res.json({
       items: pageData.items,
       page: pagination.page,
@@ -749,7 +857,12 @@ export function registerCaseAndDownloadRoutes(app: Express) {
   });
 
   app.get("/api/cases/:id", requireAuth, async (req, res) => {
-    const caseData = await caseRepo.getCase(getIdParam(req));
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseData = await caseRepo.getCase(getIdParam(req), scope);
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
     res.json(caseData);
   });
@@ -761,12 +874,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     async (req, res) => {
     const todayBs = getTodayBs();
     const bsYearMonth = todayBs.substring(0, 7);
+    const bsYear = todayBs.substring(0, 4);
     const scopeRaw = String(req.query.scope ?? "ast").toLowerCase();
     const scope: "ast" | "hospital" = scopeRaw === "hospital" ? "hospital" : "ast";
     res.json({
       caseNumber: await caseRepo.getNextCaseNumber(scope),
       dailyNumber: await caseRepo.getDailyNumber(todayBs, scope),
       monthlyNumber: await caseRepo.getMonthlyNumber(bsYearMonth, scope),
+      yearlyNumber: await caseRepo.getYearlyNumber(bsYear, scope),
       todayBs,
       todayAd: new Date().toISOString().split("T")[0],
     });
@@ -787,14 +902,43 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         .status(400)
         .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
     }
+    if (resolveCaseScopeFromCaseNumber(parsed.data.caseNumber) !== "hospital") {
+      return res.status(400).json({ message: "Hospital route requires CASE- prefixed case number" });
+    }
+
+    const dateValue = parsed.data.date;
+    const scope: "hospital" = "hospital";
+    const canonicalCaseNumber = await caseRepo.getNextCaseNumber(scope);
+    const canonicalDailyNumber = await caseRepo.getDailyNumber(dateValue, scope);
+    const canonicalMonthlyNumber = await caseRepo.getMonthlyNumber(dateValue.substring(0, 7), scope);
+    const canonicalYearlyNumber = await caseRepo.getYearlyNumber(dateValue.substring(0, 4), scope);
 
     const newCase = await caseRepo.createCase({
       ...parsed.data,
+      caseNumber: canonicalCaseNumber,
+      dailyNumber: canonicalDailyNumber,
+      monthlyNumber: canonicalMonthlyNumber,
+      yearlyNumber: canonicalYearlyNumber,
       astResults: "[]",
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
     });
+    await dbRun(
+      sql`INSERT INTO case_change_logs
+          (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
+          VALUES (
+            ${newCase.id},
+            ${newCase.caseNumber},
+            ${"hospital"},
+            ${"created"},
+            ${user.id},
+            ${user.role},
+            ${fullUser?.fullName || `User ${user.id}`},
+            ${fullUser?.username || ""},
+            ${new Date().toISOString()}
+          )`,
+    );
 
     res.status(201).json(newCase);
   });
@@ -814,28 +958,74 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         .status(400)
         .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
     }
+    if (resolveCaseScopeFromCaseNumber(parsed.data.caseNumber) !== "ast") {
+      return res.status(400).json({ message: "AST route requires AST- prefixed case number" });
+    }
+
+    const dateValue = parsed.data.date;
+    const scope: "ast" = "ast";
+    const canonicalCaseNumber = await caseRepo.getNextCaseNumber(scope);
+    const canonicalDailyNumber = await caseRepo.getDailyNumber(dateValue, scope);
+    const canonicalMonthlyNumber = await caseRepo.getMonthlyNumber(dateValue.substring(0, 7), scope);
+    const canonicalYearlyNumber = await caseRepo.getYearlyNumber(dateValue.substring(0, 4), scope);
 
     const newCase = await caseRepo.createCase({
       ...parsed.data,
+      caseNumber: canonicalCaseNumber,
+      dailyNumber: canonicalDailyNumber,
+      monthlyNumber: canonicalMonthlyNumber,
+      yearlyNumber: canonicalYearlyNumber,
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
     });
+    await dbRun(
+      sql`INSERT INTO case_change_logs
+          (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
+          VALUES (
+            ${newCase.id},
+            ${newCase.caseNumber},
+            ${"ast"},
+            ${"created"},
+            ${user.id},
+            ${user.role},
+            ${fullUser?.fullName || `User ${user.id}`},
+            ${fullUser?.username || ""},
+            ${new Date().toISOString()}
+          )`,
+    );
 
     res.status(201).json(newCase);
   });
 
-  app.patch("/api/cases/:id", requireAuth, canRegister, async (req, res) => {
+  app.patch("/api/cases/:id", requireAuth, async (req, res) => {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
     const fullUser = await authSessionRepo.getUserById(user.id);
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanEditScope(user.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseId = getIdParam(req);
+    const existing = await caseRepo.getCase(caseId, scope);
+    if (!existing) {
+      return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+    }
+    if (typeof req.body?.caseNumber === "string") {
+      const nextScope = resolveCaseScopeFromCaseNumber(req.body.caseNumber);
+      if (nextScope !== scope) {
+        return res.status(400).json({
+          message: "caseNumber cannot move a case across AST/Hospital scopes",
+        });
+      }
+    }
 
-    const updated = await caseRepo.updateCase(getIdParam(req), {
+    const updated = await caseRepo.updateCase(caseId, {
       ...req.body,
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
-    });
+    }, scope);
 
     if (!updated) {
       return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
@@ -849,11 +1039,29 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (req, res) => {
-      const existing = await caseRepo.getCase(getIdParam(req));
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+      const existing = await caseRepo.getCase(getIdParam(req), scope);
       if (!existing) {
         return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
       }
-      await caseRepo.deleteCase(getIdParam(req));
+      await caseRepo.deleteCase(getIdParam(req), scope);
+      const actor = await authSessionRepo.getUserById(currentUser.id);
+      await dbRun(
+        sql`INSERT INTO case_change_logs
+            (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
+            VALUES (
+              ${existing.id},
+              ${existing.caseNumber},
+              ${scope ?? resolveCaseScopeFromCaseNumber(existing.caseNumber)},
+              ${"deleted"},
+              ${currentUser.id},
+              ${currentUser.role},
+              ${actor?.fullName || `User ${currentUser.id}`},
+              ${actor?.username || ""},
+              ${new Date().toISOString()}
+            )`,
+      );
       res.json({ message: "Case deleted" });
     },
   );
@@ -865,7 +1073,7 @@ export function registerExportRoutes(app: Express) {
       dateFrom?: string;
       dateTo?: string;
     };
-    const casesData = await caseRepo.getCasesByDateRange(dateFrom, dateTo);
+    const casesData = await caseRepo.getCasesByDateRangeAndScope("ast", dateFrom, dateTo);
     const rows = toExportRows(casesData);
 
     res.setHeader("Content-Type", "text/csv");
@@ -887,4 +1095,40 @@ export function registerExportRoutes(app: Express) {
 
     return res.send(csvContent);
   });
+
+  app.get(
+    "/api/export/hospital-cases",
+    requireAuth,
+    canDownloadHospital,
+    async (req: Request, res: Response) => {
+      const { dateFrom, dateTo } = req.query as {
+        dateFrom?: string;
+        dateTo?: string;
+      };
+      const casesData = await caseRepo.getCasesByDateRangeAndScope(
+        "hospital",
+        dateFrom,
+        dateTo,
+      );
+      const rows = toHospitalExportRows(casesData);
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=hospital-cases.csv");
+
+      const csvContent = rowsToCsv(rows);
+      const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
+
+      if (approvedReq) {
+        await dbRun(
+          sql`UPDATE download_requests
+              SET status = ${"downloaded"},
+                  admin_note = ${"Download used"},
+                  resolved_at = ${new Date().toISOString()}
+              WHERE id = ${approvedReq.id}`,
+        );
+      }
+
+      return res.send(csvContent);
+    },
+  );
 }

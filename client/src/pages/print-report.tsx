@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -8,6 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ArrowLeft, Printer } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
+import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
+import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
 
 interface AstRow {
   antibiotic: string;
@@ -17,14 +19,184 @@ interface AstRow {
   zoneSize?: string;
 }
 
+type CustomEntry = [string, string | string[] | number];
+type HospitalSectionKey =
+  | "historyMedication"
+  | "clinicalSigns"
+  | "vitalsExam"
+  | "avianDetails"
+  | "testsSuggested"
+  | "other";
+
+function normalizeKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function prettifyCustomFieldLabel(key: string): string {
+  let cleaned = key
+    .replace(/^custom[_\-\s]*/i, "")
+    .replace(/[_\-]?[a-z0-9]{3,6}$/i, (suffix) => {
+      const hasLetter = /[a-z]/i.test(suffix);
+      const hasDigit = /\d/.test(suffix);
+      return hasLetter && hasDigit ? "" : suffix;
+    });
+  cleaned = cleaned
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned
+    ? cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
+    : key.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function resolveHospitalSectionKey(key: string): HospitalSectionKey {
+  const n = normalizeKey(key);
+  if (n.includes("history") || n.includes("previousmedication")) return "historyMedication";
+  if (n.includes("clinical") || n.includes("symptom") || n.includes("chiefcomplaint")) {
+    return "clinicalSigns";
+  }
+  if (
+    n.includes("temperature") ||
+    n.includes("heartrate") ||
+    n.includes("respiration") ||
+    n.includes("resprate") ||
+    n.includes("rumenmotility") ||
+    n.includes("dehydration") ||
+    n.includes("crt") ||
+    n.includes("weight") ||
+    n.includes("chiefcomplaint")
+  ) {
+    return "vitalsExam";
+  }
+  if (
+    n.includes("flock") ||
+    n.includes("hatchery") ||
+    n.includes("feedsupplier") ||
+    n.includes("feedintake") ||
+    n.includes("waterintake") ||
+    n.includes("mortality")
+  ) {
+    return "avianDetails";
+  }
+  if (
+    n.includes("testssuggest") ||
+    n.includes("testsuggest") ||
+    n.includes("enzymepanel") ||
+    n.includes("rapiddiagnostic") ||
+    n.includes("xray") ||
+    n.includes("ultrasound") ||
+    n.includes("biopsy") ||
+    n.includes("cytology") ||
+    n.includes("culturedetails")
+  ) {
+    return "testsSuggested";
+  }
+  return "other";
+}
+
+const HOSPITAL_SECTION_TITLES: Record<HospitalSectionKey, string> = {
+  historyMedication: "History & Previous Medication",
+  clinicalSigns: "Chief Complaint / Clinical Signs",
+  vitalsExam: "Physical Exam / Vitals",
+  avianDetails: "Avian Details",
+  testsSuggested: "Tests Suggested",
+  other: "Other Clinical Details",
+};
+
+function resolveFieldOrderAndLabel(rawLabel: string, rawKey: string) {
+  const source = normalizeKey(`${rawLabel}${rawKey}`);
+  if (source.includes("history")) return { order: 10, label: "History" };
+  if (source.includes("previousmedication")) return { order: 20, label: "Previous Medication" };
+  if (source.includes("chiefcomplaint")) return { order: 30, label: "Chief Complaint" };
+  if (source.includes("clinicalsign") || source.includes("symptom")) {
+    return { order: 40, label: "Clinical Signs & Symptoms" };
+  }
+  if (source.includes("temperature")) return { order: 50, label: "Temperature" };
+  if (source.includes("heartrate")) return { order: 60, label: "Heart Rate" };
+  if (
+    source.includes("respiratoryrate") ||
+    source.includes("respirationrate") ||
+    source.includes("resprate")
+  ) {
+    return { order: 70, label: "Respiration" };
+  }
+  if (source.includes("rumenmotility")) return { order: 80, label: "Rumen Motility" };
+  if (source.includes("crt")) return { order: 90, label: "CRT" };
+  if (source.includes("dehydration")) return { order: 100, label: "Dehydration %" };
+  if (source.includes("weight")) return { order: 110, label: "Weight" };
+  if (source.includes("testssuggested")) return { order: 120, label: "Tests Suggested" };
+  if (source.includes("enzymepanel")) return { order: 130, label: "Enzyme Panel Tests" };
+  if (source.includes("rapiddiagnostic")) return { order: 140, label: "Rapid Diagnostic Tests" };
+  if (source.includes("xraydetails")) return { order: 150, label: "X-Ray Details" };
+  if (source.includes("ultrasounddetails")) return { order: 160, label: "Ultrasound Details" };
+  if (source.includes("biopsydetails")) return { order: 170, label: "Biopsy Details" };
+  if (source.includes("cytologydetails")) return { order: 180, label: "Cytology Details" };
+  if (source.includes("culturedetails")) return { order: 190, label: "Culture Details" };
+  return { order: 999, label: rawLabel };
+}
+
+function withClinicalUnit(label: string, rawValue: string): string {
+  const value = String(rawValue || "").trim();
+  const n = normalizeKey(label);
+  if (!value) return value;
+  if (n === "temperature") {
+    if (/°\s*[cf]/i.test(value)) return value;
+    return `${value} °C`;
+  }
+  if (n === "heartrate") {
+    if (/bpm/i.test(value)) return value;
+    return `${value} bpm`;
+  }
+  if (n === "respiration") {
+    if (/breath|\/min|per\s*min|bpm/i.test(value)) return value;
+    return `${value} breaths/min`;
+  }
+  if (n === "rumenmotility") {
+    if (/\/min|per\s*min/i.test(value)) return value;
+    return `${value} /min`;
+  }
+  if (n === "crt") {
+    if (/\bsec|second|s\b/i.test(value)) return value;
+    return `${value} sec`;
+  }
+  if (n === "dehydrationpercentage") {
+    if (/%/.test(value)) return value;
+    return `${value}%`;
+  }
+  if (n === "weight") {
+    if (/\bkg|g\b/i.test(value)) return value;
+    return `${value} kg`;
+  }
+  return value;
+}
+
 export default function PrintReport() {
   const params = useParams<{ id: string }>();
-  const [compactMode, setCompactMode] = useState(false);
+  const scopeParam = useMemo(() => {
+    const value = new URLSearchParams(window.location.search).get("scope");
+    return value === "hospital" || value === "ast" ? value : null;
+  }, []);
+  const scopeFromPath = useMemo(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes("/new-case/")) return "hospital" as const;
+    if (path.includes("/ast-report/")) return "ast" as const;
+    return null;
+  }, []);
+  const requestedScope = scopeParam ?? scopeFromPath;
+  const scopedBackHref = requestedScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
+  const [compactMode, setCompactMode] = useState(() => {
+    if (requestedScope === "hospital") return getHospitalToggleDefaults().compactPrintMode;
+    if (requestedScope === "ast") return getAstToggleDefaults().compactPrintMode;
+    return false;
+  });
+  const lastCompactDefaultAppliedForCase = useRef<string | null>(null);
 
   const { data: caseData, isLoading } = useQuery<Case>({
-    queryKey: ["/api/cases", params.id],
+    queryKey: ["/api/cases", params.id, requestedScope ?? "all"],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/cases/${params.id}`);
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      const res = await apiRequest("GET", `/api/cases/${params.id}${scopeQuery}`);
       return res.json();
     },
   });
@@ -55,6 +227,80 @@ export default function PrintReport() {
       )
       .slice(0, 3);
   }, [astResults]);
+  const isHospitalCase = (caseData?.caseNumber || "").toUpperCase().startsWith("CASE-");
+  useEffect(() => {
+    const caseId = params.id || "";
+    if (!caseId) return;
+    if (lastCompactDefaultAppliedForCase.current === caseId) return;
+    if (requestedScope === "hospital" || requestedScope === "ast") {
+      setCompactMode(
+        requestedScope === "hospital"
+          ? getHospitalToggleDefaults().compactPrintMode
+          : getAstToggleDefaults().compactPrintMode,
+      );
+      lastCompactDefaultAppliedForCase.current = caseId;
+      return;
+    }
+    if (!caseData) return;
+    setCompactMode(
+      isHospitalCase
+        ? getHospitalToggleDefaults().compactPrintMode
+        : getAstToggleDefaults().compactPrintMode,
+    );
+    lastCompactDefaultAppliedForCase.current = caseId;
+  }, [params.id, requestedScope, caseData, isHospitalCase]);
+  const backHref =
+    requestedScope === "hospital"
+      ? "/new-case/cases"
+      : requestedScope === "ast"
+        ? "/ast-report/cases"
+        : isHospitalCase
+          ? "/new-case/cases"
+          : "/ast-report/cases";
+  const customFieldEntries = useMemo(() => {
+    if (!caseData?.customFields) return [] as CustomEntry[];
+    try {
+      const parsed = JSON.parse(caseData.customFields) as Record<
+        string,
+        string | string[] | number
+      >;
+      return Object.entries(parsed).filter(([, value]) =>
+        Array.isArray(value)
+          ? value.length > 0
+          : String(value ?? "").trim().length > 0,
+      );
+    } catch {
+      return [] as CustomEntry[];
+    }
+  }, [caseData?.customFields]);
+  const groupedHospitalCustomFields = useMemo(() => {
+    const grouped: Record<
+      HospitalSectionKey,
+      Array<{ label: string; value: string | string[] | number; order: number }>
+    > = {
+      historyMedication: [],
+      clinicalSigns: [],
+      vitalsExam: [],
+      avianDetails: [],
+      testsSuggested: [],
+      other: [],
+    };
+    for (const [key, value] of customFieldEntries) {
+      const pretty = prettifyCustomFieldLabel(key);
+      const meta = resolveFieldOrderAndLabel(pretty, key);
+      grouped[resolveHospitalSectionKey(key)].push({
+        label: meta.label,
+        value,
+        order: meta.order,
+      });
+    }
+    for (const sectionKey of Object.keys(grouped) as HospitalSectionKey[]) {
+      grouped[sectionKey].sort((a, b) =>
+        a.order === b.order ? a.label.localeCompare(b.label) : a.order - b.order,
+      );
+    }
+    return grouped;
+  }, [customFieldEntries]);
 
   if (isLoading) {
     return (
@@ -69,7 +315,7 @@ export default function PrintReport() {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
         <p className="text-muted-foreground">Case not found.</p>
-        <Link href="/cases">
+        <Link href={scopedBackHref}>
           <Button variant="outline">Back to Cases</Button>
         </Link>
       </div>
@@ -81,7 +327,7 @@ export default function PrintReport() {
       {/* Toolbar */}
       <div className="no-print sticky top-0 z-10 bg-background border-b border-border px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href={`/cases/${caseData.id}`}>
+          <Link href={backHref}>
             <Button
               variant="ghost"
               size="icon"
@@ -116,15 +362,17 @@ export default function PrintReport() {
             {/* Printable Report */}
       <div
         id="print-root"
-        className={`print-a4 ${compactMode ? "compact-mode" : ""} max-w-[210mm] mx-auto bg-white text-black p-6 sm:p-10 my-4 sm:my-8 print:m-0 print:p-0 print:max-w-none`}
+        className={`print-a4 ${compactMode ? "compact-mode" : ""} max-w-[210mm] mx-auto bg-white text-black ${isHospitalCase ? "p-1 sm:p-1.5" : "p-6 sm:p-10"} my-4 sm:my-8 print:m-0 print:p-0 print:max-w-none`}
       >
         {/* Header */}
-        <div className="print-section text-center border-b-2 border-black pb-3 mb-3">
+        <div className="print-section text-center border-b-2 border-black pb-2 mb-2">
           <h1 className="text-xl font-bold uppercase tracking-wide text-black">
             Veterinary Teaching Hospital
           </h1>
           <p className="text-sm text-gray-700 mt-1">
-            Antibiotic Sensitivity Test (AST) Report
+            {isHospitalCase
+              ? "Hospital Case Registration Report"
+              : "Antibiotic Sensitivity Test (AST) Report"}
           </p>
         </div>
 
@@ -134,15 +382,15 @@ export default function PrintReport() {
             <span className="font-semibold text-black">Case No: </span>
             <span className="text-black">{caseData.caseNumber}</span>
           </div>
-          <div className="text-right">
-            <div>
-              <span className="font-semibold text-black">Date (BS): </span>
-              <span className="text-black">{formatBsDate(caseData.date)}</span>
-            </div>
+          <div className="text-right text-black">
+            <span className="font-semibold">Date (BS): </span>
+            <span>{formatBsDate(caseData.date)}</span>
             {caseData.dateAd && (
-              <div className="text-xs text-gray-500">
-                AD: {formatAdDate(caseData.dateAd)}
-              </div>
+              <>
+                <span className="mx-2">|</span>
+                <span className="font-semibold">AD: </span>
+                <span>{formatAdDate(caseData.dateAd)}</span>
+              </>
             )}
           </div>
         </div>
@@ -166,79 +414,85 @@ export default function PrintReport() {
                 {caseData.monthlyNumber}
               </span>
             )}
+            {caseData.yearlyNumber != null && (
+              <span className="text-black">
+                <span className="font-semibold">Yearly #: </span>
+                {caseData.yearlyNumber}
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="mb-4" />
+        <div className={isHospitalCase ? "mb-2" : "mb-4"} />
 
        {/* Details Table */}
-<div className="print-section border border-gray-400 mb-4">
-  <table className="w-full text-sm print-table">
+<div className={`print-section border border-gray-400 ${isHospitalCase ? "mb-2" : "mb-4"}`}>
+  <table className={`w-full table-fixed ${isHospitalCase ? "text-[11px]" : "text-sm"} print-table`}>
     <tbody>
       <tr className="border-b border-gray-400">
-  <td className="py-2 px-3 font-semibold bg-gray-50 w-32 text-black">
+  <td className="py-1 px-2 font-semibold bg-gray-50 w-24 text-black whitespace-nowrap">
     Owner Name
   </td>
-  <td className="py-2 px-3 text-black w-56">{caseData.ownerName}</td>
-  <td className="py-2 px-3 font-semibold bg-gray-50 w-24 text-black">
+  <td className="py-1 px-2 text-black whitespace-nowrap overflow-hidden text-ellipsis" colSpan={2}>{caseData.ownerName}</td>
+  <td className="py-1 px-2 font-semibold bg-gray-50 w-20 text-black whitespace-nowrap">
     Address
   </td>
-  <td className="py-2 px-3 text-black">{caseData.ownerAddress}</td>
+  <td className="py-1 px-2 text-black whitespace-nowrap overflow-hidden text-ellipsis" colSpan={2}>{caseData.ownerAddress}</td>
 </tr>
       <tr className="border-b border-gray-400">
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Phone No.
         </td>
-        <td className="py-2 px-3 text-black" colSpan={3}>
+        <td className="py-1 px-2 text-black whitespace-nowrap" colSpan={3}>
           {caseData.ownerPhone}
         </td>
       </tr>
       <tr className="border-b border-gray-400">
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Species
         </td>
-        <td className="py-2 px-3 text-black">{caseData.species}</td>
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 text-black whitespace-nowrap overflow-hidden text-ellipsis">{caseData.species}</td>
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Breed
         </td>
-        <td className="py-2 px-3 text-black">{caseData.breed}</td>
+        <td className="py-1 px-2 text-black whitespace-nowrap overflow-hidden text-ellipsis" colSpan={3}>{caseData.breed}</td>
       </tr>
       <tr className="border-b border-gray-400">
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Animal Name
         </td>
-        <td className="py-2 px-3 text-black">
+        <td className="py-1 px-2 text-black whitespace-nowrap overflow-hidden text-ellipsis" colSpan={2}>
           {caseData.animalName || "—"}
         </td>
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Age
         </td>
-        <td className="py-2 px-3 text-black">
+        <td className="py-1 px-2 text-black whitespace-nowrap" colSpan={1}>
           {caseData.age || "—"}
         </td>
-        <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+        <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
           Sex
         </td>
-        <td className="py-2 px-3 text-black">
+        <td className="py-1 px-2 text-black whitespace-nowrap" colSpan={1}>
           {caseData.sex || "—"}
         </td>
       </tr>
-      {caseData.sampleType && (
+      {!isHospitalCase && caseData.sampleType && (
         <tr className="border-b border-gray-400">
-          <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+          <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
             Sample Type
           </td>
-          <td className="py-2 px-3 text-black" colSpan={5}>
+          <td className="py-1 px-2 text-black" colSpan={5}>
             {caseData.sampleType}
           </td>
         </tr>
       )}
-      {caseData.sampleDate && (
+      {!isHospitalCase && caseData.sampleDate && (
         <tr className="border-b border-gray-400">
-          <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+          <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
             Collection Date
           </td>
-          <td className="py-2 px-3 text-black" colSpan={5}>
+          <td className="py-1 px-2 text-black" colSpan={5}>
             {formatBsDate(caseData.sampleDate)}
             {caseData.sampleDateAd && (
               <span className="text-xs text-gray-500 ml-2">
@@ -248,12 +502,12 @@ export default function PrintReport() {
           </td>
         </tr>
       )}
-      {caseData.cultureResult && (
+      {!isHospitalCase && caseData.cultureResult && (
         <tr>
-          <td className="py-2 px-3 font-semibold bg-gray-50 text-black">
+          <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">
             Organism Isolated
           </td>
-          <td className="py-2 px-3 font-semibold text-black" colSpan={5}>
+          <td className="py-1 px-2 font-semibold text-black" colSpan={5}>
             {caseData.cultureResult}
           </td>
         </tr>
@@ -263,8 +517,8 @@ export default function PrintReport() {
 </div>
 
         {/* AST Results */}
-        {astResults.length > 0 && (
-          <div className="print-section mb-4">
+        {!isHospitalCase && astResults.length > 0 && (
+          <div className="print-section mb-2">
             <h2 className="text-sm font-bold uppercase mb-2 text-black">
               Antibiotic Sensitivity Test Results
             </h2>
@@ -339,19 +593,206 @@ export default function PrintReport() {
           </div>
         )}
 
+        {customFieldEntries.length > 0 && (
+          <div className="print-section mb-4">
+            <h2 className="text-sm font-bold uppercase mb-2 text-black">
+              {isHospitalCase ? "Hospital Clinical Details" : "Additional Details"}
+            </h2>
+            {isHospitalCase ? (
+              <div className="space-y-2">
+                {(Object.keys(HOSPITAL_SECTION_TITLES) as HospitalSectionKey[]).map((sectionKey) => {
+                  const items = groupedHospitalCustomFields[sectionKey];
+                  if (!items || items.length === 0) return null;
+                  if (sectionKey === "other") return null;
+                  if (sectionKey === "vitalsExam") {
+                    const byLabel = new Map(items.map((item) => [normalizeKey(item.label), item.value]));
+                    const vitalsCells = [
+                      ["Temperature", byLabel.get("temperature")],
+                      ["Heart Rate", byLabel.get("heartrate")],
+                      ["Respiration", byLabel.get("respiration")],
+                      ["Rumen Motility", byLabel.get("rumenmotility")],
+                      ["CRT", byLabel.get("crt")],
+                      ["Dehydration %", byLabel.get("dehydrationpercentage")],
+                      ["Weight", byLabel.get("weight")],
+                    ]
+                      .filter(([, v]) => v !== undefined && String(v).trim().length > 0)
+                      .map(([k, v]) => ({
+                        label: String(k),
+                        value: withClinicalUnit(String(k), String(v ?? "")),
+                      }));
+                    const fallback = items
+                      .map((item) => `${item.label}: ${withClinicalUnit(item.label, String(item.value))}`)
+                      .join(" | ");
+                    return (
+                      <table key={sectionKey} className="w-full table-fixed text-[10px] border border-gray-400 print-table">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th
+                              colSpan={4}
+                              className="py-1 px-2 text-left border border-gray-400 font-semibold text-black"
+                            >
+                              {HOSPITAL_SECTION_TITLES[sectionKey]}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vitalsCells.length > 0 ? (
+                            <>
+                              <tr className="border-b border-gray-300">
+                                {[...vitalsCells.slice(0, 4), ...Array(Math.max(0, 4 - vitalsCells.slice(0, 4).length)).fill(null)].map((cell, idx) => (
+                                  <td
+                                    key={cell ? cell.label : `empty-top-${idx}`}
+                                    className="py-1 px-2 text-black align-top"
+                                  >
+                                    {cell ? (
+                                      <div className="break-words">
+                                        <span className="font-semibold text-gray-700">{cell.label}:</span>{" "}
+                                        <span>{cell.value}</span>
+                                      </div>
+                                    ) : (
+                                      <span>&nbsp;</span>
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                              <tr className="border-b border-gray-300">
+                                {[...vitalsCells.slice(4, 8), ...Array(Math.max(0, 4 - vitalsCells.slice(4, 8).length)).fill(null)].map((cell, idx) => (
+                                  <td
+                                    key={cell ? cell.label : `empty-${idx}`}
+                                    className="py-1 px-2 text-black align-top"
+                                  >
+                                    {cell ? (
+                                      <div className="break-words">
+                                        <span className="font-semibold text-gray-700">{cell.label}:</span>{" "}
+                                        <span>{cell.value}</span>
+                                      </div>
+                                    ) : (
+                                      <span>&nbsp;</span>
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            </>
+                          ) : (
+                            <tr>
+                              <td className="py-1 px-2 text-black whitespace-pre-wrap">
+                                {fallback}
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    );
+                  }
+                  if (sectionKey === "testsSuggested") {
+                    const testFieldEntries = customFieldEntries.filter(
+                      ([key]) => resolveHospitalSectionKey(key) === "testsSuggested",
+                    );
+                    const layoutRows = buildHospitalTestsSuggestedLayout(testFieldEntries);
+                    let mainTestSerial = 0;
+                    return (
+                      <table key={sectionKey} className="w-full table-fixed text-[10px] border border-gray-400 print-table">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th
+                              className="py-1 px-2 text-left border border-gray-400 font-semibold text-black"
+                              colSpan={3}
+                            >
+                              {HOSPITAL_SECTION_TITLES[sectionKey]}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {layoutRows.map((row, idx) =>
+                            row.kind === "simple-row" ? (
+                              <tr key={`${sectionKey}-s-${idx}`} className="border-b border-gray-300">
+                                {row.cells.map((cell, j) => (
+                                  <td
+                                    key={`${sectionKey}-s-${idx}-${j}`}
+                                    className="py-0.5 px-2 align-top w-1/3 bg-gray-50 text-black font-semibold"
+                                  >
+                                    {cell ? `${++mainTestSerial}. ${cell}` : "\u00a0"}
+                                  </td>
+                                ))}
+                              </tr>
+                            ) : (
+                              <tr key={`${sectionKey}-d-${idx}`} className="border-b border-gray-300">
+                                <td className="py-0.5 px-2 font-semibold bg-gray-50 text-black align-top w-[22%] whitespace-nowrap">
+                                  {`${++mainTestSerial}. ${row.label}`}
+                                </td>
+                                <td
+                                  colSpan={2}
+                                  className="py-0.5 px-2 font-normal text-black align-top whitespace-pre-wrap break-words"
+                                >
+                                  {row.value}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    );
+                  }
+                  return (
+                    <table key={sectionKey} className="w-full text-[10px] border border-gray-400 print-table">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black" colSpan={2}>
+                            {HOSPITAL_SECTION_TITLES[sectionKey]}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((entry) => (
+                          <tr key={`${sectionKey}-${entry.label}`} className="border-b border-gray-300 last:border-b-0">
+                            <td className="py-0.5 px-2 font-semibold bg-gray-50 w-[18%] text-black align-top">
+                              {entry.label}
+                            </td>
+                            <td className="py-0.5 px-2 text-black whitespace-pre-wrap break-words">
+                              {Array.isArray(entry.value)
+                                ? entry.value.join(", ")
+                                : withClinicalUnit(entry.label, String(entry.value))}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                })}
+              </div>
+            ) : (
+              <table className="w-full text-sm border border-gray-400 print-table">
+                <tbody>
+                  {customFieldEntries.map(([key, value]) => (
+                    <tr key={key} className="border-b border-gray-300 last:border-b-0">
+                      <td className="py-2 px-3 font-semibold bg-gray-50 w-64 text-black">
+                        {prettifyCustomFieldLabel(key)}
+                      </td>
+                      <td className="py-2 px-3 text-black whitespace-pre-wrap">
+                        {Array.isArray(value) ? value.join(", ") : String(value)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
         {/* Remarks */}
         {caseData.remarks && (
           <div className="print-section mb-4">
             <h2 className="text-sm font-bold uppercase mb-2 text-black">
               Remarks
             </h2>
-            <p className="text-sm border border-gray-300 p-3 rounded whitespace-pre-wrap text-black">
+            <p className="text-[10px] border border-gray-300 p-2 whitespace-pre-wrap break-words text-black">
               {caseData.remarks}
             </p>
           </div>
         )}
 
         {/* Signature Area */}
+        {!isHospitalCase && (
         <div className="print-section mt-14 flex justify-between items-end text-sm">
           <div className="text-center">
             <div className="border-t border-gray-400 pt-1 px-8">
@@ -364,12 +805,14 @@ export default function PrintReport() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Footer */}
-        <div className="print-section mt-5 pt-3 border-t border-gray-300 text-center text-xs text-gray-500">
+        <div className={`print-section ${isHospitalCase ? "mt-2 pt-2" : "mt-5 pt-3"} border-t border-gray-300 text-center text-xs text-gray-500`}>
           <p>
-            This report is generated by the Veterinary Teaching Hospital AST
-            Report System.
+            {isHospitalCase
+              ? "This report is generated by the Veterinary Teaching Hospital Case Registration System."
+              : "This report is generated by the Veterinary Teaching Hospital AST Report System."}
           </p>
 
           {caseData.lastUpdatedBy && caseData.updatedAt && (

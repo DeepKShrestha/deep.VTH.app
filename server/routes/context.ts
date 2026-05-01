@@ -107,8 +107,9 @@ export type PermissionCapability =
 
 export function resolveCapabilitiesForRole(role: string): PermissionCapability[] {
   const isAdmin = role === "superadmin" || role === "admin";
-  const base: PermissionCapability[] = ["hospital.case.view", "ast.case.view"];
+  const base: PermissionCapability[] = [];
   if (role === "student" || role === "intern" || role === "staff" || isAdmin) {
+    base.push("hospital.case.view", "ast.case.view");
     base.push("hospital.case.create");
   }
   if (role === "staff" || role === "intern" || isAdmin) {
@@ -166,6 +167,29 @@ export async function isDashboardVisibleForRole(role: string): Promise<boolean> 
   );
   if (!row) return true;
   return Boolean(row.dashboard_visible);
+}
+
+export async function isVthDashboardVisibleForRole(role: string): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ vth_dashboard_visible: boolean | number }>(
+      "SELECT vth_dashboard_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.vth_dashboard_visible);
+  }
+  try {
+    const row = await dbGet<{ vth_dashboard_visible: number }>(
+      sql`SELECT vth_dashboard_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.vth_dashboard_visible);
+  } catch {
+    // Backward compatibility for databases not yet migrated with vth_dashboard_visible.
+    return isDashboardVisibleForRole(role);
+  }
 }
 
 export function getIdParam(req: Request): number {
@@ -228,42 +252,56 @@ export function canRegisterHospital(req: Request, res: Response, next: NextFunct
 }
 
 export function canDownload(req: Request, res: Response, next: NextFunction) {
-  const user = (req as AuthenticatedRequest).currentUser;
-  if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
+  return canDownloadBySource("ast_report")(req, res, next);
+}
 
-  if (user.role !== "student" && !hasCapability(user.role, "ast.download")) {
-    return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
-  }
+function canDownloadBySource(source: "ast_report" | "hospital_case") {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
 
-  if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
-    return next();
-  }
-
-  void (async () => {
-    const requests = await dbAll<{ id: number; status: string }>(
-      sql`SELECT id, status FROM download_requests
-          WHERE user_id = ${user.id}
-            AND request_source = ${"ast_report"}
-          ORDER BY created_at DESC`,
-    );
-    const approved = requests.find((r) => r.status === "approved");
-    if (!approved) {
-      return res.status(403).json({
-        message:
-          "Download access not approved or already used. Please submit a new download request.",
-      });
+    if (user.role !== "student" && !hasCapability(user.role, "ast.download")) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
-    (req as AuthenticatedRequest).approvedDownloadRequest = {
-      id: approved.id,
-      status: approved.status,
-    };
-    return next();
-  })().catch((error) =>
-    res.status(500).json({
-      message: "Failed to validate download permissions",
-      error: error instanceof Error ? error.message : "Unknown error",
-    }),
-  );
+
+    if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
+      return next();
+    }
+
+    void (async () => {
+      const requests = await dbAll<{ id: number; status: string }>(
+        sql`SELECT id, status FROM download_requests
+          WHERE user_id = ${user.id}
+            AND request_source = ${source}
+          ORDER BY created_at DESC`,
+      );
+      const approved = requests.find((r) => r.status === "approved");
+      if (!approved) {
+        return res.status(403).json({
+          message:
+            "Download access not approved or already used. Please submit a new download request.",
+        });
+      }
+      (req as AuthenticatedRequest).approvedDownloadRequest = {
+        id: approved.id,
+        status: approved.status,
+      };
+      return next();
+    })().catch((error) =>
+      res.status(500).json({
+        message: "Failed to validate download permissions",
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+    );
+  };
+}
+
+export function canDownloadHospital(req: Request, res: Response, next: NextFunction) {
+  return canDownloadBySource("hospital_case")(req, res, next);
+}
+
+export function canDownloadAst(req: Request, res: Response, next: NextFunction) {
+  return canDownloadBySource("ast_report")(req, res, next);
 }
 
 export const SEED_BREAKPOINTS = [

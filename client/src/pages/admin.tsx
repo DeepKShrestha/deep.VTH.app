@@ -32,6 +32,7 @@ type FormEditLog = {
   createdAt: string;
 };
 
+
 type AdminFormDefinition = {
   sections: Array<{
     key: string;
@@ -128,6 +129,7 @@ function designationLabel(d: string) {
 function requestSourceLabel(source: string | null | undefined) {
   return source === "hospital_case" ? "Hospital Case" : "AST Report";
 }
+
 
 function roleBadge(role: string) {
   const colors: Record<string, string> = {
@@ -263,6 +265,12 @@ export default function AdminPanel({
     Array<{ role: string; dashboardVisible: boolean }>
   >({
     queryKey: ["/api/admin/feature-visibility/dashboard"],
+    enabled: mode === "full",
+  });
+  const { data: vthDashboardVisibility = [] } = useQuery<
+    Array<{ role: string; dashboardVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/vth-dashboard"],
     enabled: mode === "full",
   });
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
@@ -669,6 +677,7 @@ export default function AdminPanel({
         updateCurrentUser({
           ...currentUser,
           dashboardVisible: vars.dashboardVisible,
+          astDashboardVisible: vars.dashboardVisible,
         } as typeof currentUser);
       }
       toast({ title: "Dashboard visibility updated" });
@@ -676,6 +685,33 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to update visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateVthDashboardVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; dashboardVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/vth-dashboard/${encodeURIComponent(payload.role)}`,
+        { dashboardVisible: payload.dashboardVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/vth-dashboard"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          vthDashboardVisible: vars.dashboardVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "VTH dashboard visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update VTH visibility",
         variant: "destructive",
       });
     },
@@ -1441,6 +1477,49 @@ export default function AdminPanel({
               )}
             </CardContent>
           </Card>
+          <Card data-editor-collapsible="true">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">VTH Dashboard Visibility by Role</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Control which roles can access the VTH dashboard page.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {vthDashboardVisibility.map((row) => (
+                  <div
+                    key={`vth-dashboard-role-${row.role}`}
+                    className="flex items-center justify-between rounded border px-2.5 py-2"
+                  >
+                    <div className="text-xs font-medium truncate pr-2">
+                      {row.role === "superadmin"
+                        ? "Super Admin"
+                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={row.dashboardVisible ? "default" : "outline"}
+                      className="h-6 text-[11px] px-2"
+                      onClick={() =>
+                        updateVthDashboardVisibilityMutation.mutate({
+                          role: row.role,
+                          dashboardVisible: !row.dashboardVisible,
+                        })
+                      }
+                    >
+                      {row.dashboardVisible ? "On" : "Off"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {vthDashboardVisibility.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No role visibility settings found yet.
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="form-options" className="space-y-3 mt-4">
@@ -1453,9 +1532,10 @@ export default function AdminPanel({
                 </p>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
+                    size="sm"
                     variant={astEditorPanel === "layout" ? "default" : "outline"}
                     onClick={() =>
                       setAstEditorPanel((prev) => (prev === "layout" ? null : "layout"))
@@ -1465,15 +1545,17 @@ export default function AdminPanel({
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     variant={astEditorPanel === "fields" ? "default" : "outline"}
                     onClick={() =>
                       setAstEditorPanel((prev) => (prev === "fields" ? null : "fields"))
                     }
                   >
-                    Edit Register Form Field
+                    Edit Register Form Fields
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     variant={astEditorPanel === "species" ? "default" : "outline"}
                     onClick={() =>
                       setAstEditorPanel((prev) => (prev === "species" ? null : "species"))

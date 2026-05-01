@@ -99,6 +99,7 @@ type DashboardPayload = {
 };
 
 const COLORS = ["#16a34a", "#0ea5e9", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"];
+type DashboardScope = "ast" | "hospital";
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
@@ -109,7 +110,18 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({
+  scope = "ast",
+  title = "AMR Statistical Dashboard",
+  subtitle = "Veterinary AST surveillance dashboard",
+  backHref = "/",
+}: {
+  scope?: DashboardScope;
+  title?: string;
+  subtitle?: string;
+  backHref?: string;
+}) {
+  const scopeLabel = scope === "hospital" ? "Hospital-only data" : "AST-only data";
   const [preset, setPreset] = useState("all");
   const [groupBy, setGroupBy] = useState("month");
   const [species, setSpecies] = useState("all");
@@ -126,9 +138,9 @@ export default function DashboardPage() {
   const [matrixMode, setMatrixMode] = useState<"susceptiblePct" | "resistantPct" | "tested">("resistantPct");
 
   const { data, isLoading } = useQuery<DashboardPayload>({
-    queryKey: ["/api/dashboard/summary", preset, groupBy, species, breed, sex, sampleType, organism, antibiotic, result, dateFrom, dateTo, minTested],
+    queryKey: ["/api/dashboard/summary", scope, preset, groupBy, species, breed, sex, sampleType, organism, antibiotic, result, dateFrom, dateTo, minTested],
     queryFn: async () => {
-      const q = new URLSearchParams({ preset, groupBy, species, breed, sex, sampleType, organism, antibiotic, result, minTested });
+      const q = new URLSearchParams({ scope, preset, groupBy, species, breed, sex, sampleType, organism, antibiotic, result, minTested });
       if (dateFrom) q.set("dateFrom", dateFrom);
       if (dateTo) q.set("dateTo", dateTo);
       const res = await apiRequest("GET", `/api/dashboard/summary?${q.toString()}`);
@@ -148,10 +160,13 @@ export default function DashboardPage() {
     <div className="max-w-[1300px] mx-auto px-4 py-6 space-y-6">
       <div className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b pb-3">
         <div className="flex items-start sm:items-center gap-3 mb-3">
-          <Link href="/"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+          <Link href={backHref}><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
-            <h1 className="text-lg font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4" /> AMR Statistical Dashboard</h1>
-            <p className="text-sm text-muted-foreground">Veterinary AST surveillance dashboard</p>
+            <h1 className="text-lg font-semibold flex items-center gap-2"><BarChart3 className="w-4 h-4" /> {title}</h1>
+            <p className="text-sm text-muted-foreground">{subtitle}</p>
+            <div className="mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              Scope: {scopeLabel}
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -256,7 +271,7 @@ export default function DashboardPage() {
                   <tbody>
                     {tableRows.slice(0, 300).map((r, i) => (
                       <tr key={`${r.caseId}-${i}`} className="border-t">
-                        <td className="py-2 pr-3"><Link href={`/cases/${r.caseId}`}><button className="text-primary underline">{r.caseNumber}</button></Link></td>
+                        <td className="py-2 pr-3"><Link href={`${scope === "hospital" ? "/new-case/cases" : "/ast-report/cases"}/${r.caseId}?scope=${scope}`}><button className="text-primary underline">{r.caseNumber}</button></Link></td>
                         <td className="py-2 pr-3">{r.ownerName}</td><td className="py-2 pr-3">{r.phoneNumber}</td><td className="py-2 pr-3">{r.address}</td><td className="py-2 pr-3">{r.animalName}</td><td className="py-2 pr-3">{r.species}</td><td className="py-2 pr-3">{r.breed}</td><td className="py-2 pr-3">{r.age}</td><td className="py-2 pr-3">{r.sex}</td><td className="py-2 pr-3">{r.sampleType}</td><td className="py-2 pr-3">{r.sampleCollectionDate}</td><td className="py-2 pr-3">{r.organismIsolated}</td><td className="py-2 pr-3">{r.antibiotic}</td><td className="py-2 pr-3">{r.resultCategory}</td>
                       </tr>
                     ))}

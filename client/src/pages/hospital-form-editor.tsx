@@ -366,7 +366,7 @@ export default function HospitalFormEditorPage() {
     <div ref={editorRootRef} className="max-w-6xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href="/new-case">
+          <Link href="/new-case/settings">
             <Button variant="ghost" size="icon">
               <ArrowLeft className="w-4 h-4" />
             </Button>

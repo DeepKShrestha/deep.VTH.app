@@ -26,6 +26,8 @@ export type PermissionCapability =
   | "ast.admin";
 type AuthUser = SafeUser & {
   dashboardVisible?: boolean;
+  astDashboardVisible?: boolean;
+  vthDashboardVisible?: boolean;
   capabilities?: PermissionCapability[];
 };
 
@@ -77,6 +79,7 @@ interface AuthContextType {
   canRegisterCase: boolean;
   canDownload: boolean;
   canViewDashboard: boolean;
+  canViewVthDashboard: boolean;
   canRegisterHospitalCase: boolean;
   canViewHospitalCases: boolean;
   canRegisterAstCase: boolean;
@@ -278,8 +281,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canManageAstAdmin = capabilities.has("ast.admin");
   const canRegisterCase = canRegisterAstCase;
   const canDownload = canDownloadAst;
-  const canViewDashboard =
-    Boolean(user?.dashboardVisible) !== false;
+  const canViewDashboard = Boolean(
+    user?.astDashboardVisible ?? user?.dashboardVisible ?? false,
+  );
+  const canViewVthDashboard = Boolean(
+    user?.vthDashboardVisible ?? user?.dashboardVisible ?? false,
+  );
 
   const setInactivityTimeout = useCallback(
     (value: InactivityTimeoutOption) => {
@@ -362,6 +369,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     canRegisterCase,
     canDownload,
     canViewDashboard,
+    canViewVthDashboard,
     canRegisterHospitalCase,
     canViewHospitalCases,
     canRegisterAstCase,

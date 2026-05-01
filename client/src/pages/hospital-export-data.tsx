@@ -24,8 +24,8 @@ import type { DownloadRequest } from "@shared/schema";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
-export default function ExportDataPage() {
-  const { user, isStudent } = useAuth();
+export default function HospitalExportDataPage() {
+  const { isStudent } = useAuth();
   const { toast } = useToast();
   const today = getTodayBsAd();
 
@@ -39,10 +39,10 @@ export default function ExportDataPage() {
     queryKey: ["/api/download-requests/mine"],
     enabled: isStudent,
   });
-  const myAstRequests = myRequests.filter(
-    (r) => (r.requestSource || "ast_report") === "ast_report",
+  const myHospitalRequests = myRequests.filter(
+    (r) => (r.requestSource || "ast_report") === "hospital_case",
   );
-  const hasApprovedRequest = myAstRequests.some((r) => r.status === "approved");
+  const hasApprovedRequest = myHospitalRequests.some((r) => r.status === "approved");
 
   const requestMutation = useMutation({
     mutationFn: async () => {
@@ -50,7 +50,7 @@ export default function ExportDataPage() {
         dateFrom: dateFrom || null,
         dateTo: dateTo || null,
         reason: reason || null,
-        requestSource: "ast_report",
+        requestSource: "hospital_case",
       });
     },
     onSuccess: () => {
@@ -71,64 +71,59 @@ export default function ExportDataPage() {
   });
 
   const handleDownload = () => {
-  const params = new URLSearchParams();
-  if (dateFrom) params.set("dateFrom", dateFrom);
-  if (dateTo) params.set("dateTo", dateTo);
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
-  const token = getAuthToken();
-  const url = `${API_BASE}/api/export/cases?${params.toString()}`;
+    const token = getAuthToken();
+    const url = `${API_BASE}/api/export/hospital-cases?${params.toString()}`;
 
-  fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error("Download failed");
-      }
-      return res.blob();
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-    .then((blob) => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "ast-cases.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      toast({ title: "CSV download started" });
-
-      // NEW: refresh "My Download Requests"
-      queryClient.invalidateQueries({
-        queryKey: ["/api/download-requests/mine"],
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Download failed");
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "hospital-cases.csv";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        toast({ title: "CSV download started" });
+        queryClient.invalidateQueries({
+          queryKey: ["/api/download-requests/mine"],
+        });
+      })
+      .catch(() => {
+        toast({
+          title: "Download failed. You may not have permission.",
+          variant: "destructive",
+        });
       });
-    })
-    .catch(() => {
-      toast({
-        title: "Download failed. You may not have permission.",
-        variant: "destructive",
-      });
-    });
-};
+  };
 
   const showDownloadButtons = !isStudent || hasApprovedRequest;
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
-        <Link href="/ast-report">
+        <Link href="/new-case">
           <Button variant="ghost" size="icon" data-testid="button-back">
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
         <div>
-          <h1
-            className="text-lg font-semibold"
-            data-testid="text-export-title"
-          >
-            AST Export Data
+          <h1 className="text-lg font-semibold" data-testid="text-export-title">
+            Hospital Export Data
           </h1>
           <p className="text-sm text-muted-foreground">
-            Download AST case data for research and analysis
+            Download hospital case registration data for research and analysis
           </p>
         </div>
       </div>
@@ -137,8 +132,7 @@ export default function ExportDataPage() {
         <CardHeader className="pb-4">
           <CardTitle className="text-base">Date Range (BS)</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Filter data by BS date. Leave &quot;from&quot; empty to include all
-            past records.
+            Filter data by BS date. Leave &quot;from&quot; empty to include all past records.
           </p>
         </CardHeader>
         <CardContent>
@@ -150,7 +144,7 @@ export default function ExportDataPage() {
                 setDateFromAd(ad);
               }}
               label="From"
-              testIdPrefix="export-from"
+              testIdPrefix="hospital-export-from"
             />
             <BsDateInput
               value={dateTo}
@@ -159,7 +153,7 @@ export default function ExportDataPage() {
                 setDateToAd(ad);
               }}
               label="To"
-              testIdPrefix="export-to"
+              testIdPrefix="hospital-export-to"
             />
           </div>
         </CardContent>
@@ -170,8 +164,7 @@ export default function ExportDataPage() {
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Download</CardTitle>
             <p className="text-xs text-muted-foreground">
-              CSV is compatible with Excel, Google Sheets, and most statistical
-              software.
+              CSV is compatible with Excel, Google Sheets, and most statistical software.
             </p>
           </CardHeader>
           <CardContent>
@@ -197,8 +190,7 @@ export default function ExportDataPage() {
               Request Download Access
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              As a student, you need admin approval to download data. Submit a
-              request below.
+              As a student, you need admin approval to download data. Submit a request below.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -208,7 +200,7 @@ export default function ExportDataPage() {
                 id="reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Research project on antibiotic resistance patterns..."
+                placeholder="e.g. Research project on hospital case patterns..."
                 rows={2}
                 data-testid="input-download-reason"
               />
@@ -226,27 +218,24 @@ export default function ExportDataPage() {
         </Card>
       )}
 
-      {isStudent && myAstRequests.length > 0 && (
+      {isStudent && myHospitalRequests.length > 0 && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-base">My Download Requests</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {myAstRequests.map((r) => (
+            {myHospitalRequests.map((r) => (
               <div
                 key={r.id}
                 className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-sm border-b border-border last:border-0 pb-2 last:pb-0"
               >
                 <div>
                   <div className="text-xs text-muted-foreground">
-                    {r.dateFrom && `From: ${r.dateFrom}`}{" "}
-                    {r.dateTo && `To: ${r.dateTo}`}
+                    {r.dateFrom && `From: ${r.dateFrom}`} {r.dateTo && `To: ${r.dateTo}`}
                     {!r.dateFrom && !r.dateTo && "All dates"}
                   </div>
                   {r.reason && (
-                    <div className="text-xs text-muted-foreground">
-                      {r.reason}
-                    </div>
+                    <div className="text-xs text-muted-foreground">{r.reason}</div>
                   )}
                 </div>
                 <div>
@@ -266,10 +255,10 @@ export default function ExportDataPage() {
                     </Badge>
                   )}
                   {r.status === "downloaded" && (
-  <Badge className="bg-emerald-100 text-emerald-800 border-0 text-xs gap-1">
-    <CheckCircle className="w-3 h-3" /> Downloaded
-  </Badge>
-)}
+                    <Badge className="bg-emerald-100 text-emerald-800 border-0 text-xs gap-1">
+                      <CheckCircle className="w-3 h-3" /> Downloaded
+                    </Badge>
+                  )}
                 </div>
               </div>
             ))}

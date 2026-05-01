@@ -9,6 +9,7 @@ function makeCase(overrides: Partial<Case> = {}): Case {
     billNumber: "BILL-1",
     dailyNumber: 1,
     monthlyNumber: 1,
+    yearlyNumber: 1,
     date: "2083-01-01",
     dateAd: "2026-04-27",
     ownerName: "Owner",

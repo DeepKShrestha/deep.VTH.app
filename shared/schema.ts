@@ -45,6 +45,19 @@ export const passwordResetRequests = sqliteTable("password_reset_requests", {
   resolvedAt: text("resolved_at"),
 });
 
+export const caseChangeLogs = sqliteTable("case_change_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  caseId: integer("case_id"),
+  caseNumber: text("case_number").notNull(),
+  caseScope: text("case_scope").notNull(), // ast, hospital
+  action: text("action").notNull(), // created, deleted
+  actorUserId: integer("actor_user_id").notNull(),
+  actorRole: text("actor_role").notNull(),
+  actorName: text("actor_name").notNull(),
+  actorUsername: text("actor_username").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 // ---- Cases ----
 export const cases = sqliteTable("cases", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -52,6 +65,7 @@ export const cases = sqliteTable("cases", {
   billNumber: text("bill_number"),
   dailyNumber: integer("daily_number"),
   monthlyNumber: integer("monthly_number"),
+  yearlyNumber: integer("yearly_number"),
   date: text("date").notNull(), // BS date YYYY-MM-DD
   dateAd: text("date_ad"), // AD date YYYY-MM-DD
 
@@ -162,6 +176,7 @@ export type PasswordResetRequest = typeof passwordResetRequests.$inferSelect;
 export type InsertPasswordResetRequest = z.infer<
   typeof insertPasswordResetRequestSchema
 >;
+export type CaseChangeLog = typeof caseChangeLogs.$inferSelect;
 
 // Safe user type (without password hash) for frontend
 export type SafeUser = Omit<User, "passwordHash">;

@@ -24,6 +24,7 @@ import {
   ClipboardPlus,
   Eye,
   FolderOpen,
+  Clock,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { formatBsDate } from "@/lib/nepali-date";
@@ -31,27 +32,48 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-export default function CaseList({ backHref = "/" }: { backHref?: string }) {
+export default function CaseList({
+  backHref = "/",
+  scope,
+}: {
+  backHref?: string;
+  scope?: "ast" | "hospital";
+}) {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showCaseLogs, setShowCaseLogs] = useState(false);
+  const [caseLogsFilter, setCaseLogsFilter] = useState("");
   const { isAdmin, isStudent, canRegisterAstCase, canRegisterHospitalCase } = useAuth();
   const { toast } = useToast();
+  const isHospitalHistory = scope ? scope === "hospital" : backHref === "/new-case";
+  const caseScope = isHospitalHistory ? "hospital" : "ast";
 
   const { data: cases, isLoading } = useQuery<Case[]>({
-    queryKey: ["/api/cases"],
+    queryKey: ["/api/cases", caseScope],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/cases?scope=${caseScope}`);
+      return res.json();
+    },
   });
 
   const deleteCaseMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/cases/${id}`);
+      await apiRequest("DELETE", `/api/cases/${id}?scope=${caseScope}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cases", caseScope] });
+      queryClient.invalidateQueries({ queryKey: ["/api/case-change-logs"] });
       toast({ title: "Case deleted" });
     },
   });
 
-  const filtered = (cases || []).filter((c) => {
+  const scopedCases = (cases || []).filter((c) => {
+    const isHospitalCase = String(c.caseNumber || "")
+      .toUpperCase()
+      .startsWith("CASE-");
+    return isHospitalHistory ? isHospitalCase : !isHospitalCase;
+  });
+  const filtered = scopedCases.filter((c) => {
     const q = search.toLowerCase();
     return (
       c.caseNumber.toLowerCase().includes(q) ||
@@ -62,12 +84,48 @@ export default function CaseList({ backHref = "/" }: { backHref?: string }) {
       (c.billNumber && c.billNumber.toLowerCase().includes(q))
     );
   });
-  const isHospitalHistory = backHref === "/new-case";
+  const caseLogScope: "hospital" | "ast" = isHospitalHistory ? "hospital" : "ast";
+  const caseDetailBasePath =
+    caseScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
   const canCreateFromThisList = isHospitalHistory
     ? canRegisterHospitalCase
     : canRegisterAstCase && !isStudent;
   const createCaseHref = isHospitalHistory ? "/new-case/register" : "/register";
   const emptyStateCaseLabel = isHospitalHistory ? "VTH case" : "AST case";
+  type CaseChangeLog = {
+    id: number;
+    caseId: number | null;
+    caseNumber: string;
+    caseScope: "ast" | "hospital";
+    action: "created" | "deleted";
+    actorUserId: number;
+    actorRole: string;
+    actorName: string;
+    actorUsername: string;
+    createdAt: string;
+  };
+  const { data: caseChangeLogs = [] } = useQuery<CaseChangeLog[]>({
+    queryKey: ["/api/case-change-logs", caseLogScope],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/case-change-logs?scope=${encodeURIComponent(caseLogScope)}`,
+      );
+      return res.json();
+    },
+    enabled: isAdmin && showCaseLogs,
+    refetchOnMount: "always",
+    staleTime: 0,
+  });
+  const normalizedCaseLogsFilter = caseLogsFilter.trim().toLowerCase();
+  const filteredCaseLogs = caseChangeLogs.filter((row) => {
+    if (!normalizedCaseLogsFilter) return true;
+    return (
+      row.caseNumber.toLowerCase().includes(normalizedCaseLogsFilter) ||
+      row.actorName.toLowerCase().includes(normalizedCaseLogsFilter) ||
+      row.actorUsername.toLowerCase().includes(normalizedCaseLogsFilter)
+    );
+  });
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
@@ -92,6 +150,77 @@ export default function CaseList({ backHref = "/" }: { backHref?: string }) {
           </Link>
         )}
       </div>
+
+      {isAdmin && (
+        <Card>
+          <CardContent className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="text-xs text-muted-foreground">
+              {isHospitalHistory ? "Hospital Case Change Logs" : "AST Case Change Logs"}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setShowCaseLogs((v) => !v)}
+              data-testid="button-toggle-case-change-logs"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              {showCaseLogs ? "Hide Logs" : "View Logs"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {isAdmin && showCaseLogs && (
+        <Card>
+          <CardContent className="p-3 space-y-2">
+            <Input
+              value={caseLogsFilter}
+              onChange={(e) => setCaseLogsFilter(e.target.value)}
+              placeholder="Search by case number, actor, or username..."
+              className="h-8 text-xs sm:max-w-sm"
+              data-testid="input-case-change-logs-filter"
+            />
+            {filteredCaseLogs.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No case change logs found.</p>
+            ) : (
+              <div className="overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40">
+                    <tr className="text-left">
+                      <th className="px-2 py-1.5 font-medium">Case</th>
+                      <th className="px-2 py-1.5 font-medium">Action</th>
+                      <th className="px-2 py-1.5 font-medium">Actor</th>
+                      <th className="px-2 py-1.5 font-medium">Username</th>
+                      <th className="px-2 py-1.5 font-medium">Role</th>
+                      <th className="px-2 py-1.5 font-medium">When</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCaseLogs.map((row) => (
+                      <tr key={`case-log-${row.id}`} className="border-t align-top">
+                        <td className="px-2 py-1.5">{row.caseNumber}</td>
+                        <td className="px-2 py-1.5">
+                          {row.action === "created" ? "Created" : "Deleted"}
+                        </td>
+                        <td className="px-2 py-1.5">{row.actorName}</td>
+                        <td className="px-2 py-1.5">
+                          {row.actorUsername ? `@${row.actorUsername}` : "-"}
+                        </td>
+                        <td className="px-2 py-1.5">{row.actorRole}</td>
+                        <td className="px-2 py-1.5">
+                          {new Date(row.createdAt).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Search */}
       <div className="relative">
@@ -163,13 +292,10 @@ export default function CaseList({ backHref = "/" }: { backHref?: string }) {
                 <DeleteBatchDialog
                   count={selectedIds.length}
                   onConfirm={async () => {
-                    await Promise.all(
-                      selectedIds.map((id) =>
-                        apiRequest("DELETE", `/api/cases/${id}`)
-                      )
-                    );
+                    await Promise.all(selectedIds.map((id) => apiRequest("DELETE", `/api/cases/${id}?scope=${caseScope}`)));
                     setSelectedIds([]);
-                    queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/cases", caseScope] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/case-change-logs"] });
                     toast({ title: "Selected cases deleted" });
                   }}
                 />
@@ -253,7 +379,7 @@ export default function CaseList({ backHref = "/" }: { backHref?: string }) {
                       </div>
 
                       <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 w-full sm:w-auto shrink-0">
-                        <Link href={`/cases/${c.id}`} className="w-full sm:w-auto">
+                        <Link href={`${caseDetailBasePath}/${c.id}?scope=${caseScope}`} className="w-full sm:w-auto">
                           <Button
                             variant="outline"
                             size="sm"

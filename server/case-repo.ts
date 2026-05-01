@@ -14,6 +14,7 @@ type CaseRow = {
   bill_number: string | null;
   daily_number: number | null;
   monthly_number: number | null;
+  yearly_number: number | null;
   date: string;
   date_ad: string | null;
   owner_name: string;
@@ -45,6 +46,7 @@ function toCase(row: CaseRow): Case {
     billNumber: row.bill_number,
     dailyNumber: row.daily_number,
     monthlyNumber: row.monthly_number,
+    yearlyNumber: row.yearly_number,
     date: row.date,
     dateAd: row.date_ad,
     ownerName: row.owner_name,
@@ -70,7 +72,7 @@ function toCase(row: CaseRow): Case {
   };
 }
 
-const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, monthly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields FROM cases`;
+const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields FROM cases`;
 
 type CaseScope = "ast" | "hospital";
 
@@ -79,17 +81,29 @@ function getScopePrefix(scope: CaseScope): string {
 }
 
 export const caseRepo = {
-  async getCases(): Promise<Case[]> {
-    const rows = await dbAll<CaseRow>(sql`${CASE_SELECT} ORDER BY created_at DESC`);
+  async getCases(scope?: CaseScope): Promise<Case[]> {
+    const rows = await dbAll<CaseRow>(
+      scope
+        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} ORDER BY created_at DESC`
+        : sql`${CASE_SELECT} ORDER BY created_at DESC`,
+    );
     return rows.map(toCase);
   },
 
-  async getCasesPage(limit: number, offset: number): Promise<{ items: Case[]; total: number }> {
+  async getCasesPage(
+    limit: number,
+    offset: number,
+    scope?: CaseScope,
+  ): Promise<{ items: Case[]; total: number }> {
     const rows = await dbAll<CaseRow>(
-      sql`${CASE_SELECT} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      scope
+        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`
+        : sql`${CASE_SELECT} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
     );
     const totalRow = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases`,
+      scope
+        ? sql`SELECT COUNT(*) as count FROM cases WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`}`
+        : sql`SELECT COUNT(*) as count FROM cases`,
     );
     return {
       items: rows.map(toCase),
@@ -97,8 +111,12 @@ export const caseRepo = {
     };
   },
 
-  async getCase(id: number): Promise<Case | undefined> {
-    const row = await dbGet<CaseRow>(sql`${CASE_SELECT} WHERE id = ${id}`);
+  async getCase(id: number, scope?: CaseScope): Promise<Case | undefined> {
+    const row = await dbGet<CaseRow>(
+      scope
+        ? sql`${CASE_SELECT} WHERE id = ${id} AND case_number LIKE ${`${getScopePrefix(scope)}-%`}`
+        : sql`${CASE_SELECT} WHERE id = ${id}`,
+    );
     return row ? toCase(row) : undefined;
   },
 
@@ -108,12 +126,13 @@ export const caseRepo = {
   ): Promise<Case> {
     await dbRun(
       sql`INSERT INTO cases
-          (case_number, bill_number, daily_number, monthly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields)
+          (case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields)
           VALUES (
             ${data.caseNumber},
             ${data.billNumber ?? null},
             ${data.dailyNumber ?? null},
             ${data.monthlyNumber ?? null},
+            ${data.yearlyNumber ?? null},
             ${data.date},
             ${data.dateAd ?? null},
             ${data.ownerName},
@@ -147,8 +166,9 @@ export const caseRepo = {
     id: number,
     patch: Partial<InsertCase> &
       Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>,
+    scope?: CaseScope,
   ): Promise<Case | undefined> {
-    const existing = await this.getCase(id);
+    const existing = await this.getCase(id, scope);
     if (!existing) return undefined;
     const next = { ...existing, ...patch };
     await dbRun(
@@ -157,6 +177,7 @@ export const caseRepo = {
               bill_number = ${next.billNumber ?? null},
               daily_number = ${next.dailyNumber ?? null},
               monthly_number = ${next.monthlyNumber ?? null},
+              yearly_number = ${next.yearlyNumber ?? null},
               date = ${next.date},
               date_ad = ${next.dateAd ?? null},
               owner_name = ${next.ownerName},
@@ -180,15 +201,35 @@ export const caseRepo = {
               custom_fields = ${next.customFields ?? null}
           WHERE id = ${id}`,
     );
-    return this.getCase(id);
+    return this.getCase(id, scope);
   },
 
-  async deleteCase(id: number): Promise<void> {
+  async deleteCase(id: number, scope?: CaseScope): Promise<void> {
+    if (scope) {
+      await dbRun(
+        sql`DELETE FROM cases WHERE id = ${id} AND case_number LIKE ${`${getScopePrefix(scope)}-%`}`,
+      );
+      return;
+    }
     await dbRun(sql`DELETE FROM cases WHERE id = ${id}`);
   },
 
   async getCasesByDateRange(dateFrom?: string, dateTo?: string): Promise<Case[]> {
     let rows = await dbAll<CaseRow>(sql`${CASE_SELECT} ORDER BY created_at DESC`);
+    if (dateFrom) rows = rows.filter((c) => c.date >= dateFrom);
+    if (dateTo) rows = rows.filter((c) => c.date <= dateTo);
+    return rows.map(toCase);
+  },
+
+  async getCasesByDateRangeAndScope(
+    scope: CaseScope,
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<Case[]> {
+    const scopePrefix = `${getScopePrefix(scope)}-`;
+    let rows = await dbAll<CaseRow>(
+      sql`${CASE_SELECT} WHERE case_number LIKE ${`${scopePrefix}%`} ORDER BY created_at DESC`,
+    );
     if (dateFrom) rows = rows.filter((c) => c.date >= dateFrom);
     if (dateTo) rows = rows.filter((c) => c.date <= dateTo);
     return rows.map(toCase);
@@ -219,6 +260,14 @@ export const caseRepo = {
     const scopePrefix = `${getScopePrefix(scope)}-%`;
     const row = await dbGet<{ count: number | string }>(
       sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${yearMonth}%`} AND case_number LIKE ${scopePrefix}`,
+    );
+    return Number(row?.count ?? 0) + 1;
+  },
+
+  async getYearlyNumber(year: string, scope: CaseScope = "ast"): Promise<number> {
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
+    const row = await dbGet<{ count: number | string }>(
+      sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${year}%`} AND case_number LIKE ${scopePrefix}`,
     );
     return Number(row?.count ?? 0) + 1;
   },

@@ -74,7 +74,7 @@ export default function AstReportHome() {
                 Browse previously recorded AST cases and open details.
               </p>
               <Link href="/ast-report/cases" className="mt-auto">
-                <Button variant="secondary" className="w-full">
+                <Button className="w-full bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300">
                   View Previous Cases
                 </Button>
               </Link>
@@ -137,7 +137,7 @@ export default function AstReportHome() {
                 View trends and summary insights from AST data.
               </p>
               <Link href="/dashboard" className="mt-auto">
-                <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
+                <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
                   Open Dashboard
                 </Button>
               </Link>

@@ -22,6 +22,7 @@ import { ArrowLeft, Plus, Trash2, Save, Sparkles, Info } from "lucide-react";
 import type { Breakpoint } from "@shared/schema";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd, formatBsDate, formatAdDate } from "@/lib/nepali-date";
+import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
 
 const DEFAULT_SPECIES_LIST = [
   "Bovine",
@@ -456,8 +457,26 @@ export default function RegisterCase({
 }: RegisterCaseProps = {}) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const astToggleDefaults = useMemo(() => getAstToggleDefaults(), []);
+  const hospitalToggleDefaults = useMemo(
+    () => (mode === "hospital" ? getHospitalToggleDefaults() : null),
+    [mode],
+  );
+  const defaultQuickRegisterMode =
+    mode === "hospital"
+      ? (hospitalToggleDefaults?.quickRegisterMode ?? false)
+      : astToggleDefaults.quickRegisterMode;
+  const defaultHideOptionalFields =
+    mode === "hospital"
+      ? (hospitalToggleDefaults?.hideOptionalFields ?? false)
+      : astToggleDefaults.hideOptionalFields;
 
-  const { data: caseInfo } = useQuery<{ caseNumber: string; dailyNumber: number; monthlyNumber: number }>({
+  const { data: caseInfo } = useQuery<{
+    caseNumber: string;
+    dailyNumber: number;
+    monthlyNumber: number;
+    yearlyNumber: number;
+  }>({
     queryKey: ["/api/next-case-info", caseScope],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/next-case-info?scope=${caseScope}`);
@@ -503,9 +522,9 @@ export default function RegisterCase({
   const [customAnswers, setCustomAnswers] = useState<Record<string, string | string[]>>({});
   const [sectionAnswers, setSectionAnswers] = useState<Record<string, string>>({});
   const [bulletPointModes, setBulletPointModes] = useState<Record<string, boolean>>({
-    historyNotes: true,
-    previousMedicationNotes: true,
-    clinicalSignsSymptomsNotes: true,
+    historyNotes: hospitalToggleDefaults?.historyNotesBulletPoints ?? true,
+    previousMedicationNotes: hospitalToggleDefaults?.previousMedicationNotesBulletPoints ?? true,
+    clinicalSignsSymptomsNotes: hospitalToggleDefaults?.clinicalSignsSymptomsNotesBulletPoints ?? true,
   });
   const todayInfo = getTodayBsAd();
   const [dateBs, setDateBs] = useState(todayInfo.bs);
@@ -536,12 +555,16 @@ export default function RegisterCase({
   const [ultrasoundDetails, setUltrasoundDetails] = useState("");
   const [cultureDetails, setCultureDetails] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [autoMode, setAutoMode] = useState(true);
-  const [quickRegisterMode, setQuickRegisterMode] = useState(false);
-  const [hideOptionalFields, setHideOptionalFields] = useState(false);
+  const [autoMode, setAutoMode] = useState(
+    mode === "hospital" ? true : astToggleDefaults.autoMode,
+  );
+  const [quickRegisterMode, setQuickRegisterMode] = useState(defaultQuickRegisterMode);
+  const [hideOptionalFields, setHideOptionalFields] = useState(defaultHideOptionalFields);
 
     // NEW: toggle to use preset antibiotics
-  const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(false);
+  const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(
+    mode === "hospital" ? false : astToggleDefaults.usePresetAntibiotics,
+  );
 
   const [astRows, setAstRows] = useState<AstRow[]>([
     { breakpointId: null, antibiotic: "", symbol: "", discContent: "", zoneSize: "", sensitivity: "", autoSensitivity: "", manualOverride: false },
@@ -771,6 +794,18 @@ export default function RegisterCase({
       if (!mappedQuestionKey) continue;
       mergedCustomAnswers[mappedQuestionKey] = value;
     }
+    const shouldSkipQuestionValidation = (q: {
+      key: string;
+      label: string;
+      sectionKey?: string;
+    }) => {
+      if (mode !== "hospital") return false;
+      const normalizedSectionKey = normalizeQuestionId(q.sectionKey || "");
+      if (normalizedSectionKey === "sample" || normalizedSectionKey === "ast") return true;
+      if (normalizedSectionKey === "avian" && !isAvianSpecies) return true;
+      if (isAvianSpecies && shouldHideQuestionForAvian(q.key, q.label, q.sectionKey)) return true;
+      return false;
+    };
     const missingRequired =
       (isQuestionRequired("ownerName", true) && !ownerName.trim()) ||
       (isQuestionRequired("ownerAddress", true) && !ownerAddress.trim()) ||
@@ -780,15 +815,15 @@ export default function RegisterCase({
       (!isAvianSpecies && isQuestionRequired("animalName") && !animalName.trim()) ||
       (isQuestionRequired("age") && !ageValue.trim()) ||
       (isQuestionRequired("sex") && !sex.trim()) ||
-      (isQuestionRequired("sampleType") && !sampleType.trim()) ||
-      (isQuestionRequired("sampleDate") && !sampleDateBs.trim()) ||
-      (isQuestionRequired("cultureResult") && !cultureResult.trim()) ||
+      (mode !== "hospital" && isQuestionRequired("sampleType") && !sampleType.trim()) ||
+      (mode !== "hospital" && isQuestionRequired("sampleDate") && !sampleDateBs.trim()) ||
+      (mode !== "hospital" && isQuestionRequired("cultureResult") && !cultureResult.trim()) ||
       (isQuestionRequired("remarks") && !remarks.trim()) ||
       allQuestions.some(
         (q) =>
+          !shouldSkipQuestionValidation(q) &&
           !q.isBuiltin &&
           !(mode === "hospital" && isHospitalBuiltinQuestionKeyOrLabel(q.key, q.label, q.sectionKey)) &&
-          !(isAvianSpecies && shouldHideQuestionForAvian(q.key, q.label, q.sectionKey)) &&
           q.enabled &&
           q.required &&
           (Array.isArray(mergedCustomAnswers[q.key])
@@ -798,6 +833,7 @@ export default function RegisterCase({
     const missingHospitalBuiltinRequired =
       mode === "hospital" &&
       allQuestions.some((q) => {
+        if (shouldSkipQuestionValidation(q)) return false;
         if (!q.enabled || !q.required) return false;
         if (!isHospitalBuiltinQuestionKeyOrLabel(q.key, q.label, q.sectionKey)) return false;
         const normalized = normalizeQuestionId(q.key || q.label || "");
@@ -1048,6 +1084,7 @@ export default function RegisterCase({
       billNumber: billNumber || null,
       dailyNumber: caseInfo?.dailyNumber || 1,
       monthlyNumber: caseInfo?.monthlyNumber || 1,
+      yearlyNumber: caseInfo?.yearlyNumber || 1,
       date: dateBs,
       dateAd: dateAd || null,
       ownerName: toTitleCase(ownerName),
@@ -1438,16 +1475,35 @@ export default function RegisterCase({
     }
     return !hideOptionalFields || required;
   };
-  const isBulletPointsEnabled = (fieldKey: string, fallback = false) =>
-    bulletPointModes[fieldKey] ?? fallback;
+  const isBulletPointsEnabled = (fieldKey: string, fallback = false) => {
+    if (bulletPointModes[fieldKey] !== undefined) return bulletPointModes[fieldKey]!;
+    if (mode === "hospital") {
+      if (fieldKey === "historyNotes") return hospitalToggleDefaults?.historyNotesBulletPoints ?? fallback;
+      if (fieldKey === "previousMedicationNotes") {
+        return hospitalToggleDefaults?.previousMedicationNotesBulletPoints ?? fallback;
+      }
+      if (fieldKey === "clinicalSignsSymptomsNotes") {
+        return hospitalToggleDefaults?.clinicalSignsSymptomsNotesBulletPoints ?? fallback;
+      }
+      if (fieldKey.startsWith("chiefComplaint:")) {
+        return hospitalToggleDefaults?.chiefComplaintBulletPoints ?? fallback;
+      }
+    }
+    return fallback;
+  };
   useEffect(() => {
+    const hospitalDefaults = hospitalToggleDefaults ?? {
+      historyNotesBulletPoints: true,
+      previousMedicationNotesBulletPoints: true,
+      clinicalSignsSymptomsNotesBulletPoints: true,
+    };
     setBulletPointModes((prev) => ({
       ...prev,
-      historyNotes: true,
-      previousMedicationNotes: true,
-      clinicalSignsSymptomsNotes: true,
+      historyNotes: hospitalDefaults.historyNotesBulletPoints,
+      previousMedicationNotes: hospitalDefaults.previousMedicationNotesBulletPoints,
+      clinicalSignsSymptomsNotes: hospitalDefaults.clinicalSignsSymptomsNotesBulletPoints,
     }));
-  }, []);
+  }, [mode, hospitalToggleDefaults]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
@@ -1466,6 +1522,7 @@ export default function RegisterCase({
             <span>Case #{displayCaseNumber}</span>
             <span>Day #{caseInfo?.dailyNumber || "..."}</span>
             <span>Month #{caseInfo?.monthlyNumber || "..."}</span>
+            <span>Year #{caseInfo?.yearlyNumber || "..."}</span>
           </div>
         </div>
       </div>

@@ -12,6 +12,7 @@ import AstSettingsPage from "@/pages/ast-settings";
 import AstFormEditorPage from "@/pages/ast-form-editor";
 import NewCaseHome from "@/pages/new-case-home";
 import HospitalFormEditorPage from "@/pages/hospital-form-editor";
+import HospitalSettingsPage from "@/pages/hospital-settings";
 import RegisterCase from "@/pages/register-case";
 import CaseList from "@/pages/case-list";
 import CaseView from "@/pages/case-view";
@@ -19,7 +20,9 @@ import PrintReport from "@/pages/print-report";
 import BreakpointsPage from "@/pages/breakpoints";
 import AdminPanel from "@/pages/admin";
 import ExportDataPage from "@/pages/export-data";
+import HospitalExportDataPage from "@/pages/hospital-export-data";
 import DashboardPage from "@/pages/dashboard";
+import HospitalDashboardPage from "@/pages/hospital-dashboard";
 import NotFound from "@/pages/not-found";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import ProfilePage from "./pages/profile";
@@ -31,7 +34,12 @@ function ProtectedRoutes() {
     isStudent,
     canRegisterAstCase,
     canRegisterHospitalCase,
+    canViewAstCases,
+    canViewHospitalCases,
+    canDownloadAst,
     canViewDashboard,
+    canViewVthDashboard,
+    canManageAstAdmin,
     isLoading,
   } = useAuth();
 
@@ -63,7 +71,12 @@ function ProtectedRoutes() {
         <Switch>
           <Route path="/" component={Welcome} />
           <Route path="/new-case" component={NewCaseHome} />
-          <Route path="/new-case/form-editor" component={HospitalFormEditorPage} />
+          <Route path="/new-case/form-editor">
+            {canManageAstAdmin ? <HospitalFormEditorPage /> : <Redirect to="/new-case" />}
+          </Route>
+          <Route path="/new-case/settings">
+            {canManageAstAdmin ? <HospitalSettingsPage /> : <Redirect to="/new-case" />}
+          </Route>
           <Route path="/new-case/register">
             {canRegisterHospitalCase ? (
               <RegisterCase
@@ -79,7 +92,9 @@ function ProtectedRoutes() {
             )}
           </Route>
           <Route path="/ast-report" component={AstReportHome} />
-          <Route path="/ast-report/settings" component={AstSettingsPage} />
+          <Route path="/ast-report/settings">
+            {canManageAstAdmin ? <AstSettingsPage /> : <Redirect to="/ast-report" />}
+          </Route>
           {isAdmin && (
             <Route path="/ast-report/form-editor" component={AstFormEditorPage} />
           )}
@@ -95,21 +110,62 @@ function ProtectedRoutes() {
             </Route>
           )}
           <Route path="/new-case/cases">
-            <CaseList backHref="/new-case" />
+            {canViewHospitalCases ? (
+              <CaseList backHref="/new-case" scope="hospital" />
+            ) : (
+              <Redirect to="/new-case" />
+            )}
           </Route>
           <Route path="/ast-report/cases">
-            <CaseList backHref="/ast-report" />
+            {canViewAstCases ? (
+              <CaseList backHref="/ast-report" scope="ast" />
+            ) : (
+              <Redirect to="/ast-report" />
+            )}
           </Route>
           <Route path="/cases">
-            <CaseList />
+            <Redirect to="/ast-report/cases" />
           </Route>
           <Route path="/dashboard">
-            {canViewDashboard ? <DashboardPage /> : <Redirect to="/ast-report" />}
+            {canViewDashboard ? (
+              <DashboardPage
+                scope="ast"
+                title="AMR Statistical Dashboard"
+                subtitle="Veterinary AST surveillance dashboard"
+                backHref="/ast-report"
+              />
+            ) : (
+              <Redirect to="/ast-report" />
+            )}
           </Route>
-          <Route path="/cases/:id" component={CaseView} />
-          <Route path="/print/:id" component={PrintReport} />
-          <Route path="/export" component={ExportDataPage} />
-          {isAdmin && <Route path="/breakpoints" component={BreakpointsPage} />}
+          <Route path="/new-case/dashboard">
+            {canViewVthDashboard ? <HospitalDashboardPage /> : <Redirect to="/new-case" />}
+          </Route>
+          <Route path="/ast-report/cases/:id">
+            {canViewAstCases ? <CaseView /> : <Redirect to="/ast-report/cases" />}
+          </Route>
+          <Route path="/new-case/cases/:id">
+            {canViewHospitalCases ? <CaseView /> : <Redirect to="/new-case/cases" />}
+          </Route>
+          <Route path="/ast-report/print/:id">
+            {canViewAstCases ? <PrintReport /> : <Redirect to="/ast-report/cases" />}
+          </Route>
+          <Route path="/new-case/print/:id">
+            {canViewHospitalCases ? <PrintReport /> : <Redirect to="/new-case/cases" />}
+          </Route>
+          <Route path="/cases/:id">
+            <Redirect to="/ast-report/cases" />
+          </Route>
+          <Route path="/print/:id">
+            <Redirect to="/ast-report/cases" />
+          </Route>
+          <Route path="/export">
+            {canDownloadAst || isStudent ? <ExportDataPage /> : <Redirect to="/ast-report" />}
+          </Route>
+          <Route path="/new-case/export">
+            {canDownloadAst || isStudent ? <HospitalExportDataPage /> : <Redirect to="/new-case" />}
+          </Route>
+          {canManageAstAdmin && <Route path="/breakpoints" component={BreakpointsPage} />}
           {isAdmin && (
             <Route path="/admin/downloads">
               <AdminPanel forcedTab="downloads" />

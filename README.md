@@ -111,14 +111,23 @@ Main routes:
 - `/new-case/register` - hospital registration
 - `/new-case/form-editor` - hospital form editor
 - `/new-case/cases` - hospital case history
+- `/new-case/cases/:id` - hospital case detail (strict namespace)
+- `/new-case/print/:id` - hospital print preview (strict namespace)
 - `/ast-report` - AST home
 - `/ast-report/settings` - AST settings
 - `/ast-report/form-editor` - AST form editor (admin only)
 - `/ast-report/cases` - AST case history
+- `/ast-report/cases/:id` - AST case detail (strict namespace)
+- `/ast-report/print/:id` - AST print preview (strict namespace)
 - `/register` - AST registration (permission-gated)
 - `/breakpoints` - breakpoints admin
 - `/admin` and `/admin/downloads` - admin panel
 - `/profile` - account/profile page
+
+Legacy compatibility redirects:
+- `/cases` -> `/ast-report/cases`
+- `/cases/:id` -> `/ast-report/cases`
+- `/print/:id` -> `/ast-report/cases`
 
 ---
 
@@ -421,7 +430,7 @@ Current effective capability model (see `server/routes/context.ts`):
   - `hospital.case.create`, `hospital.case.view`, `ast.case.view`
   - note: download path for students is handled by request-approval logic in `canDownload`
 - `pending`
-  - effectively blocked by approval checks
+  - no case-view/create capabilities (blocked from AST/Hospital case flows)
 
 When changing these, keep server + client fallback logic in sync:
 - server: `server/routes/context.ts`
@@ -487,6 +496,38 @@ Canonical touchpoints:
 3. Add frontend mutation in `admin.tsx` (or page-specific file)
 4. Add audit log write if action is sensitive/config-changing
 5. Add/adjust tests
+
+---
+
+## 23) Recent Hardening Changes (Important)
+
+These changes were applied to prevent cross-module leakage and privilege issues:
+
+- **Strict route namespacing as hard boundary**
+  - Case detail/print routes are module-namespaced:
+    - AST: `/ast-report/cases/:id`, `/ast-report/print/:id`
+    - Hospital: `/new-case/cases/:id`, `/new-case/print/:id`
+  - Shared legacy routes are redirects only.
+
+- **Pending role restrictions**
+  - Pending users no longer have AST/Hospital case view/create capabilities.
+
+- **Dashboard scope auth tightening**
+  - `GET /api/dashboard/summary` now requires scope-specific case-view capability in addition to dashboard visibility flags.
+
+- **Admin security fixes**
+  - `/api/admin/users/:id/approve` no longer lets non-superadmin assign admin/superadmin roles.
+  - Password reset request APIs no longer expose password hashes in responses.
+
+- **Counter integrity hardening**
+  - Case creation now computes `caseNumber`, `dailyNumber`, `monthlyNumber`, and `yearlyNumber` on the server (canonical source).
+  - Yearly counter added to shared schema and print/detail UI.
+  - Repair script added: `script/normalize-case-counters.cjs` for historical counter normalization.
+
+- **Regression test coverage added**
+  - `server/routes/cases.scope-permissions.test.ts`
+  - `server/routes/cases.module-scope.e2e.test.ts`
+  - `server/routes/frontend-route-contract.test.ts`
 
 ---
 

@@ -5,6 +5,7 @@ import {
   generateToken,
   resolveCapabilitiesForRole,
   isDashboardVisibleForRole,
+  isVthDashboardVisibleForRole,
   requireAuth,
   sessions,
 } from "./context";
@@ -96,6 +97,8 @@ export function registerAuthRoutes(app: Express) {
       user: {
         ...safeUser,
         dashboardVisible: await isDashboardVisibleForRole(user.role),
+        astDashboardVisible: await isDashboardVisibleForRole(user.role),
+        vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
@@ -129,6 +132,8 @@ export function registerAuthRoutes(app: Express) {
     res.json({
       ...safeUser,
       dashboardVisible: await isDashboardVisibleForRole(user.role),
+      astDashboardVisible: await isDashboardVisibleForRole(user.role),
+      vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
       capabilities: resolveCapabilitiesForRole(user.role),
     });
   });

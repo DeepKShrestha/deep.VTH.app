@@ -2,10 +2,10 @@ import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
-import { ArrowLeft, ClipboardPlus, FolderSearch, Settings2 } from "lucide-react";
+import { ArrowLeft, ClipboardPlus, FolderSearch, Settings2, Download, BarChart3 } from "lucide-react";
 
 export default function NewCaseHome() {
-  const { canManageAstAdmin } = useAuth();
+  const { canManageAstAdmin, canDownload, isStudent, canViewVthDashboard } = useAuth();
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -58,31 +58,79 @@ export default function NewCaseHome() {
               See all previously saved cases and open detailed records.
             </p>
             <Link href="/new-case/cases" className="mt-auto">
-              <Button variant="secondary" className="w-full" data-testid="button-view-new-case-history">
+              <Button
+                className="w-full bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300"
+                data-testid="button-view-new-case-history"
+              >
                 View Previous Cases
               </Button>
             </Link>
           </CardContent>
         </Card>
 
+        {(canDownload || isStudent) && (
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Download className="w-4 h-4 text-primary shrink-0" />
+                Export / Download
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                Export hospital case registration data and generate downloadable reports.
+              </p>
+              <Link href="/new-case/export" className="mt-auto">
+                <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white">
+                  Open Export Tools
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
+        {canViewVthDashboard && (
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-primary shrink-0" />
+                Dashboard
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                View trends and summary insights from hospital data.
+              </p>
+              <Link href="/new-case/dashboard" className="mt-auto">
+                <Button
+                  className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+                  data-testid="button-open-hospital-dashboard"
+                >
+                  Open Dashboard
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
         {canManageAstAdmin && (
           <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Settings2 className="w-4 h-4 text-primary shrink-0" />
-                Edit Hospital Case Form
+                Settings
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
-                Configure sections, questions, options, and required fields for hospital case registration.
+                Manage hospital register-form defaults, layout, and species/breed configuration.
               </p>
-              <Link href="/new-case/form-editor" className="mt-auto">
+              <Link href="/new-case/settings" className="mt-auto">
                 <Button
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                  data-testid="button-edit-hospital-form"
+                  data-testid="button-open-hospital-settings"
                 >
-                  Open Form Editor
+                  Open Settings
                 </Button>
               </Link>
             </CardContent>

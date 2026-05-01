@@ -135,14 +135,39 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
     role TEXT PRIMARY KEY,
     dashboard_visible INTEGER NOT NULL DEFAULT 1,
+    vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
   )`);
+  try {
+    await dbRun(sql`SELECT vth_dashboard_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN vth_dashboard_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+    await dbRun(
+      sql`UPDATE role_feature_visibility
+          SET vth_dashboard_visible = dashboard_visible
+          WHERE role IS NOT NULL`,
+    );
+  }
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
     notification_key TEXT PRIMARY KEY,
     is_read INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
     updated_by INTEGER,
     updated_at TEXT NOT NULL
+  )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS case_change_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER,
+    case_number TEXT NOT NULL,
+    case_scope TEXT NOT NULL,
+    action TEXT NOT NULL,
+    actor_user_id INTEGER NOT NULL,
+    actor_role TEXT NOT NULL,
+    actor_name TEXT NOT NULL,
+    actor_username TEXT NOT NULL,
+    created_at TEXT NOT NULL
   )`);
 
     try {
@@ -159,6 +184,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     bill_number TEXT,
     daily_number INTEGER,
     monthly_number INTEGER,
+    yearly_number INTEGER,
     date TEXT NOT NULL,
     date_ad TEXT,
     owner_name TEXT NOT NULL,
@@ -201,6 +227,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } catch {
       // download_requests table may not exist on old DBs until migration is applied
     }
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_change_logs_created_at_idx ON case_change_logs(created_at)`,
+    );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_change_logs_scope_idx ON case_change_logs(case_scope)`,
+    );
     try {
       await dbRun(sql`SELECT resolved_by FROM download_requests LIMIT 1`);
     } catch {
@@ -226,6 +258,29 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
     }
+    try {
+      await dbRun(sql`SELECT yearly_number FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN yearly_number INTEGER`);
+    }
+    await dbRun(sql`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              CASE WHEN UPPER(case_number) LIKE 'CASE-%' THEN 'hospital' ELSE 'ast' END,
+              substr(date, 1, 4)
+            ORDER BY created_at, id
+          ) AS rn
+        FROM cases
+      )
+      UPDATE cases
+      SET yearly_number = (
+        SELECT rn FROM ranked WHERE ranked.id = cases.id
+      )
+      WHERE yearly_number IS NULL
+    `);
     try {
       await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
     } catch {
@@ -375,8 +430,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE TABLE IF NOT EXISTS role_feature_visibility (
       role TEXT PRIMARY KEY,
       dashboard_visible INTEGER NOT NULL DEFAULT 1,
+      vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL
     )`);
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS vth_dashboard_visible INTEGER NOT NULL DEFAULT 1`,
+    );
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
       notification_key TEXT PRIMARY KEY,
       is_read INTEGER NOT NULL DEFAULT 0,
@@ -384,12 +443,25 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       updated_by INTEGER,
       updated_at TEXT NOT NULL
     )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS case_change_logs (
+      id SERIAL PRIMARY KEY,
+      case_id INTEGER,
+      case_number TEXT NOT NULL,
+      case_scope TEXT NOT NULL,
+      action TEXT NOT NULL,
+      actor_user_id INTEGER NOT NULL,
+      actor_role TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      actor_username TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
       id SERIAL PRIMARY KEY,
       case_number TEXT NOT NULL,
       bill_number TEXT,
       daily_number INTEGER,
       monthly_number INTEGER,
+      yearly_number INTEGER,
       date TEXT NOT NULL,
       date_ad TEXT,
       owner_name TEXT NOT NULL,
@@ -423,6 +495,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by_name TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS custom_fields TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS yearly_number INTEGER`);
+    await dbRun(sql`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              CASE WHEN UPPER(case_number) LIKE 'CASE-%' THEN 'hospital' ELSE 'ast' END,
+              substr(date, 1, 4)
+            ORDER BY created_at, id
+          ) AS rn
+        FROM cases
+      )
+      UPDATE cases
+      SET yearly_number = ranked.rn
+      FROM ranked
+      WHERE cases.id = ranked.id AND cases.yearly_number IS NULL
+    `);
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_change_logs_created_at_idx ON case_change_logs(created_at)`,
+    );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_change_logs_scope_idx ON case_change_logs(case_scope)`,
+    );
   }
 
   const existingBps = await domainRepo.getBreakpoints();
@@ -843,8 +939,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     if (!exists) {
       await dbRun(
-        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, updated_at)
-            VALUES (${role}, ${1}, ${new Date().toISOString()})`,
+        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, vth_dashboard_visible, updated_at)
+            VALUES (${role}, ${1}, ${1}, ${new Date().toISOString()})`,
       );
     }
   }

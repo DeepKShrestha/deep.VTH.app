@@ -5,6 +5,7 @@ import {
   getIdParam,
   getPaginationParams,
   isDashboardVisibleForRole,
+  isVthDashboardVisibleForRole,
   isAdminRole,
   requireAuth,
   requireRole,
@@ -32,6 +33,14 @@ const HIDDEN_SUPERADMIN_EMAIL =
   process.env.HIDDEN_SUPERADMIN_EMAIL?.trim() ||
   "system.superadmin@localhost";
 const hiddenSuperadminEnabled = process.env.HIDDEN_SUPERADMIN_ENABLED === "true";
+const ALLOWED_USER_ROLES = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
+type AllowedUserRole = (typeof ALLOWED_USER_ROLES)[number];
+
+function parseAllowedUserRole(raw: unknown): AllowedUserRole | null {
+  const role = String(raw ?? "").trim().toLowerCase();
+  return (ALLOWED_USER_ROLES as readonly string[]).includes(role) ? (role as AllowedUserRole) : null;
+}
+
 function isHiddenSuperadminUser(user: {
   username: string;
   email: string;
@@ -86,12 +95,12 @@ type PasswordResetRequestRow = {
   resolved_at: string | null;
 };
 
+
 function toPasswordResetRequest(row: PasswordResetRequestRow) {
   return {
     id: row.id,
     userId: row.user_id,
     requestedByRole: row.requested_by_role,
-    passwordHash: row.password_hash,
     reason: row.reason,
     status: row.status,
     resolvedBy: row.resolved_by,
@@ -222,6 +231,22 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  app.get(
+    "/api/admin/feature-visibility/vth-dashboard",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
+      const visibility = await Promise.all(
+        roles.map(async (role) => ({
+          role,
+          dashboardVisible: await isVthDashboardVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
   app.patch(
     "/api/admin/feature-visibility/dashboard/:role",
     requireAuth,
@@ -248,6 +273,49 @@ export function registerAdminRoutes(app: Express) {
               ${currentUser.id},
               ${currentUser.role},
               ${"set_dashboard_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ dashboardVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, dashboardVisible });
+    },
+  );
+
+  app.patch(
+    "/api/admin/feature-visibility/vth-dashboard/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const dashboardVisible = Boolean(req.body?.dashboardVisible);
+      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      try {
+        await dbGet(sql`SELECT vth_dashboard_visible FROM role_feature_visibility LIMIT 1`);
+      } catch {
+        await dbRun(
+          sql`ALTER TABLE role_feature_visibility ADD COLUMN vth_dashboard_visible INTEGER NOT NULL DEFAULT 1`,
+        );
+      }
+      await dbRun(
+        sql`INSERT INTO role_feature_visibility (role, vth_dashboard_visible, updated_at)
+            VALUES (${role}, ${dashboardVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              vth_dashboard_visible = excluded.vth_dashboard_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_vth_dashboard_visibility_by_role"},
               ${role},
               ${null},
               ${JSON.stringify({ dashboardVisible })},
@@ -1051,10 +1119,19 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (req, res) => {
-      const { role } = req.body;
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const parsedRole = parseAllowedUserRole(req.body?.role ?? "staff");
+      if (!parsedRole) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (currentUser.role !== "superadmin" && isAdminRole(parsedRole)) {
+        return res.status(403).json({
+          message: "Only Super Admin can assign admin roles during approval",
+        });
+      }
       const id = getIdParam(req);
       const user = await authSessionRepo.updateUser(id, {
-        role: role || "staff",
+        role: parsedRole,
         approved: true,
       });
       if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
@@ -1094,7 +1171,10 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
-      const { role } = req.body;
+      const role = parseAllowedUserRole(req.body?.role);
+      if (!role) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
       const id = getIdParam(req);
       const targetUser = await authSessionRepo.getUserById(id);
       if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
@@ -1343,7 +1423,7 @@ export function registerAdminRoutes(app: Express) {
         const user = await authSessionRepo.getUserById(targetMapped.userId);
         if (!user) return res.status(404).json({ message: "User not found" });
         await authSessionRepo.updateUser(user.id, {
-          passwordHash: targetMapped.passwordHash,
+          passwordHash: target.password_hash,
         });
       }
 
@@ -1364,4 +1444,5 @@ export function registerAdminRoutes(app: Express) {
       res.json(toPasswordResetRequest(resolved));
     },
   );
+
 }

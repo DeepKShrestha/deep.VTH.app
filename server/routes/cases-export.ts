@@ -34,6 +34,7 @@ export function toExportRows(casesData: Case[]): ExportRow[] {
       "Date (AD)": c.dateAd || "",
       "Daily #": c.dailyNumber || "",
       "Monthly #": c.monthlyNumber || "",
+      "Yearly #": c.yearlyNumber || "",
       "Owner Name": c.ownerName,
       Address: c.ownerAddress,
       Phone: c.ownerPhone,
@@ -51,6 +52,67 @@ export function toExportRows(casesData: Case[]): ExportRow[] {
       "Sensitivity Results": sensitivities,
       Remarks: c.remarks || "",
     };
+  });
+}
+
+function parseCustomFields(customFields: string | null): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(customFields || "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function toHospitalExportRows(casesData: Case[]): ExportRow[] {
+  const customFieldLabels = new Set<string>();
+  const parsedCustomFields = casesData.map((c) => {
+    const fields = parseCustomFields(c.customFields);
+    Object.keys(fields).forEach((key) => customFieldLabels.add(key));
+    return fields;
+  });
+  const orderedCustomFieldLabels = Array.from(customFieldLabels).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  return casesData.map((c, index) => {
+    const base: ExportRow = {
+      "Case No": c.caseNumber,
+      "Bill No": c.billNumber || "",
+      "Date (BS)": c.date,
+      "Date (AD)": c.dateAd || "",
+      "Daily #": c.dailyNumber || "",
+      "Monthly #": c.monthlyNumber || "",
+      "Yearly #": c.yearlyNumber || "",
+      "Owner Name": c.ownerName,
+      Address: c.ownerAddress,
+      Phone: c.ownerPhone,
+      Species: c.species,
+      Breed: c.breed,
+      "Animal Name": c.animalName || "",
+      Age: c.age || "",
+      Sex: c.sex || "",
+      "Sample Type": c.sampleType || "",
+      "Sample Date (BS)": c.sampleDate || "",
+      "Sample Date (AD)": c.sampleDateAd || "",
+      "Culture/Organism": c.cultureResult || "",
+      Remarks: c.remarks || "",
+    };
+
+    const customFields = parsedCustomFields[index] ?? {};
+    for (const label of orderedCustomFieldLabels) {
+      const value = customFields[label];
+      base[`Custom: ${label}`] =
+        value === null || value === undefined
+          ? ""
+          : typeof value === "string" || typeof value === "number"
+            ? value
+            : Array.isArray(value)
+              ? value.join("; ")
+              : JSON.stringify(value);
+    }
+
+    return base;
   });
 }
 
