@@ -6,7 +6,7 @@ export type CurrentUser = Pick<
   "id" | "role" | "approved" | "designation"
 >;
 
-export type ApprovedDownloadRequest = Pick<DownloadRequest, "id" | "status">;
+type ApprovedDownloadRequest = Pick<DownloadRequest, "id" | "status">;
 
 export type AuthenticatedRequest = Request & {
   currentUser: CurrentUser;

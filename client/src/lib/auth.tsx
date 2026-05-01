@@ -17,7 +17,7 @@ export type InactivityTimeoutOption =
   | "30m"
   | "never";
 export type ConfirmLogoutPreference = "always" | "never";
-export type PermissionCapability =
+type PermissionCapability =
   | "hospital.case.create"
   | "hospital.case.view"
   | "ast.case.create"
