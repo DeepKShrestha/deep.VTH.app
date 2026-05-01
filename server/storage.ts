@@ -28,7 +28,7 @@ function toSafeUser(user: User): SafeUser {
   return safe;
 }
 
-export interface IStorage {
+interface IStorage {
   // Users
   createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; username: string; passwordHash: string; role: string; approved: boolean }): User;
   getUserByUsername(username: string): User | undefined;
@@ -84,7 +84,7 @@ export interface IStorage {
   deleteBreakpoint(id: number): void;
 }
 
-export class DatabaseStorage implements IStorage {
+class DatabaseStorage implements IStorage {
   // ---- Users ----
   createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; username: string; passwordHash: string; role: string; approved: boolean }): User {
     return db

@@ -45,7 +45,7 @@ export const passwordResetRequests = sqliteTable("password_reset_requests", {
   resolvedAt: text("resolved_at"),
 });
 
-export const caseChangeLogs = sqliteTable("case_change_logs", {
+const caseChangeLogs = sqliteTable("case_change_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   caseId: integer("case_id"),
   caseNumber: text("case_number").notNull(),
@@ -141,26 +141,6 @@ export const insertCaseSchema = createInsertSchema(cases).omit({
 
 export const insertBreakpointSchema = createInsertSchema(breakpoints).omit({
   id: true,
-});
-
-export const insertDownloadRequestSchema = createInsertSchema(downloadRequests).omit({
-  id: true,
-  createdAt: true,
-  status: true,
-  adminNote: true,
-  resolvedBy: true,
-  resolvedAt: true,
-});
-
-export const insertPasswordResetRequestSchema = createInsertSchema(
-  passwordResetRequests,
-).omit({
-  id: true,
-  status: true,
-  resolvedBy: true,
-  resolverNote: true,
-  createdAt: true,
-  resolvedAt: true,
 });
 
 // ---- Types ----
