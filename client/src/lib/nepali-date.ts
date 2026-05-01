@@ -81,14 +81,6 @@ export function formatAdDate(adDate: string): string {
 }
 
 /**
- * Get BS year and month from a BS date string for case number generation
- */
-export function getBsYearMonth(bsDate: string): { year: number; month: string } {
-  const [y, m] = bsDate.split("-").map(Number);
-  return { year: y, month: String(m).padStart(2, "0") };
-}
-
-/**
  * Validate a BS date string (YYYY-MM-DD)
  * Returns true if valid BS date
  */

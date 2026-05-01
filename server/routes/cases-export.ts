@@ -1,13 +1,13 @@
 import type { Case } from "@shared/schema";
 
-export type AstItem = {
+type AstItem = {
   antibiotic?: string;
   symbol?: string;
   zoneSize?: string | number;
   sensitivity?: string;
 };
 
-export type ExportRow = Record<string, string | number>;
+type ExportRow = Record<string, string | number>;
 
 export function parseAstResults(astResults: string | null): AstItem[] {
   try {

@@ -128,17 +128,6 @@ export function hasCapability(role: string, capability: PermissionCapability): b
   return resolveCapabilitiesForRole(role).includes(capability);
 }
 
-export function requireCapability(capability: PermissionCapability) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const user = (req as AuthenticatedRequest).currentUser;
-    if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
-    if (!hasCapability(user.role, capability)) {
-      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
-    }
-    next();
-  };
-}
-
 export function requireAnyCapability(...capabilities: PermissionCapability[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as AuthenticatedRequest).currentUser;
@@ -298,10 +287,6 @@ function canDownloadBySource(source: "ast_report" | "hospital_case") {
 
 export function canDownloadHospital(req: Request, res: Response, next: NextFunction) {
   return canDownloadBySource("hospital_case")(req, res, next);
-}
-
-export function canDownloadAst(req: Request, res: Response, next: NextFunction) {
-  return canDownloadBySource("ast_report")(req, res, next);
 }
 
 export const SEED_BREAKPOINTS = [

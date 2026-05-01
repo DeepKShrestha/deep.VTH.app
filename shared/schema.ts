@@ -164,19 +164,13 @@ export const insertPasswordResetRequestSchema = createInsertSchema(
 });
 
 // ---- Types ----
-export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertCase = z.infer<typeof insertCaseSchema>;
 export type Case = typeof cases.$inferSelect;
 export type InsertBreakpoint = z.infer<typeof insertBreakpointSchema>;
 export type Breakpoint = typeof breakpoints.$inferSelect;
 export type DownloadRequest = typeof downloadRequests.$inferSelect;
-export type InsertDownloadRequest = z.infer<typeof insertDownloadRequestSchema>;
 export type PasswordResetRequest = typeof passwordResetRequests.$inferSelect;
-export type InsertPasswordResetRequest = z.infer<
-  typeof insertPasswordResetRequestSchema
->;
-export type CaseChangeLog = typeof caseChangeLogs.$inferSelect;
 
 // Safe user type (without password hash) for frontend
 export type SafeUser = Omit<User, "passwordHash">;
