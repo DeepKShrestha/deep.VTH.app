@@ -9,7 +9,7 @@ type AstItem = {
 
 type ExportRow = Record<string, string | number>;
 
-export function parseAstResults(astResults: string | null): AstItem[] {
+function parseAstResults(astResults: string | null): AstItem[] {
   try {
     const parsed = JSON.parse(astResults || "[]");
     return Array.isArray(parsed) ? parsed : [];

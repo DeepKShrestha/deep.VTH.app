@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Case } from "@shared/schema";
-import { parseAstResults, rowsToCsv, toExportRows } from "./cases-export";
+import { rowsToCsv, toExportRows } from "./cases-export";
 
 function makeCase(overrides: Partial<Case> = {}): Case {
   return {
@@ -38,8 +38,11 @@ function makeCase(overrides: Partial<Case> = {}): Case {
 }
 
 describe("cases export helpers", () => {
-  it("safely parses invalid AST json", () => {
-    expect(parseAstResults("bad-json")).toEqual([]);
+  it("handles invalid AST json safely in export rows", () => {
+    const rows = toExportRows([makeCase({ astResults: "bad-json" })]);
+    expect(rows[0]["Antibiotics Tested"]).toBe("");
+    expect(rows[0]["Zone Sizes (mm)"]).toBe("");
+    expect(rows[0]["Sensitivity Results"]).toBe("");
   });
 
   it("builds export rows with AST summary fields", () => {
