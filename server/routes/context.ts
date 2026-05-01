@@ -54,7 +54,7 @@ export function generateToken(): string {
   return crypto.randomBytes(48).toString("hex");
 }
 
-export async function getCurrentUser(req: Request) {
+async function getCurrentUser(req: Request) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   const token = authHeader.substring(7);
@@ -97,7 +97,7 @@ export function isAdminRole(role: string): boolean {
   return role === "superadmin" || role === "admin";
 }
 
-export type PermissionCapability =
+type PermissionCapability =
   | "hospital.case.create"
   | "hospital.case.view"
   | "ast.case.create"
