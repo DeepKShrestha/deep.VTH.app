@@ -42,6 +42,11 @@ class MockApp {
     delete: new Map(),
   };
 
+  /** `registerCaseAndDownloadRoutes` registers static middleware here; these tests only hit JSON routes. */
+  use(..._args: unknown[]): void {
+    void _args;
+  }
+
   get(path: string, ...handlers: Handler[]) {
     this.routes.get.set(path, handlers);
   }

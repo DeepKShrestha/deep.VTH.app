@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { Pool } from "pg";
 import { dbGet } from "./db-query";
 import { scheduleTempCaseAttachmentCleanup } from "./temp-attachment-cleanup";
+import { scheduleSiteBackupJobs } from "./backup-scheduler";
 
 const app = express();
 const httpServer = createServer(app);
@@ -239,6 +240,7 @@ app.get("/api/ready", async (_req, res) => {
       log(`db provider: ${DB_PROVIDER}`);
       log(`using database: ${DB_FILE}`);
       scheduleTempCaseAttachmentCleanup();
+      scheduleSiteBackupJobs();
     },
   );
 

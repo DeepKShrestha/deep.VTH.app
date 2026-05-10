@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { DB_PROVIDER } from "./db";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerVeterinarianAdminRoutes } from "./routes/veterinarians-admin";
+import { registerBackupAdminRoutes } from "./routes/backup-admin";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBreakpointRoutes } from "./routes/breakpoints";
 import { registerCaseAndDownloadRoutes, registerExportRoutes } from "./routes/cases";
@@ -1221,6 +1222,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   registerAuthRoutes(app);
   registerAdminRoutes(app);
   registerVeterinarianAdminRoutes(app);
+  registerBackupAdminRoutes(app);
   registerCaseAndDownloadRoutes(app);
   registerExportRoutes(app);
   registerBreakpointRoutes(app);

@@ -273,6 +273,38 @@ Postgres checks:
 - `npm run check:pg`
 - `npm run smoke:pg:auth`
 
+Production process:
+- `npm run build` then `npm run start` (or `npm run start:sqlite` for SQLite-only prod)
+- Pre-release checklist: `docs/RELEASE.md` and `docs/OPERATIONS.md`
+
+Site backup / restore (SQLite smoke, optional):
+- `npx tsx script/smoke-backup-restore.ts` — copies `./data.db` to a temp tree, runs backup + restore checks (requires an existing dev `data.db`).
+
+---
+
+## 12a) Production deployment (summary)
+
+The app is designed to run as a **single Node process** behind a reverse proxy (nginx, Caddy, or a PaaS edge) that terminates **TLS**. The server sets `trust proxy` for correct client IP behavior behind one proxy hop.
+
+**Typical single-VM layout**
+
+1. Set environment variables (start from `.env.example`); use **absolute paths** for `DB_FILE`, `CASE_ATTACHMENTS_DIR`, and `BACKUP_LOCAL_DIR` in production.
+2. `npm ci` (or `npm install`), then `npm run verify`, then `npm run build`.
+3. Run `npm run start` under a process manager (systemd, PM2, or your platform’s supervisor).
+4. Point the reverse proxy at `PORT` (default in `.env.example` is `5000`; dev uses `5001` in `npm run dev`).
+5. Validate `GET /api/health` and `GET /api/ready` after deploy.
+
+**Database choice**
+
+- **SQLite** — acceptable for a **single instance** with file backups; see `npm run backup:db` / `restore:db` and superadmin **full-site** backup below.
+- **Postgres** — use when you need **multiple app instances**, managed backups, or stricter operational defaults (`DB_PROVIDER=postgres`, `DATABASE_URL`, migrations under `migrations-pg/`). Postgres **site backup** expects `pg_dump` / `psql` on the server `PATH` or set `PG_BIN` to the PostgreSQL `bin` directory.
+
+**Full-site backup (superadmin)**
+
+- UI: Admin panel → **Backup** tab (superadmin only): run backup, download zips, settings (scheduled backup, retention, optional S3 upload), restore (requires typing the confirmation phrase exactly: `RESTORE_SITE_DATA`).
+- Optional S3 upload: set `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (see `server/services/backup-remote.ts`).
+- There is **no Dockerfile** in this repo; add one or use your host’s standard Node deployment pattern if you need containerized releases.
+
 ---
 
 ## 13) API Surface (High-level)
@@ -298,6 +330,7 @@ Postgres checks:
 - download requests
 - password reset requests
 - dashboard visibility settings
+- site backup / restore (`/api/admin/backup/*`, superadmin only)
 
 ### Cases
 - case CRUD/history/view/export
@@ -347,6 +380,10 @@ From `.env.example` and runtime usage:
 - `HIDDEN_SUPERADMIN_EMAIL`
 - `HIDDEN_SUPERADMIN_PASSWORD`
 - `LOG_RESPONSE_BODIES`
+- `CASE_ATTACHMENTS_DIR` — absolute path for case attachment files (defaults under `./uploads/case-attachments`)
+- `BACKUP_LOCAL_DIR` — absolute path for site backup zip output (defaults under `./backups/site`)
+- `PG_BIN` — optional directory containing `pg_dump` / `psql` for Postgres site backup/restore
+- `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION` — optional remote backup upload (with AWS access keys)
 
 Production guidance:
 - disable `ALLOW_DEFAULT_ADMIN` after bootstrap

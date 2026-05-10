@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -17,9 +17,22 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowDown, ArrowLeft, ArrowUp, Download, Plus, Trash2, UserCheck, UserX, Users, Clock } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Download,
+  HardDrive,
+  Plus,
+  Trash2,
+  UserCheck,
+  UserX,
+  Users,
+  Clock,
+} from "lucide-react";
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 import { adToBs } from "@/lib/nepali-date";
+import { AdminSiteBackupPanel } from "@/components/admin-site-backup-panel";
 type FormEditLog = {
   id: number;
   actorUserId: number;
@@ -179,7 +192,9 @@ export default function AdminPanel({
   const [openCatalogPanel, setOpenCatalogPanel] = useState<"species" | "breeds" | null>(null);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
   const search = useSearch();
-  const initialTabFromUrl = (() => {
+  const { toast } = useToast();
+  const { user: currentUser, updateCurrentUser, isSuperAdmin } = useAuth();
+  const initialTabFromUrl = useMemo(() => {
     if (forcedTab) return forcedTab;
     const rawSearch = (search || "").replace(/^\?/, "");
     if (!rawSearch) return mode === "form-only" ? "form-options" : "pending";
@@ -187,13 +202,25 @@ export default function AdminPanel({
     const allowed =
       mode === "form-only"
         ? ["form-options"]
-        : ["pending", "users", "downloads", "password-resets", "access-control", "form-options"];
+        : [
+            "pending",
+            "users",
+            "downloads",
+            "password-resets",
+            "access-control",
+            ...(isSuperAdmin ? ["backup"] : []),
+            "form-options",
+          ];
     return tab && allowed.includes(tab) ? tab : mode === "form-only" ? "form-options" : "pending";
-  })();
+  }, [forcedTab, search, mode, isSuperAdmin]);
   const [activeTab, setActiveTab] = useState(initialTabFromUrl);
   useEffect(() => {
     setActiveTab(initialTabFromUrl);
   }, [initialTabFromUrl]);
+  useEffect(() => {
+    if (mode !== "full") return;
+    if (activeTab === "backup" && !isSuperAdmin) setActiveTab("pending");
+  }, [activeTab, isSuperAdmin, mode]);
   useEffect(() => {
     if (mode !== "form-only") return;
     const onPointerDown = (event: MouseEvent) => {
@@ -222,8 +249,6 @@ export default function AdminPanel({
     mode === "form-only"
       ? "Manage AST form layout, fields, and options."
       : "Manage users and permissions";
-  const { toast } = useToast();
-  const { user: currentUser, updateCurrentUser } = useAuth();
   const formScope = mode === "form-only" ? "ast" : "hospital";
 
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -348,6 +373,12 @@ export default function AdminPanel({
     }
     if (activeTab === "pending") {
       queryClient.refetchQueries({ queryKey: ["/api/admin/users"] });
+      return;
+    }
+    if (activeTab === "backup") {
+      queryClient.refetchQueries({ queryKey: ["/api/admin/backup/settings"] });
+      queryClient.refetchQueries({ queryKey: ["/api/admin/backup/local-files"] });
+      queryClient.refetchQueries({ queryKey: ["/api/admin/backup/history"] });
     }
   }, [activeTab, mode]);
 
@@ -959,6 +990,16 @@ export default function AdminPanel({
           <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="access-control" data-testid="tab-access-control">
             Access Control
           </TabsTrigger>
+          {isSuperAdmin && (
+            <TabsTrigger
+              className="shrink-0 text-xs sm:text-sm"
+              value="backup"
+              data-testid="tab-backup"
+            >
+              <HardDrive className="w-3.5 h-3.5 mr-1 inline" />
+              Backup
+            </TabsTrigger>
+          )}
         </TabsList>
         )}
 
@@ -1617,6 +1658,12 @@ export default function AdminPanel({
             </CardContent>
           </Card>
         </TabsContent>
+
+        {mode === "full" && isSuperAdmin && (
+          <TabsContent value="backup" className="space-y-3 mt-4">
+            <AdminSiteBackupPanel />
+          </TabsContent>
+        )}
 
         <TabsContent value="form-options" className="space-y-3 mt-4">
           {mode === "form-only" && (

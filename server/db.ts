@@ -19,7 +19,21 @@ if (DB_PROVIDER === "sqlite") {
   }
 }
 
-const sqlite = new Database(DB_PROVIDER === "sqlite" ? DB_FILE : ":memory:");
-sqlite.pragma("journal_mode = WAL");
+let sqliteDriver = new Database(DB_PROVIDER === "sqlite" ? DB_FILE : ":memory:");
+sqliteDriver.pragma("journal_mode = WAL");
 
-export const db = drizzle(sqlite, { schema });
+/** Live binding so callers see a new instance after SQLite restore replaces the file on disk. */
+export let db = drizzle(sqliteDriver, { schema });
+
+/** Close SQLite before overwriting `DB_FILE` (e.g. restore). Call `resumeSqliteAfterExternalDiskReplace` after the new file is in place. */
+export function suspendSqliteForExternalDiskReplace(): void {
+  if (DB_PROVIDER !== "sqlite") return;
+  sqliteDriver.close();
+}
+
+export function resumeSqliteAfterExternalDiskReplace(): void {
+  if (DB_PROVIDER !== "sqlite") return;
+  sqliteDriver = new Database(DB_FILE, { fileMustExist: true });
+  sqliteDriver.pragma("journal_mode = WAL");
+  db = drizzle(sqliteDriver, { schema });
+}
