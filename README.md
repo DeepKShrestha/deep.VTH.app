@@ -11,19 +11,27 @@ This README is a practical handover for the next developer to maintain and exten
 
 ## 1) Quick Start
 
-1. Install dependencies:
-   - `npm install`
-2. Run locally:
-   - `npm run dev`
-3. Open:
-   - `http://localhost:5001/#/`
-4. Validate baseline:
-   - `npm run test`
-   - `npm run check`
-   - `npm run build`
+**Prerequisites**
+
+- **Node.js 20.x** and npm (matches `.github/workflows/ci.yml` and the repo’s TypeScript tooling).
+- On Windows, use a normal shell (PowerShell or cmd); native addons such as `better-sqlite3` may need `npm rebuild better-sqlite3` after Node upgrades (see §22).
+
+**First clone**
+
+1. Copy environment template (optional but recommended for local overrides): create `.env` from `.env.example`. The dev script sets SQLite defaults via `cross-env`, but the server still loads `.env` via `dotenv` (`server/index.ts`).
+2. Install dependencies: `npm install`
+3. Run locally: `npm run dev`
+4. Open: `http://localhost:5001/#/`
+5. Validate baseline: `npm run test`, `npm run check`, `npm run build`
+
+**First login (empty database)**
+
+- If there are **no users** yet (new `DB_FILE`), startup creates a **development bootstrap superadmin** in `server/routes.ts`: username `admin`, password `admin123`. This path runs when `NODE_ENV` is not `production`, or when `ALLOW_DEFAULT_ADMIN=true` in production (discouraged after go-live; see `server/index.ts` warning).
+- Rotate or replace this account before any shared, staging, or production environment.
 
 Recommended before any merge:
-- `npm run verify`
+
+- `npm run verify` (same gates as CI: test + typecheck + build)
 
 ---
 
@@ -43,6 +51,9 @@ Recommended before any merge:
 
 ### Important runtime detail
 - App runs by default on **port 5001** in local dev (`npm run dev`).
+
+### Optional desktop shell
+- The repo includes an **Electron** entry (`npm run app` in `package.json`). Day-to-day development and deployment are centered on the **web app** (`npm run dev` / production Node). Treat Electron as optional unless your team actively ships that target.
 
 ---
 
@@ -158,7 +169,7 @@ When changing permission behavior:
 
 ## 7) Form System: Where to Edit What
 
-## Registration behavior
+### Registration behavior
 - `client/src/pages/register-case.tsx`
   - dynamic section/question rendering
   - bullet mode handling
@@ -166,17 +177,17 @@ When changing permission behavior:
   - custom field normalization on submit
   - scope-aware API usage
 
-## Hospital form editor behavior
+### Hospital form editor behavior
 - `client/src/pages/hospital-form-editor.tsx`
   - section/question layout editing
   - built-in toggles (shown/required)
   - species + breeds catalog editing
 
-## AST form editor behavior
+### AST form editor behavior
 - `client/src/pages/admin.tsx` with `mode="form-only"` and AST filters
 - `client/src/pages/ast-form-editor.tsx` wrapper route page
 
-## Backend form-definition and mutations
+### Backend form-definition and mutations
 - `server/routes/admin.ts` (admin form CRUD)
 - `server/routes/cases.ts` (`/api/form-definition`)
 - `server/routes.ts` bootstrap seeds and default built-ins
@@ -263,6 +274,12 @@ Core:
 - `npm run build`
 - `npm run verify`
 
+Tests (Vitest):
+
+- One-shot: `npm run test`
+- Watch mode while editing: `npx vitest`
+- Route and integration tests use `*.test.ts` under `server/` (see §23 for recently added suites).
+
 DB helpers:
 - `npm run backup:db`
 - `npm run restore:db`
@@ -304,6 +321,13 @@ The app is designed to run as a **single Node process** behind a reverse proxy (
 - UI: Admin panel → **Backup** tab (superadmin only): run backup, download zips, settings (scheduled backup, retention, optional S3 upload), restore (requires typing the confirmation phrase exactly: `RESTORE_SITE_DATA`).
 - Optional S3 upload: set `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (see `server/services/backup-remote.ts`).
 - There is **no Dockerfile** in this repo; add one or use your host’s standard Node deployment pattern if you need containerized releases.
+
+---
+
+## 12b) Continuous integration
+
+- Workflow: `.github/workflows/ci.yml`
+- On push to `main`/`master` and on pull requests: `npm ci`, then `npm run test`, `npm run check`, `npm run build` (align local work with `npm run verify`).
 
 ---
 
@@ -367,7 +391,7 @@ When implementing any feature:
 
 ## 16) Environment Variables
 
-From `.env.example` and runtime usage:
+Variables used across the server, backup/restore, and scripts. **`.env.example` is the canonical template** (required and common optional keys, commented). Copy it to `.env` and uncomment or set values as needed.
 
 - `NODE_ENV`
 - `PORT`
@@ -383,7 +407,12 @@ From `.env.example` and runtime usage:
 - `CASE_ATTACHMENTS_DIR` — absolute path for case attachment files (defaults under `./uploads/case-attachments`)
 - `BACKUP_LOCAL_DIR` — absolute path for site backup zip output (defaults under `./backups/site`)
 - `PG_BIN` — optional directory containing `pg_dump` / `psql` for Postgres site backup/restore
-- `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION` — optional remote backup upload (with AWS access keys)
+- `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION` — optional remote backup upload
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — required with `BACKUP_S3_BUCKET` for S3 upload (`server/services/backup-remote.ts`)
+- `AWS_REGION` — optional default region for S3 client when `BACKUP_S3_REGION` is unset (`server/services/backup-remote.ts`)
+- `DB_BACKUP_DIR` — optional override for SQLite file backup output directory (`script/backup-db.ts`, default `backups`)
+- `DB_RESTORE_FROM` — path to backup file when running `npm run restore:db` (`script/restore-db.ts`)
+- `TEMP_ATTACHMENTS_MAX_AGE_HOURS`, `TEMP_ATTACHMENTS_CLEANUP_INTERVAL_MS` — tune scheduled cleanup of temporary case attachments (`server/temp-attachment-cleanup.ts`)
 
 Production guidance:
 - disable `ALLOW_DEFAULT_ADMIN` after bootstrap
@@ -536,6 +565,42 @@ Canonical touchpoints:
 
 ---
 
+## 22) Troubleshooting Runbook
+
+### Dev server starts but UI crashes
+- Check terminal for Vite/TS parse errors (common after quick refactors)
+- Run `npm run check` for exact TypeScript lines
+- Fix first syntax/type error; many UI errors are cascading
+
+### `better-sqlite3` issues on Windows
+- Stop running node processes
+- Rebuild native module:
+  - `npm rebuild better-sqlite3`
+- Then restart dev server
+
+### Form appears in registration but not editor
+- Missing sync in hospital/AST editor fallback or built-in recognition
+- Check:
+  - `register-case.tsx`
+  - `hospital-form-editor.tsx` or AST form editor path in `admin.tsx`
+  - `server/routes.ts` seeds
+
+### Hospital/AST cross-talk (section appears in both modules)
+- Verify scope parameters on frontend requests
+- Verify scope filtering in backend form endpoints
+- Verify `form_scope` values in DB for affected rows
+
+### Unexpected 401 loops
+- Session may be expired/cleared (expected on restart)
+- Re-login and recheck
+- Confirm token logic in `client/src/lib/auth.tsx`
+
+### Back button inconsistency
+- Standard reference pattern: `case-list.tsx` header
+- Reuse icon-only ghost back button layout for consistency
+
+---
+
 ## 23) Recent Hardening Changes (Important)
 
 These changes were applied to prevent cross-module leakage and privilege issues:
@@ -593,40 +658,4 @@ These changes were applied to prevent cross-module leakage and privilege issues:
   - `server/routes/cases.module-scope.e2e.test.ts`
   - `server/routes/frontend-route-contract.test.ts`
   - `server/routes/admin.notifications.test.ts` (notification lifecycle)
-
----
-
-## 22) Troubleshooting Runbook
-
-### Dev server starts but UI crashes
-- Check terminal for Vite/TS parse errors (common after quick refactors)
-- Run `npm run check` for exact TypeScript lines
-- Fix first syntax/type error; many UI errors are cascading
-
-### `better-sqlite3` issues on Windows
-- Stop running node processes
-- Rebuild native module:
-  - `npm rebuild better-sqlite3`
-- Then restart dev server
-
-### Form appears in registration but not editor
-- Missing sync in hospital/AST editor fallback or built-in recognition
-- Check:
-  - `register-case.tsx`
-  - `hospital-form-editor.tsx` or AST form editor path in `admin.tsx`
-  - `server/routes.ts` seeds
-
-### Hospital/AST cross-talk (section appears in both modules)
-- Verify scope parameters on frontend requests
-- Verify scope filtering in backend form endpoints
-- Verify `form_scope` values in DB for affected rows
-
-### Unexpected 401 loops
-- Session may be expired/cleared (expected on restart)
-- Re-login and recheck
-- Confirm token logic in `client/src/lib/auth.tsx`
-
-### Back button inconsistency
-- Standard reference pattern: `case-list.tsx` header
-- Reuse icon-only ghost back button layout for consistency
 
