@@ -23,6 +23,7 @@ import {
   User,
   Shield,
   Bell,
+  Settings2,
 } from "lucide-react";
 
 function designationLabel(d: string) {
@@ -79,18 +80,69 @@ function formatTimeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-function playNotificationBeep() {
+type NotificationSoundStyle =
+  | "chime"
+  | "ding"
+  | "pulse"
+  | "studio-confirm"
+  | "ui-back"
+  | "ui-start"
+  | "ui-start-alt"
+  | "correct-answer"
+  | "notif-real"
+  | "digital-quick";
+
+const SOUND_FILE_BY_STYLE: Partial<Record<NotificationSoundStyle, string>> = {
+  "studio-confirm": "/sounds/confirm_tone.wav",
+  "ui-back": "/sounds/interface_back.wav",
+  "ui-start": "/sounds/interface_start.wav",
+  "ui-start-alt": "/sounds/interface_start_alt.wav",
+  "correct-answer": "/sounds/correct_answer.wav",
+  "notif-real": "/sounds/new_notification_09.mp3",
+  "digital-quick": "/sounds/digital_quick.wav",
+};
+
+function playNotificationSound(style: NotificationSoundStyle, volume: number) {
+  const clampedVolume = Math.max(0, Math.min(1, volume));
+  const externalSound = SOUND_FILE_BY_STYLE[style];
+  if (externalSound) {
+    try {
+      const audio = new Audio(externalSound);
+      audio.volume = clampedVolume;
+      void audio.play();
+    } catch {
+      // Ignore if browser blocks autoplay.
+    }
+    return;
+  }
   try {
     const audioCtx = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 880;
-    gain.gain.value = 0.05;
-    osc.connect(gain);
+    gain.gain.value = 0.02 + clampedVolume * 0.2;
     gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.12);
+
+    const addTone = (type: OscillatorType, freq: number, start: number, end: number) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      osc.start(audioCtx.currentTime + start);
+      osc.stop(audioCtx.currentTime + end);
+    };
+
+    if (style === "ding") {
+      addTone("sine", 1174, 0, 0.14); // D6
+      return;
+    }
+    if (style === "pulse") {
+      addTone("square", 880, 0, 0.06);
+      addTone("square", 988, 0.1, 0.17);
+      addTone("square", 1046, 0.2, 0.3);
+      return;
+    }
+    // default: chime
+    addTone("triangle", 1046, 0, 0.09); // C6
+    addTone("sine", 1318, 0.1, 0.22); // E6
   } catch {
     // Optional enhancement only; silently ignore when audio isn't allowed.
   }
@@ -101,13 +153,14 @@ export default function Welcome() {
   const { toast } = useToast();
   const { user, logout, canRegisterHospitalCase, confirmBeforeLogout, isAdmin } = useAuth();
   const [enableToastAlerts, setEnableToastAlerts] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem("vth:notifications:toast") !== "0";
+    return true;
   });
   const [enableSoundAlerts, setEnableSoundAlerts] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("vth:notifications:sound") === "1";
+    return false;
   });
+  const [soundStyle, setSoundStyle] = useState<NotificationSoundStyle>("chime");
+  const [soundVolume, setSoundVolume] = useState<number>(0.7);
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const previousUnreadKeysRef = useRef<Set<string> | null>(null);
   const {
     data: notificationsData,
@@ -130,6 +183,10 @@ export default function Welcome() {
       return res.json();
     },
     enabled: isAdmin,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: true,
     refetchInterval: 5000,
   });
   const markNotificationReadMutation = useMutation({
@@ -165,14 +222,50 @@ export default function Welcome() {
   const unreadCount = notificationsData?.unreadCount ?? 0;
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("vth:notifications:toast", enableToastAlerts ? "1" : "0");
-  }, [enableToastAlerts]);
+    if (typeof window === "undefined" || !user?.id) return;
+    const userKey = String(user.id);
+    setEnableToastAlerts(window.localStorage.getItem(`vth:notifications:toast:${userKey}`) !== "0");
+    setEnableSoundAlerts(window.localStorage.getItem(`vth:notifications:sound:${userKey}`) === "1");
+    const storedStyle = window.localStorage.getItem(`vth:notifications:sound-style:${userKey}`);
+    if (
+      storedStyle === "chime" ||
+      storedStyle === "ding" ||
+      storedStyle === "pulse" ||
+      storedStyle === "studio-confirm" ||
+      storedStyle === "ui-back" ||
+      storedStyle === "ui-start" ||
+      storedStyle === "ui-start-alt" ||
+      storedStyle === "correct-answer" ||
+      storedStyle === "notif-real" ||
+      storedStyle === "digital-quick"
+    ) {
+      setSoundStyle(storedStyle);
+    } else {
+      setSoundStyle("chime");
+    }
+    const storedVolume = Number(window.localStorage.getItem(`vth:notifications:sound-volume:${userKey}`));
+    setSoundVolume(Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1 ? storedVolume : 0.7);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("vth:notifications:sound", enableSoundAlerts ? "1" : "0");
-  }, [enableSoundAlerts]);
+    if (typeof window === "undefined" || !user?.id) return;
+    window.localStorage.setItem(`vth:notifications:toast:${user.id}`, enableToastAlerts ? "1" : "0");
+  }, [enableToastAlerts, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user?.id) return;
+    window.localStorage.setItem(`vth:notifications:sound:${user.id}`, enableSoundAlerts ? "1" : "0");
+  }, [enableSoundAlerts, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user?.id) return;
+    window.localStorage.setItem(`vth:notifications:sound-style:${user.id}`, soundStyle);
+  }, [soundStyle, user?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user?.id) return;
+    window.localStorage.setItem(`vth:notifications:sound-volume:${user.id}`, String(soundVolume));
+  }, [soundVolume, user?.id]);
 
   useEffect(() => {
     if (!isAdmin || !notificationsData) return;
@@ -194,14 +287,30 @@ export default function Welcome() {
       });
     }
     if (enableSoundAlerts) {
-      playNotificationBeep();
+      playNotificationSound(soundStyle, soundVolume);
     }
-  }, [isAdmin, notificationsData, enableToastAlerts, enableSoundAlerts, toast]);
+  }, [isAdmin, notificationsData, enableToastAlerts, enableSoundAlerts, soundStyle, soundVolume, toast]);
 
-  const handleOpenNotification = (key: string, href: string) => {
+  const handleOpenNotification = (
+    key: string,
+    type: "pending-approval" | "download-request" | "password-reset",
+    href: string,
+  ) => {
     if (!key) return;
     markNotificationReadMutation.mutate(key);
-    setLocation(href);
+    if (type === "pending-approval") {
+      setLocation("/admin?tab=pending");
+      return;
+    }
+    if (type === "download-request") {
+      setLocation("/admin?tab=downloads");
+      return;
+    }
+    if (type === "password-reset") {
+      setLocation("/admin?tab=password-resets");
+      return;
+    }
+    setLocation(href || "/admin");
   };
 
   const handleLogout = () => {
@@ -261,29 +370,137 @@ export default function Welcome() {
                 <DropdownMenuContent align="end" className="w-[360px]">
                   <DropdownMenuLabel className="flex items-center justify-between">
                     <span>Admin notifications</span>
-                    <span className="text-xs text-muted-foreground">
-                      {notificationsLoading ? "Loading..." : `${unreadCount} unread`}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {notificationsLoading ? "Loading..." : `${unreadCount} unread`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setShowNotificationSettings((value) => !value);
+                        }}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label="Notification settings"
+                        data-testid="button-notification-settings"
+                      >
+                        <Settings2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    disabled={markAllReadMutation.isPending || notificationItems.length === 0}
-                    onClick={() => markAllReadMutation.mutate()}
-                  >
-                    Mark all as read
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={deleteReadMutation.isPending || notificationItems.length === 0}
-                    onClick={() => deleteReadMutation.mutate()}
-                  >
-                    Delete all read
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setEnableToastAlerts((v) => !v)}>
-                    Toast alerts: {enableToastAlerts ? "On" : "Off"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setEnableSoundAlerts((v) => !v)}>
-                    Sound alerts: {enableSoundAlerts ? "On" : "Off"}
-                  </DropdownMenuItem>
+                  <div className="px-2 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={markAllReadMutation.isPending || notificationItems.length === 0}
+                        onClick={() => markAllReadMutation.mutate()}
+                        data-testid="button-notification-mark-all-read"
+                      >
+                        Mark all as read
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={deleteReadMutation.isPending || notificationItems.length === 0}
+                        onClick={() => deleteReadMutation.mutate()}
+                        data-testid="button-notification-delete-read"
+                      >
+                        Delete read
+                      </Button>
+                    </div>
+                  </div>
+                  {showNotificationSettings && (
+                    <>
+                      <div className="px-2 pb-2">
+                        <div className="rounded-md border bg-muted/30 p-2 text-xs space-y-1.5">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setEnableToastAlerts((v) => !v);
+                            }}
+                            className="w-full text-left rounded px-2 py-1 hover:bg-muted"
+                          >
+                            Toast alerts: {enableToastAlerts ? "On" : "Off"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setEnableSoundAlerts((v) => !v);
+                            }}
+                            className="w-full text-left rounded px-2 py-1 hover:bg-muted"
+                          >
+                            Sound alerts: {enableSoundAlerts ? "On" : "Off"}
+                          </button>
+                          <label className="block px-2 pt-1 text-muted-foreground">
+                            Sound style
+                          </label>
+                          <select
+                            value={soundStyle}
+                            onChange={(event) => {
+                              const nextStyle = event.target.value as NotificationSoundStyle;
+                              setSoundStyle(nextStyle);
+                              if (enableSoundAlerts) {
+                                playNotificationSound(nextStyle, soundVolume);
+                              }
+                            }}
+                            className="w-full rounded border bg-background px-2 py-1 text-xs"
+                          >
+                            <option value="chime">Chime (classic)</option>
+                            <option value="ding">Ding (classic)</option>
+                            <option value="pulse">Pulse (classic)</option>
+                            <option value="studio-confirm">Studio Confirm</option>
+                            <option value="ui-back">UI Back</option>
+                            <option value="ui-start">UI Start</option>
+                            <option value="ui-start-alt">UI Start Alt</option>
+                            <option value="correct-answer">Correct Answer</option>
+                            <option value="notif-real">Real Notification</option>
+                            <option value="digital-quick">Digital Quick</option>
+                          </select>
+                          <label className="block px-2 pt-1 text-muted-foreground">
+                            Volume ({Math.round(soundVolume * 100)}%)
+                          </label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={5}
+                            value={Math.round(soundVolume * 100)}
+                            onChange={(event) => {
+                              const parsed = Number(event.target.value);
+                              if (!Number.isFinite(parsed)) return;
+                              const nextVolume = Math.max(0, Math.min(1, parsed / 100));
+                              setSoundVolume(nextVolume);
+                              if (enableSoundAlerts) {
+                                playNotificationSound(soundStyle, nextVolume);
+                              }
+                            }}
+                            className="w-full"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              playNotificationSound(soundStyle, soundVolume);
+                            }}
+                          >
+                            Test sound
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                   <DropdownMenuSeparator />
                   {notificationItems.length === 0 ? (
                     <div className="px-2 py-4 text-sm text-muted-foreground text-center">
@@ -294,7 +511,7 @@ export default function Welcome() {
                       <DropdownMenuItem
                         key={item.key}
                         className="items-start whitespace-normal py-2 cursor-pointer"
-                        onClick={() => handleOpenNotification(item.key, item.href)}
+                        onClick={() => handleOpenNotification(item.key, item.type, item.href)}
                       >
                         <div className="space-y-0.5">
                           <p className={`text-sm ${item.isRead ? "font-normal" : "font-semibold"}`}>

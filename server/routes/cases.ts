@@ -1,9 +1,12 @@
-import type { Express, Request, Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { insertCaseSchema } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
 import { caseRepo } from "../case-repo";
 import { authSessionRepo } from "../auth-session-repo";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
 import {
   canDownload,
   canDownloadHospital,
@@ -21,11 +24,57 @@ import {
 } from "./context";
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
+import { veterinarianRepo } from "../repos";
+import {
+  ensureHospitalTreatmentDefinition,
+  ensureHospitalVeterinarianDefinition,
+  mergeOrphanFormSections,
+} from "../hospital-form-definition";
 
 function resolveFormScope(raw: unknown): "ast" | "hospital" {
   return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
 }
 import { rowsToCsv, toExportRows, toHospitalExportRows } from "./cases-export";
+
+const CASE_ATTACHMENT_UPLOAD_DIR = (() => {
+  const raw = process.env.CASE_ATTACHMENTS_DIR?.trim();
+  return raw ? path.resolve(raw) : path.resolve(process.cwd(), "uploads", "case-attachments");
+})();
+const MAX_ATTACHMENT_FILE_COUNT = 10;
+const MAX_ATTACHMENT_FILE_SIZE = 1 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/pjpeg", // common on Windows for .jpg
+  "image/x-png",
+]);
+
+function isAllowedCaseAttachmentFile(file: Express.Multer.File): boolean {
+  const mime = (file.mimetype || "").toLowerCase();
+  if (ALLOWED_ATTACHMENT_MIME_TYPES.has(mime)) return true;
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (![".jpg", ".jpeg", ".png"].includes(ext)) return false;
+  // Browsers/OS often omit type or send octet-stream despite a real image file
+  return mime === "" || mime === "application/octet-stream";
+}
+
+type CaseAttachmentRow = {
+  id: number;
+  case_id: number | null;
+  section_key: string;
+  category: string;
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  storage_path: string;
+  created_at: string;
+};
+
+function toAttachmentPublicUrl(storagePath: string): string {
+  const relative = path.relative(CASE_ATTACHMENT_UPLOAD_DIR, storagePath).replace(/\\/g, "/");
+  return `/uploads/case-attachments/${relative}`;
+}
 
 type DownloadRequestRow = {
   id: number;
@@ -97,6 +146,33 @@ function userCanEditScope(role: string, scope: "ast" | "hospital"): boolean {
 }
 
 export function registerCaseAndDownloadRoutes(app: Express) {
+  if (!fs.existsSync(CASE_ATTACHMENT_UPLOAD_DIR)) {
+    fs.mkdirSync(CASE_ATTACHMENT_UPLOAD_DIR, { recursive: true });
+  }
+  app.use("/uploads/case-attachments", express.static(CASE_ATTACHMENT_UPLOAD_DIR));
+
+  const attachmentUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, CASE_ATTACHMENT_UPLOAD_DIR),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
+        const random = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        cb(null, `${random}${ext}`);
+      },
+    }),
+    limits: {
+      fileSize: MAX_ATTACHMENT_FILE_SIZE,
+      files: MAX_ATTACHMENT_FILE_COUNT,
+    },
+    fileFilter: (_req, file, cb) => {
+      if (!isAllowedCaseAttachmentFile(file)) {
+        cb(new Error("Only JPG, JPEG, and PNG files are allowed"));
+        return;
+      }
+      cb(null, true);
+    },
+  });
+
   app.get("/api/dashboard/summary", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const dashboardScope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
@@ -659,6 +735,90 @@ export function registerCaseAndDownloadRoutes(app: Express) {
   });
 
   app.get(
+    "/api/medications",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await dbAll<{ name: string }>(
+        sql`SELECT name FROM medications ORDER BY COALESCE(display_order, id) ASC, id ASC`,
+      );
+      return res.json(rows.map((r) => r.name));
+    },
+  );
+
+  app.get(
+    "/api/routes-of-administration",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await dbAll<{ abbreviation: string; name: string }>(
+        sql`SELECT abbreviation, name
+            FROM routes_of_administration
+            ORDER BY COALESCE(display_order, id) ASC, id ASC`,
+      );
+      return res.json(
+        rows.map((r) => ({
+          abbreviation: (r.abbreviation || r.name || "").trim(),
+          name: (r.name || "").trim(),
+        })),
+      );
+    },
+  );
+
+  app.get(
+    "/api/frequencies",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await dbAll<{ short_code: string | null; name: string }>(
+        sql`SELECT short_code, name
+            FROM frequencies
+            ORDER BY COALESCE(display_order, id) ASC, id ASC`,
+      );
+      return res.json(
+        rows.map((r) => ({
+          abbreviation: (r.short_code || r.name || "").trim(),
+          name: (r.name || "").trim(),
+        })),
+      );
+    },
+  );
+
+  app.get(
+    "/api/dose-units",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await dbAll<{ name: string }>(
+        sql`SELECT name FROM dose_units ORDER BY COALESCE(display_order, id) ASC, id ASC`,
+      );
+      return res.json(rows.map((r) => r.name));
+    },
+  );
+
+  app.get(
+    "/api/veterinarians",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await veterinarianRepo.getVeterinarians();
+      return res.json(rows);
+    },
+  );
+
+  app.get(
+    "/api/durations",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    async (_req, res) => {
+      const rows = await dbAll<{ name: string }>(
+        sql`SELECT name FROM durations ORDER BY name ASC`,
+      );
+      return res.json(rows.map((r) => r.name));
+    },
+  );
+
+  app.get(
     "/api/form-config",
     requireAuth,
     requireAnyCapability("ast.case.create", "hospital.case.create"),
@@ -689,7 +849,11 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     requireAnyCapability("ast.case.create", "hospital.case.create"),
     async (req, res) => {
     const scope = resolveFormScope(req.query.scope);
-    const sections = await dbAll<{ key: string; title: string; display_order: number }>(
+    if (scope === "hospital") {
+      await ensureHospitalTreatmentDefinition();
+      await ensureHospitalVeterinarianDefinition();
+    }
+    let sections = await dbAll<{ key: string; title: string; display_order: number }>(
       sql`SELECT key, title, display_order FROM form_sections
           WHERE form_scope = 'shared' OR form_scope = ${scope}
           ORDER BY display_order ASC`,
@@ -703,14 +867,16 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       options_json: string | null;
       enabled: number;
       required: number;
+      hide_label: number;
       display_order: number;
       is_builtin: number;
     }>(
-      sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin
+      sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin
           FROM form_questions
           WHERE form_scope = 'shared' OR form_scope = ${scope}
           ORDER BY section_key ASC, display_order ASC`,
     );
+    sections = mergeOrphanFormSections(sections, questions);
     const bySection = new Map<string, typeof questions>();
     for (const q of questions) {
       const list = bySection.get(q.section_key) ?? [];
@@ -730,6 +896,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
           options: q.options_json ? JSON.parse(q.options_json) : [],
           enabled: Boolean(q.enabled),
           required: Boolean(q.required),
+          hideLabel: Boolean(q.hide_label),
           displayOrder: q.display_order,
           isBuiltin: Boolean(q.is_builtin),
         })),
@@ -836,6 +1003,130 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     },
   );
 
+  app.post(
+    "/api/case-attachments/temp",
+    requireAuth,
+    requireAnyCapability("ast.case.create", "hospital.case.create"),
+    attachmentUpload.array("files", MAX_ATTACHMENT_FILE_COUNT),
+    async (req, res, next) => {
+      try {
+        const currentUser = (req as AuthenticatedRequest).currentUser;
+        const files = (req.files as Express.Multer.File[]) ?? [];
+        if (files.length === 0) {
+          return res.status(400).json({ message: "Please select at least one image" });
+        }
+        if (files.length > MAX_ATTACHMENT_FILE_COUNT) {
+          return res.status(400).json({ message: `Maximum ${MAX_ATTACHMENT_FILE_COUNT} files allowed` });
+        }
+        const sectionKey = String(req.body?.sectionKey ?? "treatment").trim() || "treatment";
+        const category = String(req.body?.category ?? "diagnostic").trim() || "diagnostic";
+        const tempToken = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+
+        const uploaded: Array<Record<string, unknown>> = [];
+        for (const file of files) {
+          await dbRun(
+            sql`INSERT INTO case_attachments
+              (case_id, temp_token, section_key, category, file_name, mime_type, file_size, storage_path, created_by, created_at)
+              VALUES (
+                ${null},
+                ${tempToken},
+                ${sectionKey},
+                ${category},
+                ${file.originalname},
+                ${file.mimetype},
+                ${file.size},
+                ${file.path},
+                ${currentUser.id},
+                ${new Date().toISOString()}
+              )`,
+          );
+        }
+
+        const rows = await dbAll<CaseAttachmentRow>(
+          sql`SELECT id, case_id, section_key, category, file_name, mime_type, file_size, storage_path, created_at
+            FROM case_attachments
+            WHERE temp_token = ${tempToken}
+            ORDER BY id ASC`,
+        );
+        for (const row of rows) {
+          uploaded.push({
+            id: row.id,
+            caseId: row.case_id,
+            sectionKey: row.section_key,
+            category: row.category,
+            fileName: row.file_name,
+            mimeType: row.mime_type,
+            fileSize: row.file_size,
+            url: toAttachmentPublicUrl(row.storage_path),
+            createdAt: row.created_at,
+          });
+        }
+
+        return res.status(201).json({ tempToken, files: uploaded });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  app.delete("/api/case-attachments/temp/:id", requireAuth, requireAnyCapability("ast.case.create", "hospital.case.create"), async (req, res) => {
+    const raw = req.params.id;
+    const id = Number.parseInt(Array.isArray(raw) ? String(raw[0]) : String(raw), 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid attachment id" });
+    }
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const row = await dbGet<{ case_id: number | null; storage_path: string; created_by: number | null }>(
+      sql`SELECT case_id, storage_path, created_by FROM case_attachments WHERE id = ${id}`,
+    );
+    if (!row) return res.status(404).json({ message: "Attachment not found" });
+    if (row.case_id !== null) {
+      return res.status(400).json({ message: "Attachment is already linked to a case" });
+    }
+    if (row.created_by !== currentUser.id) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    try {
+      if (row.storage_path && fs.existsSync(row.storage_path)) {
+        fs.unlinkSync(row.storage_path);
+      }
+    } catch {
+      // still remove DB row
+    }
+    await dbRun(sql`DELETE FROM case_attachments WHERE id = ${id}`);
+    return res.status(204).end();
+  });
+
+  app.get("/api/cases/:id/attachments", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseId = getIdParam(req);
+    const caseData = await caseRepo.getCase(caseId, scope);
+    if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+    const rows = await dbAll<CaseAttachmentRow>(
+      sql`SELECT id, case_id, section_key, category, file_name, mime_type, file_size, storage_path, created_at
+          FROM case_attachments
+          WHERE case_id = ${caseId}
+          ORDER BY id ASC`,
+    );
+    return res.json(
+      rows.map((row) => ({
+        id: row.id,
+        caseId: row.case_id,
+        sectionKey: row.section_key,
+        category: row.category,
+        fileName: row.file_name,
+        mimeType: row.mime_type,
+        fileSize: row.file_size,
+        url: toAttachmentPublicUrl(row.storage_path),
+        createdAt: row.created_at,
+      })),
+    );
+  });
+
   app.get("/api/cases", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
@@ -891,6 +1182,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
     const fullUser = await authSessionRepo.getUserById(user.id);
+    const treatmentAttachmentIds = Array.isArray(req.body?.treatmentAttachmentIds)
+      ? req.body.treatmentAttachmentIds
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isInteger(value) && value > 0)
+      : [];
+    if (treatmentAttachmentIds.length > MAX_ATTACHMENT_FILE_COUNT) {
+      return res.status(400).json({ message: `Maximum ${MAX_ATTACHMENT_FILE_COUNT} attachments allowed` });
+    }
 
     const parsed = insertCaseSchema.safeParse({
       ...req.body,
@@ -924,6 +1223,16 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
     });
+    for (const attachmentId of treatmentAttachmentIds) {
+      await dbRun(
+        sql`UPDATE case_attachments
+            SET case_id = ${newCase.id},
+                temp_token = ${null}
+            WHERE id = ${attachmentId}
+              AND created_by = ${user.id}
+              AND case_id IS NULL`,
+      );
+    }
     await dbRun(
       sql`INSERT INTO case_change_logs
           (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
@@ -947,6 +1256,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     const user = (req as AuthenticatedRequest).currentUser;
     const now = new Date().toISOString();
     const fullUser = await authSessionRepo.getUserById(user.id);
+    const treatmentAttachmentIds = Array.isArray(req.body?.treatmentAttachmentIds)
+      ? req.body.treatmentAttachmentIds
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isInteger(value) && value > 0)
+      : [];
+    if (treatmentAttachmentIds.length > MAX_ATTACHMENT_FILE_COUNT) {
+      return res.status(400).json({ message: `Maximum ${MAX_ATTACHMENT_FILE_COUNT} attachments allowed` });
+    }
 
     const parsed = insertCaseSchema.safeParse({
       ...req.body,
@@ -979,6 +1296,16 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
     });
+    for (const attachmentId of treatmentAttachmentIds) {
+      await dbRun(
+        sql`UPDATE case_attachments
+            SET case_id = ${newCase.id},
+                temp_token = ${null}
+            WHERE id = ${attachmentId}
+              AND created_by = ${user.id}
+              AND case_id IS NULL`,
+      );
+    }
     await dbRun(
       sql`INSERT INTO case_change_logs
           (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
@@ -1045,7 +1372,20 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       if (!existing) {
         return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
       }
+      const attachmentRows = await dbAll<{ id: number; storage_path: string }>(
+        sql`SELECT id, storage_path FROM case_attachments WHERE case_id = ${existing.id}`,
+      );
       await caseRepo.deleteCase(getIdParam(req), scope);
+      await dbRun(sql`DELETE FROM case_attachments WHERE case_id = ${existing.id}`);
+      for (const attachment of attachmentRows) {
+        if (attachment.storage_path && fs.existsSync(attachment.storage_path)) {
+          try {
+            fs.unlinkSync(attachment.storage_path);
+          } catch {
+            // Ignore storage cleanup failures; DB row is already removed.
+          }
+        }
+      }
       const actor = await authSessionRepo.getUserById(currentUser.id);
       await dbRun(
         sql`INSERT INTO case_change_logs

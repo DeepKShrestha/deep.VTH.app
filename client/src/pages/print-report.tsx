@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { Fragment, useMemo, useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -10,6 +10,7 @@ import { ArrowLeft, Printer } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
+import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
 
 interface AstRow {
   antibiotic: string;
@@ -20,12 +21,26 @@ interface AstRow {
 }
 
 type CustomEntry = [string, string | string[] | number];
+type TreatmentMedicationEntry = {
+  medication: string;
+  dose: string;
+  doseUnit: string;
+  route: string;
+  frequency: string;
+  duration: string;
+  note: string;
+};
+type TreatmentFieldValue = {
+  medications: TreatmentMedicationEntry[];
+  generalInstructions: string;
+};
 type HospitalSectionKey =
   | "historyMedication"
   | "clinicalSigns"
   | "vitalsExam"
   | "avianDetails"
   | "testsSuggested"
+  | "diagnosis"
   | "other";
 
 function normalizeKey(input: string): string {
@@ -79,6 +94,7 @@ function resolveHospitalSectionKey(key: string): HospitalSectionKey {
   ) {
     return "avianDetails";
   }
+  if (n.includes("diagnosis")) return "diagnosis";
   if (
     n.includes("testssuggest") ||
     n.includes("testsuggest") ||
@@ -101,6 +117,7 @@ const HOSPITAL_SECTION_TITLES: Record<HospitalSectionKey, string> = {
   vitalsExam: "Physical Exam / Vitals",
   avianDetails: "Avian Details",
   testsSuggested: "Tests Suggested",
+  diagnosis: "Diagnosis",
   other: "Other Clinical Details",
 };
 
@@ -125,6 +142,7 @@ function resolveFieldOrderAndLabel(rawLabel: string, rawKey: string) {
   if (source.includes("crt")) return { order: 90, label: "CRT" };
   if (source.includes("dehydration")) return { order: 100, label: "Dehydration %" };
   if (source.includes("weight")) return { order: 110, label: "Weight" };
+  if (source.includes("diagnosis")) return { order: 115, label: "Diagnosis" };
   if (source.includes("testssuggested")) return { order: 120, label: "Tests Suggested" };
   if (source.includes("enzymepanel")) return { order: 130, label: "Enzyme Panel Tests" };
   if (source.includes("rapiddiagnostic")) return { order: 140, label: "Rapid Diagnostic Tests" };
@@ -283,6 +301,7 @@ export default function PrintReport() {
       vitalsExam: [],
       avianDetails: [],
       testsSuggested: [],
+      diagnosis: [],
       other: [],
     };
     for (const [key, value] of customFieldEntries) {
@@ -301,6 +320,14 @@ export default function PrintReport() {
     }
     return grouped;
   }, [customFieldEntries]);
+  const treatmentFields = useMemo(() => {
+    if (!caseData?.treatmentDetails) return {} as Record<string, TreatmentFieldValue>;
+    try {
+      return JSON.parse(caseData.treatmentDetails) as Record<string, TreatmentFieldValue>;
+    } catch {
+      return {} as Record<string, TreatmentFieldValue>;
+    }
+  }, [caseData?.treatmentDetails]);
 
   if (isLoading) {
     return (
@@ -733,6 +760,27 @@ export default function PrintReport() {
                       </table>
                     );
                   }
+                  if (sectionKey === "diagnosis") {
+                    const text = items
+                      .map((entry) =>
+                        Array.isArray(entry.value)
+                          ? entry.value.join(", ")
+                          : String(entry.value ?? ""),
+                      )
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                      .join("; ");
+                    if (!text) return null;
+                    return (
+                      <div
+                        key={sectionKey}
+                        className="w-full text-[10px] border border-gray-400 px-2 py-1 text-black"
+                      >
+                        <span className="font-semibold">Diagnosis:</span>{" "}
+                        <span className="whitespace-pre-wrap break-words">{text}</span>
+                      </div>
+                    );
+                  }
                   return (
                     <table key={sectionKey} className="w-full text-[10px] border border-gray-400 print-table">
                       <thead>
@@ -779,6 +827,76 @@ export default function PrintReport() {
           </div>
         )}
 
+        {Object.keys(treatmentFields).length > 0 && (
+          <div className="print-section mb-4">
+            <h2 className="text-sm font-bold uppercase mb-2 text-black">
+              Treatment / Prescription
+            </h2>
+            {Object.entries(treatmentFields).map(([key, value]) => {
+              const medications = (value?.medications ?? []).filter((entry) =>
+                [
+                  entry.medication,
+                  entry.dose,
+                  entry.doseUnit,
+                  entry.route,
+                  entry.frequency,
+                  entry.duration,
+                  entry.note,
+                ].some((v) => String(v ?? "").trim().length > 0),
+              );
+              return (
+                <div key={key} className="space-y-2 mb-3">
+                  {medications.length > 0 && (
+                    <table className="w-full text-[10px] border border-gray-400 print-table">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Medication</th>
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Dose</th>
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Dose Unit</th>
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Route</th>
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Frequency</th>
+                          <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {medications.map((entry, index) => {
+                          const hasNote = String(entry.note ?? "").trim().length > 0;
+                          return (
+                            <Fragment key={`${key}-${index}`}>
+                              <tr className="border-b border-gray-300">
+                                <td className="py-1 px-2 text-black">{entry.medication || "—"}</td>
+                                <td className="py-1 px-2 text-black">{entry.dose || "—"}</td>
+                                <td className="py-1 px-2 text-black">{entry.doseUnit || "—"}</td>
+                                <td className="py-1 px-2 text-black">{entry.route || "—"}</td>
+                                <td className="py-1 px-2 text-black">{entry.frequency || "—"}</td>
+                                <td className="py-1 px-2 text-black">{entry.duration || "—"}</td>
+                              </tr>
+                              {hasNote && (
+                                <tr className="border-b border-gray-300">
+                                  <td className="py-1 px-2 text-black font-semibold bg-gray-50">Note</td>
+                                  <td className="py-1 px-2 text-black whitespace-pre-wrap" colSpan={5}>
+                                    {entry.note}
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  {value?.generalInstructions?.trim() && (
+                    <div className="border border-gray-300 p-2 text-[10px] whitespace-pre-wrap text-black">
+                      <span className="font-semibold">General instructions: </span>
+                      {value.generalInstructions}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Remarks */}
         {caseData.remarks && (
           <div className="print-section mb-4">
@@ -788,6 +906,38 @@ export default function PrintReport() {
             <p className="text-[10px] border border-gray-300 p-2 whitespace-pre-wrap break-words text-black">
               {caseData.remarks}
             </p>
+          </div>
+        )}
+
+        {isHospitalCase && (
+          <div className="print-section mt-4 mb-3 flex justify-end">
+            <div className="text-[10px] text-black text-right w-[11rem] shrink-0 space-y-0.5">
+              <div className="border-b-2 border-gray-800 min-h-[1.75rem] w-full max-w-[11rem] ml-auto" />
+              <div className="pt-0.5 space-y-0.5 leading-snug">
+                <p className="text-[11px] font-semibold">
+                  {caseData.veterinarianName?.trim() ? (
+                    caseData.veterinarianName.trim()
+                  ) : (
+                    <span className="inline-block w-full border-b border-gray-400 min-h-[1em]" />
+                  )}
+                </p>
+                <p className="text-[10px]">
+                  <span className="text-gray-700">NVC no.</span>{" "}
+                  {caseData.veterinarianNvc?.trim() ? (
+                    caseData.veterinarianNvc.trim()
+                  ) : (
+                    <span className="inline-block w-16 border-b border-gray-300 align-bottom" />
+                  )}
+                </p>
+                <p className="text-[10px]">
+                  {formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment) ? (
+                    formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment)
+                  ) : (
+                    <span className="inline-block w-full border-b border-gray-300 min-h-[1em]" />
+                  )}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

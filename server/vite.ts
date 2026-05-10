@@ -31,7 +31,9 @@ export async function setupVite(server: Server, app: Express) {
 
   app.use(vite.middlewares);
 
-  app.use("/{*path}", async (req, res, next) => {
+  // Only fall back to index.html for document navigations. A catch-all `use` would
+  // also handle POST (e.g. /api/*) and return HTML with 200, breaking clients that expect JSON.
+  app.get("/{*path}", async (req, res, next) => {
     const url = req.originalUrl;
 
     try {

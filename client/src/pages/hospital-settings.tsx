@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Settings2, Layers, ListChecks } from "lucide-react";
+import { ArrowLeft, Settings2, ListChecks, Pill, Stethoscope } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
@@ -162,7 +162,7 @@ export default function HospitalSettingsPage() {
               </CardHeader>
               <CardContent className="flex flex-1 flex-col gap-3">
                 <p className="text-sm text-muted-foreground">
-                  Control field visibility, requirements, and built-in question behavior.
+                  Control field visibility, requirements, built-in questions, and species/breed catalogs (third tab in the editor).
                 </p>
                 <Link href="/new-case/form-editor" className="mt-auto">
                   <Button className="w-full bg-slate-700 hover:bg-slate-800 text-white">
@@ -175,17 +175,36 @@ export default function HospitalSettingsPage() {
             <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-primary shrink-0" />
-                  Species & Breed by Species
+                  <Pill className="w-4 h-4 text-primary shrink-0" />
+                  Treatment Master Data
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col gap-3">
                 <p className="text-sm text-muted-foreground">
-                  Maintain species list and breed catalog grouped by species.
+                  Manage medications, administration routes, frequency options, and duration/day options.
                 </p>
-                <Link href="/new-case/form-editor" className="mt-auto">
-                  <Button className="w-full bg-lime-600 hover:bg-lime-700 text-white">
-                    Open Species/Breed Settings
+                <Link href="/new-case/settings/treatment" className="mt-auto">
+                  <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white">
+                    Open Treatment Settings
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+
+            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Stethoscope className="w-4 h-4 text-primary shrink-0" />
+                  Veterinarians
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-1 flex-col gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Add or remove attending veterinarians (name, NVC registration no., department) for case registration.
+                </p>
+                <Link href="/new-case/settings/veterinarians" className="mt-auto">
+                  <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
+                    Open Veterinarians
                   </Button>
                 </Link>
               </CardContent>

@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Settings2, SlidersHorizontal, ListChecks, Layers } from "lucide-react";
+import { ArrowLeft, Settings2, SlidersHorizontal, ListChecks } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
@@ -137,32 +137,11 @@ export default function AstSettingsPage() {
             </CardHeader>
             <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
-                Configure field visibility, requirement status, and form behavior.
+                Configure field visibility, requirement status, form behavior, and species/breed catalogs (third tab in the editor).
               </p>
               <Link href="/ast-report/form-editor" className="mt-auto">
                 <Button className="w-full bg-slate-700 hover:bg-slate-800 text-white">
                   Open Register Form Settings
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
-
-        {canManageAstAdmin && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Layers className="w-4 h-4 text-primary shrink-0" />
-                Species & Breed by Species
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              <p className="text-sm text-muted-foreground">
-                Manage species and breed catalogs used in AST registration.
-              </p>
-              <Link href="/ast-report/form-editor" className="mt-auto">
-                <Button className="w-full bg-lime-600 hover:bg-lime-700 text-white">
-                  Open Species/Breed Settings
                 </Button>
               </Link>
             </CardContent>

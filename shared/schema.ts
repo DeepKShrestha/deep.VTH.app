@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -10,6 +11,7 @@ export const users = sqliteTable("users", {
   phone: text("phone").notNull(),
   email: text("email").notNull(),
   designation: text("designation").notNull(), // lab_assistant, veterinarian, student, intern
+  studentBatch: integer("student_batch"),
   username: text("username").notNull(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("pending"), // superadmin, admin, staff, student, pending
@@ -103,6 +105,15 @@ export const cases = sqliteTable("cases", {
   lastUpdatedByName: text("last_updated_by_name"),
   updatedAt: text("updated_at"),
   customFields: text("custom_fields"),
+
+  // New: Treatment details (JSON text)
+  treatmentDetails: text("treatment_details"),
+
+  // Attending veterinarian (hospital cases; snapshot + optional catalog id)
+  veterinarianId: integer("veterinarian_id"),
+  veterinarianName: text("veterinarian_name"),
+  veterinarianNvc: text("veterinarian_nvc"),
+  veterinarianDepartment: text("veterinarian_department"),
 });
 
 export const breakpoints = sqliteTable("breakpoints", {
@@ -119,6 +130,65 @@ export const breakpoints = sqliteTable("breakpoints", {
   isPreset: integer("is_preset", { mode: "boolean" }).notNull().default(false),
 });
 
+// ---- New Master Data Tables for Treatments ----
+export const medications = sqliteTable("medications", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const routesOfAdministration = sqliteTable("routes_of_administration", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  abbreviation: text("abbreviation").notNull().default(""),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const frequencies = sqliteTable("frequencies", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  shortCode: text("short_code"), // e.g., OD, BID
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const doseUnits = sqliteTable("dose_units", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const durations = sqliteTable("durations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  value: integer("value"), // e.g., 3 for 3 days
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const caseAttachments = sqliteTable("case_attachments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  caseId: integer("case_id"),
+  tempToken: text("temp_token"),
+  sectionKey: text("section_key").notNull().default("treatment"),
+  category: text("category").notNull().default("diagnostic"),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  storagePath: text("storage_path").notNull(),
+  createdBy: integer("created_by"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const veterinarians = sqliteTable("veterinarians", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  fullName: text("full_name").notNull(),
+  nvcRegistrationNumber: text("nvc_registration_number").notNull(),
+  department: text("department").notNull(),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+
 // ---- Insert Schemas ----
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -129,6 +199,25 @@ export const insertUserSchema = createInsertSchema(users).omit({
 }).extend({
   password: z.string().min(6, "Password must be at least 6 characters"),
   designation: z.enum(["lab_assistant", "veterinarian", "student", "intern"]),
+  studentBatch: z.number().int().min(1).max(99).nullable().optional(),
+}).superRefine((data, ctx) => {
+  if (data.designation === "student") {
+    if (typeof data.studentBatch !== "number" || !Number.isInteger(data.studentBatch)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["studentBatch"],
+        message: "Student batch is required",
+      });
+    }
+    return;
+  }
+  if (data.studentBatch != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["studentBatch"],
+      message: "Student batch is only allowed for student designation",
+    });
+  }
 });
 
 export const insertCaseSchema = createInsertSchema(cases).omit({
@@ -143,6 +232,39 @@ export const insertBreakpointSchema = createInsertSchema(breakpoints).omit({
   id: true,
 });
 
+// ---- Insert Schemas for new master data ----
+export const insertMedicationSchema = createInsertSchema(medications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRouteOfAdministrationSchema = createInsertSchema(routesOfAdministration).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertFrequencySchema = createInsertSchema(frequencies).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDoseUnitSchema = createInsertSchema(doseUnits).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDurationSchema = createInsertSchema(durations).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertVeterinarianSchema = createInsertSchema(veterinarians).omit({
+  id: true,
+  createdAt: true,
+  displayOrder: true,
+});
+
+
 // ---- Types ----
 export type User = typeof users.$inferSelect;
 export type InsertCase = z.infer<typeof insertCaseSchema>;
@@ -151,6 +273,22 @@ export type InsertBreakpoint = z.infer<typeof insertBreakpointSchema>;
 export type Breakpoint = typeof breakpoints.$inferSelect;
 export type DownloadRequest = typeof downloadRequests.$inferSelect;
 export type PasswordResetRequest = typeof passwordResetRequests.$inferSelect;
+
+// New master data types
+export type Medication = typeof medications.$inferSelect;
+export type InsertMedication = z.infer<typeof insertMedicationSchema>;
+export type RouteOfAdministration = typeof routesOfAdministration.$inferSelect;
+export type InsertRouteOfAdministration = z.infer<typeof insertRouteOfAdministrationSchema>;
+export type Frequency = typeof frequencies.$inferSelect;
+export type InsertFrequency = z.infer<typeof insertFrequencySchema>;
+export type DoseUnit = typeof doseUnits.$inferSelect;
+export type InsertDoseUnit = z.infer<typeof insertDoseUnitSchema>;
+export type Duration = typeof durations.$inferSelect;
+export type InsertDuration = z.infer<typeof insertDurationSchema>;
+export type CaseAttachment = typeof caseAttachments.$inferSelect;
+export type Veterinarian = typeof veterinarians.$inferSelect;
+export type InsertVeterinarian = z.infer<typeof insertVeterinarianSchema>;
+
 
 // Safe user type (without password hash) for frontend
 export type SafeUser = Omit<User, "passwordHash">;

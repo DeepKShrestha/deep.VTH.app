@@ -94,13 +94,14 @@ interface SignupData {
   phone: string;
   email: string;
   designation: string;
+  studentBatch?: number | null;
   username: string;
   password: string;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// In-memory token + localStorage (persists across reloads and new tabs/windows)
+// In-memory token + sessionStorage (persists on reload in same tab only)
 let storedToken: string | null = null;
 const TOKEN_STORAGE_KEY = "auth_token";
 const LAST_LOGIN_AT_KEY = "auth_last_login_at";
@@ -122,18 +123,17 @@ const INACTIVITY_TIMEOUT_MS: Record<
 
 export function getAuthToken(): string | null {
   if (storedToken) return storedToken;
-  // Fallback for page reload/HMR race: token may already be in storage
-  // before in-memory state is rehydrated.
-  return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  // Fallback for page reload/HMR race in the same tab.
+  return sessionStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    return sessionStorage.getItem(TOKEN_STORAGE_KEY);
   });
   const [isLoading, setIsLoading] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY));
+    return Boolean(sessionStorage.getItem(TOKEN_STORAGE_KEY));
   });
   const [inactivityTimeout, setInactivityTimeoutState] =
     useState<InactivityTimeoutOption>(() => {
@@ -161,10 +161,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setAuth = useCallback((t: string | null, u: AuthUser | null) => {
     storedToken = t;
     if (t) {
-      localStorage.setItem(TOKEN_STORAGE_KEY, t);
       sessionStorage.setItem(TOKEN_STORAGE_KEY, t);
     } else {
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
     setToken(t);
@@ -254,7 +252,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }).catch(() => {});
     }
     sessionStorage.removeItem(INACTIVITY_LOGOUT_FLAG_KEY);
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
     setAuth(null, null);
   }, [setAuth]);
 

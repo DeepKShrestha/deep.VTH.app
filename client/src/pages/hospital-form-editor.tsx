@@ -29,6 +29,7 @@ type AdminFormDefinition = {
       options?: string[];
       enabled: boolean;
       required: boolean;
+      hideLabel?: boolean;
       displayOrder: number;
       isBuiltin: boolean;
     }>;
@@ -52,7 +53,7 @@ function isHospitalBuiltinSection(section: { key: string; title: string }): bool
   const normalizedKey = normalizeQuestionId(section.key);
   const normalizedTitle = normalizeQuestionId(section.title);
   if (
-    ["owner", "animal", "history", "clinicalsignssymptoms", "avian", "vitals", "testssuggested", "final"].includes(normalizedKey)
+    ["owner", "animal", "history", "clinicalsignssymptoms", "avian", "vitals", "testssuggested", "diagnosis", "attendingveterinarian", "treatment", "final"].includes(normalizedKey)
   ) {
     return true;
   }
@@ -65,6 +66,9 @@ function isHospitalBuiltinSection(section: { key: string; title: string }): bool
     normalizedTitle === "vitals" ||
     normalizedTitle === "testssuggested" ||
     normalizedTitle === "testsuggested" ||
+    normalizedTitle === "diagnosis" ||
+    normalizedTitle === "attendingveterinarian" ||
+    normalizedTitle === "treatmentprescription" ||
     normalizedTitle === "generalremarks"
   );
 }
@@ -92,12 +96,12 @@ function isLegacyTestsSuggestedTextareaQuestion(question: {
 }
 
 function isHospitalBuiltinQuestion(
-  question: { key: string; label: string; isBuiltin: boolean },
+  question: { key: string; label: string; isBuiltin: boolean; inputType?: string },
   section?: { key: string; title: string },
   sectionKey?: string,
 ): boolean {
   if (question.isBuiltin) return true;
-  if (section && isHospitalBuiltinSection(section)) return true;
+  if (question.inputType === "hospital_veterinarian") return true;
   if ((sectionKey || "").toLowerCase() === "vitals") return true;
   const normalizedKey = normalizeQuestionId(question.key);
   const normalizedLabel = normalizeQuestionId(question.label);
@@ -125,6 +129,8 @@ function isHospitalBuiltinQuestion(
     normalizedKey.includes("biopsydetails") ||
     normalizedKey.includes("cytologydetails") ||
     normalizedKey.includes("culturedetails") ||
+    normalizedKey.includes("treatmentprescription") ||
+    normalizedKey.includes("attendingveterinarian") ||
     normalizedLabel.includes("heartrate") ||
     normalizedLabel.includes("respiratoryrate") ||
     normalizedLabel.includes("respirationrate") ||
@@ -144,6 +150,8 @@ function isHospitalBuiltinQuestion(
     || normalizedLabel.includes("testsuggested")
     || normalizedLabel.includes("enzymepanel")
     || normalizedLabel.includes("rapiddiagnostic")
+    || normalizedLabel.includes("treatmentprescription")
+    || normalizedLabel.includes("attendingveterinarian")
   );
 }
 
@@ -171,6 +179,8 @@ export default function HospitalFormEditorPage() {
       const res = await apiRequest("GET", `/api/admin/form-definition?scope=${formScope}`);
       return res.json();
     },
+    staleTime: 0,
+    refetchOnMount: "always",
   });
   const { data: speciesOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/species-options"],
@@ -190,8 +200,9 @@ export default function HospitalFormEditorPage() {
   const { data: formEditLogs = [] } = useQuery<FormEditLog[]>({
     queryKey: ["/api/admin/form-edit-logs"],
   });
-  const hospitalSections = useMemo(() => {
-    let sections = (formDefinition?.sections ?? [])
+  /** Server-backed sections only — used for reorder so each click matches API adjacency. */
+  const hospitalLayoutSections = useMemo(() => {
+    const sections = (formDefinition?.sections ?? [])
       .filter((section) => section.key !== "ast" && section.key !== "sample")
       .map((section) => ({
         ...section,
@@ -199,6 +210,14 @@ export default function HospitalFormEditorPage() {
           (q) => !isLegacyTestsSuggestedTextareaQuestion({ ...q, sectionKey: section.key }),
         ),
       }));
+    return [...sections].sort(
+      (a, b) => a.displayOrder - b.displayOrder || a.key.localeCompare(b.key),
+    );
+  }, [formDefinition]);
+
+  /** Includes client fallback clinical section when missing in DB (register form only); not used for ↑/↓. */
+  const hospitalSections = useMemo(() => {
+    let sections = [...hospitalLayoutSections];
 
     const hasClinicalSignsSection = sections.some((section) => {
       const normalized = normalizeQuestionId(section.key || section.title || "");
@@ -240,15 +259,22 @@ export default function HospitalFormEditorPage() {
       }
     }
 
-    return sections;
-  }, [formDefinition]);
+    return [...sections].sort(
+      (a, b) => a.displayOrder - b.displayOrder || a.key.localeCompare(b.key),
+    );
+  }, [hospitalLayoutSections]);
+
+  const syncFormDefinitionViews = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+    await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+  };
 
   const addSectionMutation = useMutation({
     mutationFn: async (title: string) => apiRequest("POST", "/api/admin/form-sections", { title, scope: formScope }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
       setNewSectionTitle("");
     },
   });
@@ -256,58 +282,46 @@ export default function HospitalFormEditorPage() {
   const moveSectionMutation = useMutation({
     mutationFn: async (payload: { key: string; direction: "up" | "down" }) =>
       apiRequest("PATCH", `/api/admin/form-sections/${payload.key}/move`, { ...payload, scope: formScope }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
   const deleteSectionMutation = useMutation({
     mutationFn: async (sectionKey: string) => apiRequest("DELETE", `/api/admin/form-sections/${sectionKey}?scope=${formScope}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
   const addQuestionMutation = useMutation({
     mutationFn: async (payload: { sectionKey: string; label: string; inputType: string; options?: string[] }) =>
       apiRequest("POST", "/api/admin/form-questions", { ...payload, scope: formScope }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
   const moveQuestionMutation = useMutation({
     mutationFn: async (payload: { id: number; direction: "up" | "down" }) =>
       apiRequest("PATCH", `/api/admin/form-questions/${payload.id}/move`, { ...payload, scope: formScope }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
   const updateQuestionMutation = useMutation({
-    mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean; options?: string[] }) =>
+    mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean; hideLabel?: boolean; options?: string[] }) =>
       apiRequest("PATCH", `/api/admin/form-questions/${payload.id}`, { ...payload, scope: formScope }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
   const deleteQuestionMutation = useMutation({
     mutationFn: async (questionId: number) => apiRequest("DELETE", `/api/admin/form-questions/${questionId}?scope=${formScope}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
@@ -472,6 +486,12 @@ export default function HospitalFormEditorPage() {
           <CardTitle className="text-base">Form Layout (Sections & Questions)</CardTitle>
           <p className="text-xs text-muted-foreground">
             Tip: if a section has no questions, the section itself appears as a direct long-text input in the register form.
+            {hospitalSections.length > hospitalLayoutSections.length ? (
+              <>
+                {" "}
+                A built-in “Clinical signs and symptoms” block may still show on the register form; add a real section here if you want it in this list.
+              </>
+            ) : null}
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -483,27 +503,52 @@ export default function HospitalFormEditorPage() {
             </Button>
           </div>
 
-          {hospitalSections.map((section, idx, arr) => (
+          {hospitalLayoutSections.map((section, idx, arr) => (
             <div key={section.key} className="rounded border" data-editor-collapsible="true">
-              <button
-                type="button"
-                className="w-full flex items-center justify-between gap-2 px-3 py-2 border-b text-left hover:bg-muted/30"
-                onClick={() =>
-                  setOpenLayoutSectionKey((prev) => (prev === section.key ? null : section.key))
-                }
-              >
-                <div className="text-sm font-medium">{section.title}</div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" className="h-8" onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "up" })} disabled={idx === 0}><ArrowUp className="w-3.5 h-3.5" /></Button>
-                  <Button size="sm" variant="outline" className="h-8" onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "down" })} disabled={idx === arr.length - 1}><ArrowDown className="w-3.5 h-3.5" /></Button>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 border-b hover:bg-muted/30">
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    className="text-sm font-medium truncate text-left hover:underline w-full"
+                    onClick={() =>
+                      setOpenLayoutSectionKey((prev) => (prev === section.key ? null : section.key))
+                    }
+                  >
+                    {section.title}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "up" })}
+                    disabled={idx === 0 || moveSectionMutation.isPending}
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => moveSectionMutation.mutate({ key: section.key, direction: "down" })}
+                    disabled={idx === arr.length - 1 || moveSectionMutation.isPending}
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </Button>
                   {!isHospitalBuiltinSection(section) && (
-                    <Button size="sm" variant="outline" className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50" onClick={() => deleteSectionMutation.mutate(section.key)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                      onClick={() => deleteSectionMutation.mutate(section.key)}
+                    >
                       <Trash2 className="w-3.5 h-3.5" />
                       Delete
                     </Button>
                   )}
                 </div>
-              </button>
+              </div>
 
               {openLayoutSectionKey === section.key && (
               <div className="p-3 space-y-3">
@@ -528,6 +573,8 @@ export default function HospitalFormEditorPage() {
                       <SelectItem value="multiSelect">Multiple choice</SelectItem>
                       <SelectItem value="yesNo">Yes / No</SelectItem>
                       <SelectItem value="date">Date</SelectItem>
+                      <SelectItem value="treatment_prescription">Treatment / Prescription</SelectItem>
+                      <SelectItem value="hospital_veterinarian">Attending veterinarian</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -631,7 +678,11 @@ export default function HospitalFormEditorPage() {
                           variant="outline"
                           className="h-8"
                           onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "up" })}
-                          disabled={qIdx === 0}
+                          disabled={
+                            qIdx === 0 ||
+                            moveQuestionMutation.isPending ||
+                            q.id < 0
+                          }
                         >
                           <ArrowUp className="w-3.5 h-3.5" />
                         </Button>
@@ -640,7 +691,11 @@ export default function HospitalFormEditorPage() {
                           variant="outline"
                           className="h-8"
                           onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "down" })}
-                          disabled={qIdx === section.questions.length - 1}
+                          disabled={
+                            qIdx === section.questions.length - 1 ||
+                            moveQuestionMutation.isPending ||
+                            q.id < 0
+                          }
                         >
                           <ArrowDown className="w-3.5 h-3.5" />
                         </Button>
@@ -735,8 +790,6 @@ export default function HospitalFormEditorPage() {
                       <p className="text-xs font-medium text-muted-foreground">{group.title}</p>
                     ) : null}
                 {group.questions.map((q) => {
-                  const sectionOrder = section.questions ?? [];
-                  const qIdx = sectionOrder.findIndex((sq) => sq.id === q.id);
                   const isTestsSuggestedQuestion =
                     normalizeQuestionId(q.key) === "testssuggested";
                   return (
@@ -762,28 +815,8 @@ export default function HospitalFormEditorPage() {
                           <Button
                             type="button"
                             size="sm"
-                            variant="outline"
-                            className="h-7"
-                            onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "up" })}
-                            disabled={qIdx <= 0}
-                          >
-                            <ArrowUp className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7"
-                            onClick={() => moveQuestionMutation.mutate({ id: q.id, direction: "down" })}
-                            disabled={qIdx < 0 || qIdx === sectionOrder.length - 1}
-                          >
-                            <ArrowDown className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
                             variant={q.enabled ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -798,7 +831,7 @@ export default function HospitalFormEditorPage() {
                             type="button"
                             size="sm"
                             variant={q.required ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -808,6 +841,22 @@ export default function HospitalFormEditorPage() {
                             }
                           >
                             {q.required ? "Compulsory" : "Optional"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.hideLabel ? "default" : "outline"}
+                            className="h-7 w-24 justify-center text-[11px]"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                hideLabel: !q.hideLabel,
+                                enabled: q.enabled,
+                                required: q.required,
+                              })
+                            }
+                          >
+                            {q.hideLabel ? "Box only" : "Show label"}
                           </Button>
                         </div>
                       </div>
@@ -949,7 +998,7 @@ export default function HospitalFormEditorPage() {
                           type="button"
                           size="sm"
                           variant={q.enabled ? "default" : "outline"}
-                          className="h-7"
+                          className="h-7 w-24 justify-center text-[11px]"
                           onClick={() =>
                             updateQuestionMutation.mutate({
                               id: q.id,
@@ -964,7 +1013,7 @@ export default function HospitalFormEditorPage() {
                           type="button"
                           size="sm"
                           variant={q.required ? "default" : "outline"}
-                          className="h-7"
+                          className="h-7 w-24 justify-center text-[11px]"
                           onClick={() =>
                             updateQuestionMutation.mutate({
                               id: q.id,
@@ -974,6 +1023,22 @@ export default function HospitalFormEditorPage() {
                           }
                         >
                           {q.required ? "Compulsory" : "Optional"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={q.hideLabel ? "default" : "outline"}
+                          className="h-7 w-24 justify-center text-[11px]"
+                          onClick={() =>
+                            updateQuestionMutation.mutate({
+                              id: q.id,
+                              hideLabel: !q.hideLabel,
+                              enabled: q.enabled,
+                              required: q.required,
+                            })
+                          }
+                        >
+                          {q.hideLabel ? "Box only" : "Show label"}
                         </Button>
                       </div>
                     </div>
@@ -1089,6 +1154,7 @@ export default function HospitalFormEditorPage() {
         </CardContent>
         )}
       </Card>
+
       </>
       )}
 

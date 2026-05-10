@@ -18,6 +18,20 @@ async function ensureMigrationTable() {
   )`);
 }
 
+function shouldIgnoreStatementError(error: unknown): boolean {
+  if (DB_PROVIDER !== "sqlite") return false;
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error ?? "").toLowerCase();
+  const causeMessage =
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error &&
+    (error as { cause?: unknown }).cause instanceof Error
+      ? (error as { cause: Error }).cause.message.toLowerCase()
+      : "";
+  return message.includes("duplicate column name") || causeMessage.includes("duplicate column name");
+}
+
 export async function runPendingMigrations() {
   await ensureMigrationTable();
   const folder =
@@ -39,7 +53,12 @@ export async function runPendingMigrations() {
     const script = fs.readFileSync(path.join(folder, file), "utf8");
     const statements = splitSqlStatements(script);
     for (const statement of statements) {
-      await dbRun(sql.raw(statement));
+      try {
+        await dbRun(sql.raw(statement));
+      } catch (error) {
+        if (shouldIgnoreStatementError(error)) continue;
+        throw error;
+      }
     }
     await dbRun(
       sql`INSERT INTO schema_migrations (id, applied_at) VALUES (${file}, ${new Date().toISOString()})`,

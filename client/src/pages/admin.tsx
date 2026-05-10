@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -46,10 +46,15 @@ type AdminFormDefinition = {
       options?: string[];
       enabled: boolean;
       required: boolean;
+      hideLabel?: boolean;
       displayOrder: number;
       isBuiltin: boolean;
     }>;
   }>;
+};
+
+type AdminUser = SafeUser & {
+  activeNow?: boolean;
 };
 
 const DEFAULT_BUILTIN_QUESTIONS = [
@@ -173,13 +178,12 @@ export default function AdminPanel({
   const [openFieldSectionKey, setOpenFieldSectionKey] = useState<string | null>(null);
   const [openCatalogPanel, setOpenCatalogPanel] = useState<"species" | "breeds" | null>(null);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
-  const [location] = useLocation();
+  const search = useSearch();
   const initialTabFromUrl = (() => {
     if (forcedTab) return forcedTab;
-    const qIndex = location.indexOf("?");
-    if (qIndex < 0) return mode === "form-only" ? "form-options" : "pending";
-    const qs = location.slice(qIndex + 1);
-    const tab = new URLSearchParams(qs).get("tab");
+    const rawSearch = (search || "").replace(/^\?/, "");
+    if (!rawSearch) return mode === "form-only" ? "form-options" : "pending";
+    const tab = new URLSearchParams(rawSearch).get("tab");
     const allowed =
       mode === "form-only"
         ? ["form-options"]
@@ -222,7 +226,7 @@ export default function AdminPanel({
   const { user: currentUser, updateCurrentUser } = useAuth();
   const formScope = mode === "form-only" ? "ast" : "hospital";
 
-  const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
   const [newSpeciesName, setNewSpeciesName] = useState("");
   const [selectedBreedSpecies, setSelectedBreedSpecies] = useState("");
@@ -238,6 +242,7 @@ export default function AdminPanel({
   const [downloadLogsFilter, setDownloadLogsFilter] = useState("");
   const [downloadSourceFilter, setDownloadSourceFilter] = useState<"all" | "ast_report" | "hospital_case">("all");
   const [usersFilter, setUsersFilter] = useState("");
+  const [studentBatchFilter, setStudentBatchFilter] = useState<string>("all");
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -247,9 +252,12 @@ export default function AdminPanel({
     designation: "",
   });
 
-  const { data: allUsers = [] } = useQuery<SafeUser[]>({
+  const { data: allUsers = [] } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
     enabled: mode === "full",
+    refetchInterval: mode === "full" ? 10000 : false,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
   });
   const { data: speciesOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/species-options"],
@@ -306,6 +314,9 @@ export default function AdminPanel({
   >({
     queryKey: ["/api/admin/download-requests"],
     enabled: mode === "full",
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const {
     data: passwordResetRequests = [],
@@ -320,7 +331,25 @@ export default function AdminPanel({
   >({
     queryKey: ["/api/admin/password-reset-requests"],
     enabled: mode === "full",
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
+
+  useEffect(() => {
+    if (mode !== "full") return;
+    if (activeTab === "password-resets") {
+      queryClient.refetchQueries({ queryKey: ["/api/admin/password-reset-requests"] });
+      return;
+    }
+    if (activeTab === "downloads") {
+      queryClient.refetchQueries({ queryKey: ["/api/admin/download-requests"] });
+      return;
+    }
+    if (activeTab === "pending") {
+      queryClient.refetchQueries({ queryKey: ["/api/admin/users"] });
+    }
+  }, [activeTab, mode]);
 
   const pendingUsers = allUsers.filter((u) => !u.approved);
   const scopedFormSections = (formDefinition?.sections ?? [])
@@ -337,13 +366,28 @@ export default function AdminPanel({
           : section.questions ?? [],
     }));
   const approvedUsers = allUsers.filter((u) => u.approved);
+  const availableStudentBatches = Array.from(
+    new Set(
+      approvedUsers
+        .filter((u) => u.designation === "student" && Number.isInteger(u.studentBatch))
+        .map((u) => Number(u.studentBatch)),
+    ),
+  ).sort((a, b) => a - b);
+  const selectedBatch =
+    studentBatchFilter === "all"
+      ? null
+      : Number.parseInt(studentBatchFilter, 10);
   const normalizedUsersFilter = usersFilter.trim().toLowerCase();
   const filteredApprovedUsers = approvedUsers.filter((u) => {
+    if (selectedBatch != null) {
+      if (u.designation !== "student" || u.studentBatch !== selectedBatch) return false;
+    }
     if (!normalizedUsersFilter) return true;
     return (
       u.fullName.toLowerCase().includes(normalizedUsersFilter) ||
       u.username.toLowerCase().includes(normalizedUsersFilter) ||
-      u.email.toLowerCase().includes(normalizedUsersFilter)
+      u.email.toLowerCase().includes(normalizedUsersFilter) ||
+      (u.designation === "student" && `${u.studentBatch ?? ""}`.includes(normalizedUsersFilter))
     );
   });
   const sourceMatches = (r: { requestSource?: string }) =>
@@ -394,6 +438,22 @@ export default function AdminPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       toast({ title: "User removed" });
+    },
+  });
+  const deleteBatchMutation = useMutation({
+    mutationFn: async (batch: number) => {
+      const res = await apiRequest("DELETE", `/api/admin/users/batch/${batch}`);
+      return res.json();
+    },
+    onSuccess: (result: { message?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: result?.message || "Batch deleted" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to delete batch",
+        variant: "destructive",
+      });
     },
   });
 
@@ -528,15 +588,20 @@ export default function AdminPanel({
     },
   });
 
+  const syncFormDefinitionViews = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+    await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+  };
+
   const addSectionMutation = useMutation({
     mutationFn: async (title: string) => {
       const res = await apiRequest("POST", "/api/admin/form-sections", { title, scope: formScope });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
       setNewSectionTitle("");
       toast({ title: "Section added" });
     },
@@ -546,10 +611,8 @@ export default function AdminPanel({
     mutationFn: async (payload: { key: string; direction: "up" | "down" }) => {
       await apiRequest("PATCH", `/api/admin/form-sections/${payload.key}/move`, { ...payload, scope: formScope });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
@@ -563,10 +626,8 @@ export default function AdminPanel({
       const res = await apiRequest("POST", "/api/admin/form-questions", { ...payload, scope: formScope });
       return res.json();
     },
-    onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async (_data, vars) => {
+      await syncFormDefinitionViews();
       setNewQuestionLabelBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
       setNewQuestionOptionsBySection((prev) => ({ ...prev, [vars.sectionKey]: "" }));
       toast({ title: "Question added" });
@@ -574,13 +635,11 @@ export default function AdminPanel({
   });
 
   const updateQuestionMutation = useMutation({
-    mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean }) => {
+    mutationFn: async (payload: { id: number; enabled?: boolean; required?: boolean; hideLabel?: boolean }) => {
       await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}`, { ...payload, scope: formScope });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
       toast({ title: "Question updated" });
     },
   });
@@ -589,10 +648,8 @@ export default function AdminPanel({
     mutationFn: async (payload: { id: number; direction: "up" | "down" }) => {
       await apiRequest("PATCH", `/api/admin/form-questions/${payload.id}/move`, { ...payload, scope: formScope });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
     },
   });
 
@@ -613,10 +670,7 @@ export default function AdminPanel({
           };
         },
       );
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      await syncFormDefinitionViews();
       toast({ title: "Section deleted" });
     },
     onError: (err: unknown) => {
@@ -647,10 +701,7 @@ export default function AdminPanel({
           };
         },
       );
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/form-definition", formScope] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/form-edit-logs"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/admin/form-definition", formScope] });
+      await syncFormDefinitionViews();
       toast({ title: "Question deleted" });
     },
     onError: (err: unknown) => {
@@ -718,7 +769,7 @@ export default function AdminPanel({
   });
 
   const downloadUsersCsv = () => {
-    const headers = ["Name", "Username", "Address", "Phone", "Email", "Role", "Designation", "Status"];
+    const headers = ["Name", "Username", "Address", "Phone", "Email", "Role", "Designation", "Student Batch", "Status"];
     const rows = filteredApprovedUsers.map((u) => [
       u.fullName,
       u.username,
@@ -727,6 +778,7 @@ export default function AdminPanel({
       u.email,
       u.role,
       designationLabel(u.designation),
+      u.designation === "student" && u.studentBatch ? `${u.studentBatch}th` : "",
       u.approved ? "Approved" : "Pending",
     ]);
     const csv = [headers, ...rows]
@@ -968,13 +1020,45 @@ export default function AdminPanel({
           {/* All Users */}
         <TabsContent value="users" className="space-y-3 mt-4">
           <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-            <Input
-              value={usersFilter}
-              onChange={(e) => setUsersFilter(e.target.value)}
-              placeholder="Search by name, username, or email"
-              data-testid="input-users-filter"
-              className="sm:max-w-sm"
-            />
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+              <Input
+                value={usersFilter}
+                onChange={(e) => setUsersFilter(e.target.value)}
+                placeholder="Search by name, username, email, or batch"
+                data-testid="input-users-filter"
+                className="sm:max-w-sm"
+              />
+              <Select value={studentBatchFilter} onValueChange={setStudentBatchFilter}>
+                <SelectTrigger className="w-[150px] h-9 text-xs" data-testid="select-student-batch-filter">
+                  <SelectValue placeholder="All batches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All batches</SelectItem>
+                  {availableStudentBatches.map((batch) => (
+                    <SelectItem key={batch} value={String(batch)}>
+                      {batch}th batch
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                disabled={selectedBatch == null || deleteBatchMutation.isPending}
+                onClick={() => {
+                  if (selectedBatch == null) return;
+                  const ok = window.confirm(
+                    `Delete all student accounts in ${selectedBatch}th batch? This cannot be undone.`,
+                  );
+                  if (!ok) return;
+                  deleteBatchMutation.mutate(selectedBatch);
+                }}
+                data-testid="button-delete-student-batch"
+              >
+                Delete selected batch
+              </Button>
+            </div>
             <Button
               size="sm"
               variant="outline"
@@ -1001,9 +1085,21 @@ export default function AdminPanel({
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{u.fullName}</span>
                         {roleBadge(u.role)}
+                        <Badge
+                          className={`border-0 text-[10px] px-2 py-0.5 ${
+                            u.activeNow
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                              : "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {u.activeNow ? "Active" : "Offline"}
+                        </Badge>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        @{u.username} &middot; {designationLabel(u.designation)} &middot; {u.email}
+                        @{u.username} &middot; {designationLabel(u.designation)}
+                        {u.designation === "student" && u.studentBatch ? ` (${u.studentBatch}th batch)` : ""}
+                        {" \u00b7 "}
+                        {u.email}
                       </div>
                     </div>
 
@@ -1846,7 +1942,7 @@ export default function AdminPanel({
                             type="button"
                             size="sm"
                             variant={q.enabled ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -1861,7 +1957,7 @@ export default function AdminPanel({
                             type="button"
                             size="sm"
                             variant={q.required ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -1871,6 +1967,22 @@ export default function AdminPanel({
                             }
                           >
                             {q.required ? "Compulsory" : "Optional"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.hideLabel ? "default" : "outline"}
+                            className="h-7 w-24 justify-center text-[11px]"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                hideLabel: !q.hideLabel,
+                                enabled: q.enabled,
+                                required: q.required,
+                              })
+                            }
+                          >
+                            {q.hideLabel ? "Box only" : "Show label"}
                           </Button>
                         </div>
                       </div>
@@ -1938,7 +2050,7 @@ export default function AdminPanel({
                             type="button"
                             size="sm"
                             variant={q.enabled ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -1953,7 +2065,7 @@ export default function AdminPanel({
                             type="button"
                             size="sm"
                             variant={q.required ? "default" : "outline"}
-                            className="h-7"
+                            className="h-7 w-24 justify-center text-[11px]"
                             onClick={() =>
                               updateQuestionMutation.mutate({
                                 id: q.id,
@@ -1963,6 +2075,22 @@ export default function AdminPanel({
                             }
                           >
                             {q.required ? "Compulsory" : "Optional"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={q.hideLabel ? "default" : "outline"}
+                            className="h-7 w-24 justify-center text-[11px]"
+                            onClick={() =>
+                              updateQuestionMutation.mutate({
+                                id: q.id,
+                                hideLabel: !q.hideLabel,
+                                enabled: q.enabled,
+                                required: q.required,
+                              })
+                            }
+                          >
+                            {q.hideLabel ? "Box only" : "Show label"}
                           </Button>
                         </div>
                       </div>

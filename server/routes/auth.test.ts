@@ -68,6 +68,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     phone: "9800000000",
     email: "admin@example.com",
     designation: "veterinarian",
+    studentBatch: null,
     username: "admin",
     passwordHash: "$2b$10$X7P2.JmqBz1w2xfYfhYQGOk6QNGxB7gJhDUf8T7f1oXdNAB4jif0G", // admin123
     role: "admin",
@@ -95,6 +96,7 @@ describe("auth routes", () => {
         phone: "9800000000",
         email: "user@example.com",
         designation: "student",
+        studentBatch: 9,
         username: "user1",
         password: "secret123",
       },

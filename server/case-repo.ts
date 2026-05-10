@@ -37,6 +37,11 @@ type CaseRow = {
   last_updated_by_name: string | null;
   updated_at: string | null;
   custom_fields: string | null;
+  treatment_details: string | null;
+  veterinarian_id: number | null;
+  veterinarian_name: string | null;
+  veterinarian_nvc: string | null;
+  veterinarian_department: string | null;
 };
 
 function toCase(row: CaseRow): Case {
@@ -69,10 +74,15 @@ function toCase(row: CaseRow): Case {
     lastUpdatedByName: row.last_updated_by_name,
     updatedAt: row.updated_at,
     customFields: row.custom_fields,
+    treatmentDetails: row.treatment_details,
+    veterinarianId: row.veterinarian_id,
+    veterinarianName: row.veterinarian_name,
+    veterinarianNvc: row.veterinarian_nvc,
+    veterinarianDepartment: row.veterinarian_department,
   };
 }
 
-const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields FROM cases`;
+const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields, treatment_details, veterinarian_id, veterinarian_name, veterinarian_nvc, veterinarian_department FROM cases`;
 
 type CaseScope = "ast" | "hospital";
 
@@ -126,7 +136,7 @@ export const caseRepo = {
   ): Promise<Case> {
     await dbRun(
       sql`INSERT INTO cases
-          (case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields)
+          (case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields, treatment_details, veterinarian_id, veterinarian_name, veterinarian_nvc, veterinarian_department)
           VALUES (
             ${data.caseNumber},
             ${data.billNumber ?? null},
@@ -154,7 +164,12 @@ export const caseRepo = {
             ${data.lastUpdatedBy ?? null},
             ${data.lastUpdatedByName ?? null},
             ${data.updatedAt ?? null},
-            ${data.customFields ?? null}
+            ${data.customFields ?? null},
+            ${data.treatmentDetails ?? null},
+            ${data.veterinarianId ?? null},
+            ${data.veterinarianName ?? null},
+            ${data.veterinarianNvc ?? null},
+            ${data.veterinarianDepartment ?? null}
           )`,
     );
     const created = await dbGet<CaseRow>(sql`${CASE_SELECT} ORDER BY id DESC LIMIT 1`);
@@ -198,7 +213,12 @@ export const caseRepo = {
               last_updated_by = ${next.lastUpdatedBy ?? null},
               last_updated_by_name = ${next.lastUpdatedByName ?? null},
               updated_at = ${next.updatedAt ?? null},
-              custom_fields = ${next.customFields ?? null}
+              custom_fields = ${next.customFields ?? null},
+              treatment_details = ${next.treatmentDetails ?? null},
+              veterinarian_id = ${next.veterinarianId ?? null},
+              veterinarian_name = ${next.veterinarianName ?? null},
+              veterinarian_nvc = ${next.veterinarianNvc ?? null},
+              veterinarian_department = ${next.veterinarianDepartment ?? null}
           WHERE id = ${id}`,
     );
     return this.getCase(id, scope);

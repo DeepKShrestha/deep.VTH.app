@@ -13,6 +13,18 @@ import {
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { authSessionRepo } from "../auth-session-repo";
+import {
+  doseUnitRepo,
+  durationRepo,
+  frequencyRepo,
+  medicationRepo,
+  routeOfAdministrationRepo,
+} from "../repos";
+import {
+  ensureHospitalTreatmentDefinition,
+  ensureHospitalVeterinarianDefinition,
+  mergeOrphanFormSections,
+} from "../hospital-form-definition";
 
 function slugifyKey(input: string) {
   return input
@@ -39,6 +51,21 @@ type AllowedUserRole = (typeof ALLOWED_USER_ROLES)[number];
 function parseAllowedUserRole(raw: unknown): AllowedUserRole | null {
   const role = String(raw ?? "").trim().toLowerCase();
   return (ALLOWED_USER_ROLES as readonly string[]).includes(role) ? (role as AllowedUserRole) : null;
+}
+
+function parseStudentBatch(raw: unknown): number | null {
+  const value = Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isInteger(value) || value < 1 || value > 99) return null;
+  return value;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error ?? "").toLowerCase();
+  return (
+    message.includes("unique") ||
+    message.includes("duplicate") ||
+    message.includes("constraint")
+  );
 }
 
 function isHiddenSuperadminUser(user: {
@@ -449,7 +476,11 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const scope = resolveFormScope(req.query.scope);
-      const sections = await dbAll<{ key: string; title: string; display_order: number }>(
+      if (scope === "hospital") {
+        await ensureHospitalTreatmentDefinition();
+        await ensureHospitalVeterinarianDefinition();
+      }
+      let sections = await dbAll<{ key: string; title: string; display_order: number }>(
         sql`SELECT key, title, display_order FROM form_sections
             WHERE form_scope = 'shared' OR form_scope = ${scope}
             ORDER BY display_order ASC`,
@@ -463,14 +494,16 @@ export function registerAdminRoutes(app: Express) {
         options_json: string | null;
         enabled: number;
         required: number;
+        hide_label: number;
         display_order: number;
         is_builtin: number;
       }>(
-        sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin
+        sql`SELECT id, key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin
             FROM form_questions
             WHERE form_scope = 'shared' OR form_scope = ${scope}
             ORDER BY section_key ASC, display_order ASC`,
       );
+      sections = mergeOrphanFormSections(sections, questions);
       const bySection = new Map<string, typeof questions>();
       for (const q of questions) {
         const list = bySection.get(q.section_key) ?? [];
@@ -490,6 +523,7 @@ export function registerAdminRoutes(app: Express) {
             options: q.options_json ? JSON.parse(q.options_json) : [],
             enabled: Boolean(q.enabled),
             required: Boolean(q.required),
+            hideLabel: Boolean(q.hide_label),
             displayOrder: q.display_order,
             isBuiltin: Boolean(q.is_builtin),
           })),
@@ -546,31 +580,35 @@ export function registerAdminRoutes(app: Express) {
       if (!["up", "down"].includes(direction)) {
         return res.status(400).json({ message: "direction must be up or down" });
       }
-      const current = await dbGet<{ key: string; display_order: number }>(
-        sql`SELECT key, display_order FROM form_sections WHERE key = ${key} AND form_scope = ${scope}`,
+      const rows = await dbAll<{ key: string; display_order: number }>(
+        sql`SELECT key, display_order FROM form_sections
+            WHERE form_scope = 'shared' OR form_scope = ${scope}
+            ORDER BY display_order ASC, key ASC`,
       );
-      if (!current) return res.status(404).json({ message: "Section not found" });
-      const neighbor =
-        direction === "up"
-          ? await dbGet<{ key: string; display_order: number }>(
-              sql`SELECT key, display_order FROM form_sections
-                  WHERE (form_scope = ${scope}) AND display_order < ${current.display_order}
-                  ORDER BY display_order DESC
-                  LIMIT 1`,
-            )
-          : await dbGet<{ key: string; display_order: number }>(
-              sql`SELECT key, display_order FROM form_sections
-                  WHERE (form_scope = ${scope}) AND display_order > ${current.display_order}
-                  ORDER BY display_order ASC
-                  LIMIT 1`,
-            );
-      if (!neighbor) return res.json({ message: "No move possible" });
-      await dbRun(
-        sql`UPDATE form_sections SET display_order = ${neighbor.display_order} WHERE key = ${current.key}`,
-      );
-      await dbRun(
-        sql`UPDATE form_sections SET display_order = ${current.display_order} WHERE key = ${neighbor.key}`,
-      );
+      const idx = rows.findIndex((r) => r.key === key);
+      if (idx === -1) return res.status(404).json({ message: "Section not found" });
+      const neighborIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (neighborIdx < 0 || neighborIdx >= rows.length) {
+        return res.json({ message: "No move possible" });
+      }
+      const keyA = rows[idx].key;
+      const keyB = rows[neighborIdx].key;
+      const fromOrder = rows[idx].display_order;
+      const neighborKey = keyB;
+      const toOrder = rows[neighborIdx].display_order;
+      if (fromOrder !== toOrder) {
+        await dbRun(sql`UPDATE form_sections SET display_order = ${toOrder} WHERE key = ${keyA}`);
+        await dbRun(sql`UPDATE form_sections SET display_order = ${fromOrder} WHERE key = ${keyB}`);
+      } else {
+        const reordered = [...rows];
+        [reordered[idx], reordered[neighborIdx]] = [reordered[neighborIdx], reordered[idx]];
+        for (let i = 0; i < reordered.length; i++) {
+          const nextOrder = (i + 1) * 1000;
+          await dbRun(
+            sql`UPDATE form_sections SET display_order = ${nextOrder} WHERE key = ${reordered[i].key}`,
+          );
+        }
+      }
       await dbRun(
         sql`INSERT INTO form_edit_audit_logs
             (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
@@ -579,8 +617,12 @@ export function registerAdminRoutes(app: Express) {
               ${currentUser.role},
               ${"move_form_section"},
               ${key},
-              ${JSON.stringify({ direction, from: current.display_order })},
-              ${JSON.stringify({ to: neighbor.display_order })},
+              ${JSON.stringify({ direction, fromOrder, swappedWith: neighborKey, toOrder })},
+              ${JSON.stringify(
+                fromOrder !== toOrder
+                  ? { swappedOrders: true }
+                  : { renumbered: true, reason: "tied_display_order" },
+              )},
               ${new Date().toISOString()}
             )`,
       );
@@ -610,13 +652,22 @@ export function registerAdminRoutes(app: Express) {
           "sample",
           "ast",
           "tests_suggested",
+          "diagnosis",
+          "treatment",
+          "attending_veterinarian",
           "final",
         ].includes(section.key)
       ) {
         return res.status(403).json({ message: "Built-in sections cannot be deleted" });
       }
       const normalizedTitle = section.title.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (normalizedTitle.includes("testsuggested") || normalizedTitle.includes("testssuggested")) {
+      if (
+        normalizedTitle.includes("testsuggested") ||
+        normalizedTitle.includes("testssuggested") ||
+        normalizedTitle === "diagnosis" ||
+        normalizedTitle.includes("treatmentprescription") ||
+        normalizedTitle.includes("attendingveterinarian")
+      ) {
         return res.status(403).json({ message: "Built-in sections cannot be deleted" });
       }
       const questionCount = await dbGet<{ count: number }>(
@@ -670,6 +721,8 @@ export function registerAdminRoutes(app: Express) {
           "multiSelect",
           "yesNo",
           "date",
+          "treatment_prescription",
+          "hospital_veterinarian",
         ].includes(inputType)
       ) {
         return res.status(400).json({ message: "Unsupported inputType" });
@@ -691,7 +744,7 @@ export function registerAdminRoutes(app: Express) {
       const displayOrder = Number(maxOrderRow?.max ?? 0) + 1000;
       await dbRun(
         sql`INSERT INTO form_questions
-            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at, form_scope)
+            (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at, form_scope)
             VALUES (
               ${key},
               ${sectionKey},
@@ -699,6 +752,7 @@ export function registerAdminRoutes(app: Express) {
               ${inputType},
               ${options.length > 0 ? JSON.stringify(options) : null},
               ${1},
+              ${0},
               ${0},
               ${displayOrder},
               ${0},
@@ -719,7 +773,7 @@ export function registerAdminRoutes(app: Express) {
               ${new Date().toISOString()}
             )`,
       );
-      return res.status(201).json({ key, sectionKey, label, inputType, options, enabled: true, required: false, displayOrder, isBuiltin: false });
+      return res.status(201).json({ key, sectionKey, label, inputType, options, enabled: true, required: false, hideLabel: false, displayOrder, isBuiltin: false });
     },
   );
 
@@ -738,13 +792,16 @@ export function registerAdminRoutes(app: Express) {
         options_json: string | null;
         enabled: number;
         required: number;
-      }>(sql`SELECT id, key, input_type, options_json, enabled, required FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`);
+        hide_label: number;
+      }>(sql`SELECT id, key, input_type, options_json, enabled, required, hide_label FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`);
       if (!existing) return res.status(404).json({ message: "Question not found" });
-      const patch = req.body as { enabled?: boolean; required?: boolean; options?: string[] };
+      const patch = req.body as { enabled?: boolean; required?: boolean; hideLabel?: boolean; options?: string[] };
       const nextEnabled =
         typeof patch.enabled === "boolean" ? patch.enabled : Boolean(existing.enabled);
       const nextRequired =
         typeof patch.required === "boolean" ? patch.required : Boolean(existing.required);
+      const nextHideLabel =
+        typeof patch.hideLabel === "boolean" ? patch.hideLabel : Boolean(existing.hide_label);
       const nextOptions =
         Array.isArray(patch.options)
           ? patch.options.map((v) => String(v ?? "").trim()).filter(Boolean)
@@ -762,6 +819,7 @@ export function registerAdminRoutes(app: Express) {
         sql`UPDATE form_questions
             SET enabled = ${nextEnabled ? 1 : 0},
                 required = ${nextRequired ? 1 : 0},
+                hide_label = ${nextHideLabel ? 1 : 0},
                 options_json = ${
                   existing.input_type === "singleSelect" || existing.input_type === "multiSelect"
                     ? JSON.stringify(nextOptions)
@@ -780,9 +838,10 @@ export function registerAdminRoutes(app: Express) {
               ${JSON.stringify({
                 enabled: Boolean(existing.enabled),
                 required: Boolean(existing.required),
+                hideLabel: Boolean(existing.hide_label),
                 options: existing.options_json ? JSON.parse(existing.options_json) : [],
               })},
-              ${JSON.stringify({ enabled: nextEnabled, required: nextRequired, options: nextOptions })},
+              ${JSON.stringify({ enabled: nextEnabled, required: nextRequired, hideLabel: nextHideLabel, options: nextOptions })},
               ${new Date().toISOString()}
             )`,
       );
@@ -811,31 +870,35 @@ export function registerAdminRoutes(app: Express) {
         sql`SELECT id, key, section_key, display_order FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       if (!current) return res.status(404).json({ message: "Question not found" });
-      const neighbor =
-        direction === "up"
-          ? await dbGet<{ id: number; display_order: number }>(
-              sql`SELECT id, display_order FROM form_questions
-                  WHERE section_key = ${current.section_key}
-                    AND (form_scope = 'shared' OR form_scope = ${scope})
-                    AND display_order < ${current.display_order}
-                  ORDER BY display_order DESC
-                  LIMIT 1`,
-            )
-          : await dbGet<{ id: number; display_order: number }>(
-              sql`SELECT id, display_order FROM form_questions
-                  WHERE section_key = ${current.section_key}
-                    AND (form_scope = 'shared' OR form_scope = ${scope})
-                    AND display_order > ${current.display_order}
-                  ORDER BY display_order ASC
-                  LIMIT 1`,
-            );
-      if (!neighbor) return res.json({ message: "No move possible" });
-      await dbRun(
-        sql`UPDATE form_questions SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`,
+      const rows = await dbAll<{ id: number; key: string; display_order: number }>(
+        sql`SELECT id, key, display_order FROM form_questions
+            WHERE section_key = ${current.section_key}
+              AND (form_scope = 'shared' OR form_scope = ${scope})
+            ORDER BY display_order ASC, id ASC`,
       );
-      await dbRun(
-        sql`UPDATE form_questions SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`,
-      );
+      const idx = rows.findIndex((r) => r.id === id);
+      if (idx === -1) return res.status(404).json({ message: "Question not found" });
+      const neighborIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (neighborIdx < 0 || neighborIdx >= rows.length) {
+        return res.json({ message: "No move possible" });
+      }
+      const idA = rows[idx].id;
+      const idB = rows[neighborIdx].id;
+      const fromOrder = rows[idx].display_order;
+      const toOrder = rows[neighborIdx].display_order;
+      if (fromOrder !== toOrder) {
+        await dbRun(sql`UPDATE form_questions SET display_order = ${toOrder} WHERE id = ${idA}`);
+        await dbRun(sql`UPDATE form_questions SET display_order = ${fromOrder} WHERE id = ${idB}`);
+      } else {
+        const reordered = [...rows];
+        [reordered[idx], reordered[neighborIdx]] = [reordered[neighborIdx], reordered[idx]];
+        for (let i = 0; i < reordered.length; i++) {
+          const nextOrder = (i + 1) * 1000;
+          await dbRun(
+            sql`UPDATE form_questions SET display_order = ${nextOrder} WHERE id = ${reordered[i].id}`,
+          );
+        }
+      }
       await dbRun(
         sql`INSERT INTO form_edit_audit_logs
             (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
@@ -844,8 +907,12 @@ export function registerAdminRoutes(app: Express) {
               ${currentUser.role},
               ${"move_form_question"},
               ${current.key},
-              ${JSON.stringify({ direction, from: current.display_order })},
-              ${JSON.stringify({ to: neighbor.display_order })},
+              ${JSON.stringify({ direction, fromOrder, swappedWithId: rows[neighborIdx].id, toOrder })},
+              ${JSON.stringify(
+                fromOrder !== toOrder
+                  ? { swappedOrders: true }
+                  : { renumbered: true, reason: "tied_display_order" },
+              )},
               ${new Date().toISOString()}
             )`,
       );
@@ -974,22 +1041,44 @@ export function registerAdminRoutes(app: Express) {
     "/api/admin/form-edit-logs",
     requireAuth,
     requireRole("superadmin", "admin"),
-    async (_req, res) => {
-      const rows = await dbAll<{
-        id: number;
-        actor_user_id: number;
-        actor_role: string;
-        action: string;
-        target_key: string | null;
-        old_value: string | null;
-        new_value: string | null;
-        created_at: string;
-      }>(
-        sql`SELECT id, actor_user_id, actor_role, action, target_key, old_value, new_value, created_at
+    async (req, res) => {
+      const scope = String(req.query.scope ?? "").trim();
+      const treatmentMasterOnly = scope === "treatment_master";
+      const rows = treatmentMasterOnly
+        ? await dbAll<{
+            id: number;
+            actor_user_id: number;
+            actor_role: string;
+            action: string;
+            target_key: string | null;
+            old_value: string | null;
+            new_value: string | null;
+            created_at: string;
+          }>(
+            sql`SELECT id, actor_user_id, actor_role, action, target_key, old_value, new_value, created_at
+            FROM form_edit_audit_logs
+            WHERE action LIKE 'add\\_treatment\\_%' ESCAPE '\\'
+               OR action LIKE 'update\\_treatment\\_%' ESCAPE '\\'
+               OR action LIKE 'delete\\_treatment\\_%' ESCAPE '\\'
+               OR action LIKE 'move\\_treatment\\_%' ESCAPE '\\'
+            ORDER BY created_at DESC
+            LIMIT 200`,
+          )
+        : await dbAll<{
+            id: number;
+            actor_user_id: number;
+            actor_role: string;
+            action: string;
+            target_key: string | null;
+            old_value: string | null;
+            new_value: string | null;
+            created_at: string;
+          }>(
+            sql`SELECT id, actor_user_id, actor_role, action, target_key, old_value, new_value, created_at
             FROM form_edit_audit_logs
             ORDER BY created_at DESC
             LIMIT 100`,
-      );
+          );
       const enriched = await Promise.all(
         rows.map(async (row) => {
           const actor = await authSessionRepo.getUserById(row.actor_user_id);
@@ -1007,6 +1096,772 @@ export function registerAdminRoutes(app: Express) {
         }),
       );
       res.json(enriched);
+    },
+  );
+
+  app.get(
+    "/api/admin/medications",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await medicationRepo.getMedications();
+      return res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/admin/medications",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const name = String(req.body?.name ?? "").trim();
+      const description = String(req.body?.description ?? "").trim();
+      if (!name) return res.status(400).json({ message: "Medication name is required" });
+      try {
+        const created = await medicationRepo.createMedication({
+          name,
+          description: description || null,
+        });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"add_treatment_medication"},
+                ${String(created.id)},
+                ${null},
+                ${JSON.stringify(created)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.status(201).json(created);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to save medication" });
+        }
+        return res.status(409).json({ message: "Medication already exists" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/medications/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const name = String(req.body?.name ?? "").trim();
+      const description = String(req.body?.description ?? "").trim();
+      if (!name) return res.status(400).json({ message: "Medication name is required" });
+      try {
+        const before = await medicationRepo.getMedication(id);
+        const updated = await medicationRepo.updateMedication(id, {
+          name,
+          description: description || null,
+        });
+        if (!updated) return res.status(404).json({ message: "Medication not found" });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"update_treatment_medication"},
+                ${String(id)},
+                ${JSON.stringify(before)},
+                ${JSON.stringify(updated)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.json(updated);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to update medication" });
+        }
+        return res.status(409).json({ message: "Medication already exists" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/medications/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const existing = await medicationRepo.getMedication(id);
+      if (!existing) return res.status(404).json({ message: "Medication not found" });
+      await medicationRepo.deleteMedication(id);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_treatment_medication"},
+              ${String(id)},
+              ${JSON.stringify(existing)},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Medication removed" });
+    },
+  );
+
+  app.patch(
+    "/api/admin/medications/:id/move",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const direction = String(req.body?.direction ?? "");
+      if (!["up", "down"].includes(direction)) {
+        return res.status(400).json({ message: "direction must be up or down" });
+      }
+      const current = await dbGet<{ id: number; display_order: number }>(
+        sql`SELECT id, display_order FROM medications WHERE id = ${id}`,
+      );
+      if (!current) return res.status(404).json({ message: "Medication not found" });
+      const neighbor =
+        direction === "up"
+          ? await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM medications
+                  WHERE display_order < ${current.display_order}
+                  ORDER BY display_order DESC, id DESC
+                  LIMIT 1`,
+            )
+          : await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM medications
+                  WHERE display_order > ${current.display_order}
+                  ORDER BY display_order ASC, id ASC
+                  LIMIT 1`,
+            );
+      if (!neighbor) return res.json({ message: "No move possible" });
+      await dbRun(sql`UPDATE medications SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`);
+      await dbRun(sql`UPDATE medications SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"move_treatment_medication"},
+              ${String(id)},
+              ${JSON.stringify({ direction, from: current.display_order })},
+              ${JSON.stringify({ to: neighbor.display_order })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Medication reordered" });
+    },
+  );
+
+  app.get(
+    "/api/admin/routes-of-administration",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await routeOfAdministrationRepo.getRoutesOfAdministration();
+      return res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/admin/routes-of-administration",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const name = String(req.body?.name ?? "").trim();
+      const abbreviation = String(req.body?.abbreviation ?? "").trim();
+      if (!abbreviation) return res.status(400).json({ message: "Route abbreviation is required" });
+      try {
+        const created = await routeOfAdministrationRepo.createRouteOfAdministration({
+          name: name || abbreviation,
+          abbreviation,
+        });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"add_treatment_route"},
+                ${String(created.id)},
+                ${null},
+                ${JSON.stringify(created)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.status(201).json(created);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to save route" });
+        }
+        return res.status(409).json({ message: "Route already exists" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/routes-of-administration/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const name = String(req.body?.name ?? "").trim();
+      const abbreviation = String(req.body?.abbreviation ?? "").trim();
+      if (!abbreviation) return res.status(400).json({ message: "Route abbreviation is required" });
+      try {
+        const before = await routeOfAdministrationRepo.getRouteOfAdministration(id);
+        const updated = await routeOfAdministrationRepo.updateRouteOfAdministration(id, {
+          name: name || abbreviation,
+          abbreviation,
+        });
+        if (!updated) return res.status(404).json({ message: "Route not found" });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"update_treatment_route"},
+                ${String(id)},
+                ${JSON.stringify(before)},
+                ${JSON.stringify(updated)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.json(updated);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to update route" });
+        }
+        return res.status(409).json({ message: "Route already exists" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/routes-of-administration/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const existing = await routeOfAdministrationRepo.getRouteOfAdministration(id);
+      if (!existing) return res.status(404).json({ message: "Route not found" });
+      await routeOfAdministrationRepo.deleteRouteOfAdministration(id);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_treatment_route"},
+              ${String(id)},
+              ${JSON.stringify(existing)},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Route removed" });
+    },
+  );
+
+  app.patch(
+    "/api/admin/routes-of-administration/:id/move",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const direction = String(req.body?.direction ?? "");
+      if (!["up", "down"].includes(direction)) {
+        return res.status(400).json({ message: "direction must be up or down" });
+      }
+      const current = await dbGet<{ id: number; display_order: number }>(
+        sql`SELECT id, display_order FROM routes_of_administration WHERE id = ${id}`,
+      );
+      if (!current) return res.status(404).json({ message: "Route not found" });
+      const neighbor =
+        direction === "up"
+          ? await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM routes_of_administration
+                  WHERE display_order < ${current.display_order}
+                  ORDER BY display_order DESC, id DESC
+                  LIMIT 1`,
+            )
+          : await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM routes_of_administration
+                  WHERE display_order > ${current.display_order}
+                  ORDER BY display_order ASC, id ASC
+                  LIMIT 1`,
+            );
+      if (!neighbor) return res.json({ message: "No move possible" });
+      await dbRun(sql`UPDATE routes_of_administration SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`);
+      await dbRun(sql`UPDATE routes_of_administration SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"move_treatment_route"},
+              ${String(id)},
+              ${JSON.stringify({ direction, from: current.display_order })},
+              ${JSON.stringify({ to: neighbor.display_order })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Route reordered" });
+    },
+  );
+
+  app.get(
+    "/api/admin/frequencies",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await frequencyRepo.getFrequencies();
+      return res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/admin/frequencies",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const name = String(req.body?.name ?? "").trim();
+      const shortCode = String(req.body?.shortCode ?? "").trim();
+      if (!shortCode) return res.status(400).json({ message: "Frequency abbreviation is required" });
+      try {
+        const created = await frequencyRepo.createFrequency({
+          name: name || shortCode,
+          shortCode,
+        });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"add_treatment_frequency"},
+                ${String(created.id)},
+                ${null},
+                ${JSON.stringify(created)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.status(201).json(created);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to save frequency" });
+        }
+        return res.status(409).json({ message: "Frequency already exists" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/frequencies/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const name = String(req.body?.name ?? "").trim();
+      const shortCode = String(req.body?.shortCode ?? "").trim();
+      if (!shortCode) return res.status(400).json({ message: "Frequency abbreviation is required" });
+      try {
+        const before = await frequencyRepo.getFrequency(id);
+        const updated = await frequencyRepo.updateFrequency(id, {
+          name: name || shortCode,
+          shortCode,
+        });
+        if (!updated) return res.status(404).json({ message: "Frequency not found" });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"update_treatment_frequency"},
+                ${String(id)},
+                ${JSON.stringify(before)},
+                ${JSON.stringify(updated)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.json(updated);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to update frequency" });
+        }
+        return res.status(409).json({ message: "Frequency already exists" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/frequencies/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const existing = await frequencyRepo.getFrequency(id);
+      if (!existing) return res.status(404).json({ message: "Frequency not found" });
+      await frequencyRepo.deleteFrequency(id);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_treatment_frequency"},
+              ${String(id)},
+              ${JSON.stringify(existing)},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Frequency removed" });
+    },
+  );
+
+  app.patch(
+    "/api/admin/frequencies/:id/move",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const direction = String(req.body?.direction ?? "");
+      if (!["up", "down"].includes(direction)) {
+        return res.status(400).json({ message: "direction must be up or down" });
+      }
+      const current = await dbGet<{ id: number; display_order: number }>(
+        sql`SELECT id, display_order FROM frequencies WHERE id = ${id}`,
+      );
+      if (!current) return res.status(404).json({ message: "Frequency not found" });
+      const neighbor =
+        direction === "up"
+          ? await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM frequencies
+                  WHERE display_order < ${current.display_order}
+                  ORDER BY display_order DESC, id DESC
+                  LIMIT 1`,
+            )
+          : await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM frequencies
+                  WHERE display_order > ${current.display_order}
+                  ORDER BY display_order ASC, id ASC
+                  LIMIT 1`,
+            );
+      if (!neighbor) return res.json({ message: "No move possible" });
+      await dbRun(sql`UPDATE frequencies SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`);
+      await dbRun(sql`UPDATE frequencies SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"move_treatment_frequency"},
+              ${String(id)},
+              ${JSON.stringify({ direction, from: current.display_order })},
+              ${JSON.stringify({ to: neighbor.display_order })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Frequency reordered" });
+    },
+  );
+
+  app.get(
+    "/api/admin/dose-units",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await doseUnitRepo.getDoseUnits();
+      return res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/admin/dose-units",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const name = String(req.body?.name ?? "").trim();
+      if (!name) return res.status(400).json({ message: "Dose unit name is required" });
+      try {
+        const created = await doseUnitRepo.createDoseUnit({ name });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"add_treatment_dose_unit"},
+                ${String(created.id)},
+                ${null},
+                ${JSON.stringify(created)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.status(201).json(created);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to save dose unit" });
+        }
+        return res.status(409).json({ message: "Dose unit already exists" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/dose-units/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const name = String(req.body?.name ?? "").trim();
+      if (!name) return res.status(400).json({ message: "Dose unit name is required" });
+      try {
+        const before = await doseUnitRepo.getDoseUnit(id);
+        const updated = await doseUnitRepo.updateDoseUnit(id, { name });
+        if (!updated) return res.status(404).json({ message: "Dose unit not found" });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"update_treatment_dose_unit"},
+                ${String(id)},
+                ${JSON.stringify(before)},
+                ${JSON.stringify(updated)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.json(updated);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to update dose unit" });
+        }
+        return res.status(409).json({ message: "Dose unit already exists" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/dose-units/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const existing = await doseUnitRepo.getDoseUnit(id);
+      if (!existing) return res.status(404).json({ message: "Dose unit not found" });
+      await doseUnitRepo.deleteDoseUnit(id);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_treatment_dose_unit"},
+              ${String(id)},
+              ${JSON.stringify(existing)},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Dose unit removed" });
+    },
+  );
+
+  app.patch(
+    "/api/admin/dose-units/:id/move",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const direction = String(req.body?.direction ?? "");
+      if (!["up", "down"].includes(direction)) {
+        return res.status(400).json({ message: "direction must be up or down" });
+      }
+      const current = await dbGet<{ id: number; display_order: number }>(
+        sql`SELECT id, display_order FROM dose_units WHERE id = ${id}`,
+      );
+      if (!current) return res.status(404).json({ message: "Dose unit not found" });
+      const neighbor =
+        direction === "up"
+          ? await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM dose_units
+                  WHERE display_order < ${current.display_order}
+                  ORDER BY display_order DESC, id DESC
+                  LIMIT 1`,
+            )
+          : await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM dose_units
+                  WHERE display_order > ${current.display_order}
+                  ORDER BY display_order ASC, id ASC
+                  LIMIT 1`,
+            );
+      if (!neighbor) return res.json({ message: "No move possible" });
+      await dbRun(sql`UPDATE dose_units SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`);
+      await dbRun(sql`UPDATE dose_units SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"move_treatment_dose_unit"},
+              ${String(id)},
+              ${JSON.stringify({ direction, from: current.display_order })},
+              ${JSON.stringify({ to: neighbor.display_order })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Dose unit reordered" });
+    },
+  );
+
+  app.get(
+    "/api/admin/durations",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await durationRepo.getDurations();
+      return res.json(rows);
+    },
+  );
+
+  app.post(
+    "/api/admin/durations",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const name = String(req.body?.name ?? "").trim();
+      const rawValue = req.body?.value;
+      const value =
+        rawValue === null || rawValue === undefined || String(rawValue).trim() === ""
+          ? null
+          : Number.parseInt(String(rawValue), 10);
+      if (!name) return res.status(400).json({ message: "Duration name is required" });
+      if (value !== null && !Number.isInteger(value)) {
+        return res.status(400).json({ message: "Duration value must be an integer" });
+      }
+      try {
+        const created = await durationRepo.createDuration({ name, value });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"add_treatment_duration"},
+                ${String(created.id)},
+                ${null},
+                ${JSON.stringify(created)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.status(201).json(created);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to save duration" });
+        }
+        return res.status(409).json({ message: "Duration already exists" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/durations/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const name = String(req.body?.name ?? "").trim();
+      const rawValue = req.body?.value;
+      const value =
+        rawValue === null || rawValue === undefined || String(rawValue).trim() === ""
+          ? null
+          : Number.parseInt(String(rawValue), 10);
+      if (!name) return res.status(400).json({ message: "Duration name is required" });
+      if (value !== null && !Number.isInteger(value)) {
+        return res.status(400).json({ message: "Duration value must be an integer" });
+      }
+      try {
+        const before = await durationRepo.getDuration(id);
+        const updated = await durationRepo.updateDuration(id, { name, value });
+        if (!updated) return res.status(404).json({ message: "Duration not found" });
+        await dbRun(
+          sql`INSERT INTO form_edit_audit_logs
+              (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"update_treatment_duration"},
+                ${String(id)},
+                ${JSON.stringify(before)},
+                ${JSON.stringify(updated)},
+                ${new Date().toISOString()}
+              )`,
+        );
+        return res.json(updated);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          return res.status(500).json({ message: "Failed to update duration" });
+        }
+        return res.status(409).json({ message: "Duration already exists" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/durations/:id",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const existing = await durationRepo.getDuration(id);
+      if (!existing) return res.status(404).json({ message: "Duration not found" });
+      await durationRepo.deleteDuration(id);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_treatment_duration"},
+              ${String(id)},
+              ${JSON.stringify(existing)},
+              ${null},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Duration removed" });
     },
   );
 
@@ -1181,10 +2036,14 @@ export function registerAdminRoutes(app: Express) {
     async (req, res) => {
       const pagination = getPaginationParams(req);
       const users = await authSessionRepo.getUsers();
+      const activeSessionUserIds = new Set(await authSessionRepo.getActiveSessionUserIds());
       const visibleUsers = users.filter(
         (u) => !isHiddenSuperadminUser(u),
       );
-      const safeUsers = visibleUsers.map(({ passwordHash, ...u }) => u);
+      const safeUsers = visibleUsers.map(({ passwordHash, ...u }) => ({
+        ...u,
+        activeNow: activeSessionUserIds.has(u.id),
+      }));
       if (!pagination.shouldPaginate) {
         return res.json(safeUsers);
       }
@@ -1262,6 +2121,46 @@ export function registerAdminRoutes(app: Express) {
       });
       const { passwordHash, ...safeUser } = user;
       res.json(safeUser);
+    },
+  );
+
+  app.delete(
+    "/api/admin/users/batch/:batch",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const batch = parseStudentBatch(req.params.batch);
+      if (!batch) {
+        return res.status(400).json({ message: "Invalid batch. Expected 1-99." });
+      }
+      const usersInBatch = (await authSessionRepo.getUsers()).filter(
+        (user) =>
+          user.studentBatch === batch &&
+          user.designation === "student" &&
+          user.id !== currentUser.id &&
+          !isAdminRole(user.role) &&
+          !isHiddenSuperadminUser(user),
+      );
+      if (usersInBatch.length === 0) {
+        return res.json({ message: "No deletable students found in this batch", deletedCount: 0 });
+      }
+
+      const ids = usersInBatch.map((user) => user.id);
+      await dbRun(sql`DELETE FROM users WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.batch.delete",
+        targetType: "student_batch",
+        targetId: batch,
+        details: { batch, deletedCount: ids.length, deletedUserIds: ids },
+      });
+      return res.json({
+        message: `Deleted ${ids.length} student account${ids.length > 1 ? "s" : ""} from batch ${batch}`,
+        deletedCount: ids.length,
+      });
     },
   );
 

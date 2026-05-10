@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -17,6 +17,8 @@ import { ArrowLeft, Printer, Trash2, Sparkles } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import { useAuth } from "@/lib/auth";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
+import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface AstRow {
   antibiotic: string;
@@ -28,12 +30,34 @@ interface AstRow {
 }
 
 type CustomEntry = [string, string | string[] | number];
+type TreatmentMedicationEntry = {
+  medication: string;
+  dose: string;
+  doseUnit: string;
+  route: string;
+  frequency: string;
+  duration: string;
+  note: string;
+};
+type TreatmentFieldValue = {
+  medications: TreatmentMedicationEntry[];
+  generalInstructions: string;
+};
+type CaseAttachment = {
+  id: number;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  url: string;
+  category: string;
+};
 type HospitalSectionKey =
   | "historyMedication"
   | "clinicalSigns"
   | "vitalsExam"
   | "avianDetails"
   | "testsSuggested"
+  | "diagnosis"
   | "other";
 
 function normalizeKey(input: string): string {
@@ -87,6 +111,7 @@ function resolveHospitalSectionKey(key: string): HospitalSectionKey {
   ) {
     return "avianDetails";
   }
+  if (n.includes("diagnosis")) return "diagnosis";
   if (
     n.includes("testssuggest") ||
     n.includes("testsuggest") ||
@@ -109,6 +134,7 @@ const HOSPITAL_SECTION_TITLES: Record<HospitalSectionKey, string> = {
   vitalsExam: "Physical Exam / Vitals",
   avianDetails: "Avian Details",
   testsSuggested: "Tests Suggested",
+  diagnosis: "Diagnosis",
   other: "Other Clinical Details",
 };
 
@@ -135,6 +161,7 @@ function resolveFieldOrderAndLabel(rawLabel: string, rawKey: string) {
   if (source.includes("crt")) return { order: 90, label: "CRT" };
   if (source.includes("dehydration")) return { order: 100, label: "Dehydration %" };
   if (source.includes("weight")) return { order: 110, label: "Weight" };
+  if (source.includes("diagnosis")) return { order: 115, label: "Diagnosis" };
   if (source.includes("testssuggested")) return { order: 120, label: "Tests Suggested" };
   if (source.includes("enzymepanel")) return { order: 130, label: "Enzyme Panel Tests" };
   if (source.includes("rapiddiagnostic")) return { order: 140, label: "Rapid Diagnostic Tests" };
@@ -270,6 +297,7 @@ export default function CaseView() {
       vitalsExam: [],
       avianDetails: [],
       testsSuggested: [],
+      diagnosis: [],
       other: [],
     };
     for (const [key, value] of customFieldEntries) {
@@ -288,6 +316,43 @@ export default function CaseView() {
     }
     return grouped;
   }, [customFieldEntries]);
+  const treatmentFields = useMemo(() => {
+    if (!caseData?.treatmentDetails) return {} as Record<string, TreatmentFieldValue>;
+    try {
+      return JSON.parse(caseData.treatmentDetails) as Record<string, TreatmentFieldValue>;
+    } catch {
+      return {} as Record<string, TreatmentFieldValue>;
+    }
+  }, [caseData?.treatmentDetails]);
+  const [selectedAttachmentIndex, setSelectedAttachmentIndex] = useState<number | null>(null);
+  const { data: caseAttachments = [] } = useQuery<CaseAttachment[]>({
+    queryKey: ["/api/cases", params.id, "attachments", requestedScope ?? "all"],
+    queryFn: async () => {
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      const res = await apiRequest("GET", `/api/cases/${params.id}/attachments${scopeQuery}`);
+      return res.json();
+    },
+    enabled: Boolean(caseData?.id),
+  });
+
+  useEffect(() => {
+    if (selectedAttachmentIndex === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setSelectedAttachmentIndex((prev) =>
+          prev === null ? prev : (prev - 1 + caseAttachments.length) % caseAttachments.length,
+        );
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setSelectedAttachmentIndex((prev) =>
+          prev === null ? prev : (prev + 1) % caseAttachments.length,
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedAttachmentIndex, caseAttachments.length]);
 
   if (isLoading) {
     return (
@@ -608,6 +673,28 @@ export default function CaseView() {
                   </div>
                 );
               }
+              if (sectionKey === "diagnosis") {
+                const text = items
+                  .map((entry) =>
+                    Array.isArray(entry.value)
+                      ? entry.value.join(", ")
+                      : String(entry.value ?? ""),
+                  )
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .join("; ");
+                if (!text) return null;
+                return (
+                  <div key={sectionKey} className="border-t border-slate-300 pt-2">
+                    <div className="rounded-md border px-2.5 py-2 text-sm">
+                      <p className="leading-relaxed text-slate-700">
+                        <span className="font-semibold text-slate-800">Diagnosis:</span>{" "}
+                        <span className="whitespace-pre-wrap break-words">{text}</span>
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={sectionKey} className="space-y-2 border-t border-slate-300 pt-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
@@ -662,7 +749,7 @@ export default function CaseView() {
                         );
                       })()}
                     </div>
-                  ) : (sectionKey === "historyMedication" || sectionKey === "clinicalSigns") ? (
+                  ) : sectionKey === "historyMedication" || sectionKey === "clinicalSigns" ? (
                     <div className="space-y-2">
                       {items.map((entry) => (
                         <div key={`${sectionKey}-${entry.label}`} className="text-xs">
@@ -704,6 +791,188 @@ export default function CaseView() {
                 </div>
               );
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {Object.keys(treatmentFields).length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Treatment / Prescription</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {Object.entries(treatmentFields).map(([key, value]) => {
+              const medications = (value?.medications ?? []).filter((entry) =>
+                [
+                  entry.medication,
+                  entry.dose,
+                  entry.doseUnit,
+                  entry.route,
+                  entry.frequency,
+                  entry.duration,
+                  entry.note,
+                ].some((v) => String(v ?? "").trim().length > 0),
+              );
+              return (
+                <div key={key} className="space-y-2 rounded border p-3">
+                  {medications.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border">
+                        <thead>
+                          <tr className="bg-muted/50">
+                            <th className="text-left p-2 border">Medication</th>
+                            <th className="text-left p-2 border">Dose</th>
+                            <th className="text-left p-2 border">Dose Unit</th>
+                            <th className="text-left p-2 border">Route</th>
+                            <th className="text-left p-2 border">Frequency</th>
+                            <th className="text-left p-2 border">Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {medications.map((entry, index) => {
+                            const hasNote = String(entry.note ?? "").trim().length > 0;
+                            return (
+                              <Fragment key={`${key}-${index}`}>
+                                <tr>
+                                  <td className="p-2 border">{entry.medication || "—"}</td>
+                                  <td className="p-2 border">{entry.dose || "—"}</td>
+                                  <td className="p-2 border">{entry.doseUnit || "—"}</td>
+                                  <td className="p-2 border">{entry.route || "—"}</td>
+                                  <td className="p-2 border">{entry.frequency || "—"}</td>
+                                  <td className="p-2 border">{entry.duration || "—"}</td>
+                                </tr>
+                                {hasNote && (
+                                  <tr>
+                                    <td className="p-2 border bg-muted/20 font-medium">Note</td>
+                                    <td className="p-2 border whitespace-pre-wrap" colSpan={5}>
+                                      {entry.note}
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {value?.generalInstructions?.trim() && (
+                    <div className="text-xs whitespace-pre-wrap leading-5">
+                      <span className="font-medium text-muted-foreground">General instructions: </span>
+                      {value.generalInstructions}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      {isHospitalCase &&
+        (caseData.veterinarianName?.trim() ||
+          caseData.veterinarianNvc?.trim() ||
+          caseData.veterinarianDepartment?.trim()) && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Attending veterinarian</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-1">
+              {caseData.veterinarianName?.trim() && (
+                <p>
+                  <span className="text-muted-foreground">Name: </span>
+                  {caseData.veterinarianName.trim()}
+                </p>
+              )}
+              {caseData.veterinarianNvc?.trim() && (
+                <p>
+                  <span className="text-muted-foreground">NVC no.: </span>
+                  {caseData.veterinarianNvc.trim()}
+                </p>
+              )}
+              {formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment) ? (
+                <p>{formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment)}</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        )}
+
+      {caseAttachments.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Treatment Attachments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {caseAttachments.map((attachment, idx) => (
+                <button
+                  key={attachment.id}
+                  type="button"
+                  className="rounded border overflow-hidden text-left"
+                  onClick={() => setSelectedAttachmentIndex(idx)}
+                >
+                  <img
+                    src={attachment.url}
+                    alt={attachment.fileName}
+                    className="h-28 w-full object-cover"
+                  />
+                  <p className="px-2 py-1 text-[11px] truncate">{attachment.fileName}</p>
+                </button>
+              ))}
+            </div>
+            <Dialog
+              open={selectedAttachmentIndex !== null}
+              onOpenChange={(open) => {
+                if (!open) setSelectedAttachmentIndex(null);
+              }}
+            >
+              <DialogContent className="max-w-5xl w-[95vw]">
+                <DialogHeader>
+                  <DialogTitle>
+                    {selectedAttachmentIndex !== null
+                      ? caseAttachments[selectedAttachmentIndex]?.fileName
+                      : "Attachment"}
+                  </DialogTitle>
+                </DialogHeader>
+                {selectedAttachmentIndex !== null && (
+                  <div className="space-y-3">
+                    <img
+                      src={caseAttachments[selectedAttachmentIndex].url}
+                      alt={caseAttachments[selectedAttachmentIndex].fileName}
+                      className="max-h-[75vh] w-full object-contain bg-black/5 rounded"
+                    />
+                    <div className="flex justify-between">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setSelectedAttachmentIndex((prev) =>
+                            prev === null
+                              ? prev
+                              : (prev - 1 + caseAttachments.length) % caseAttachments.length,
+                          )
+                        }
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setSelectedAttachmentIndex((prev) =>
+                            prev === null ? prev : (prev + 1) % caseAttachments.length,
+                          )
+                        }
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
       )}

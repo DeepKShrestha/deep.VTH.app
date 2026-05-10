@@ -1,0 +1,2 @@
+ALTER TABLE form_questions
+  ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0;

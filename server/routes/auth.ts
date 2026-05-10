@@ -23,6 +23,8 @@ export function registerAuthRoutes(app: Express) {
     }
 
     const { password, ...userData } = parsed.data;
+    const studentBatch =
+      userData.designation === "student" ? userData.studentBatch ?? null : null;
 
     if (await authSessionRepo.getUserByUsername(userData.username)) {
       return res.status(409).json({ message: "Username already taken" });
@@ -43,6 +45,7 @@ export function registerAuthRoutes(app: Express) {
 
     const user = await authSessionRepo.createUser({
       ...userData,
+      studentBatch,
       passwordHash,
       role,
       approved: false,

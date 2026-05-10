@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { sql } from "drizzle-orm";
 import { DB_PROVIDER } from "./db";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerVeterinarianAdminRoutes } from "./routes/veterinarians-admin";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBreakpointRoutes } from "./routes/breakpoints";
 import { registerCaseAndDownloadRoutes, registerExportRoutes } from "./routes/cases";
@@ -22,6 +23,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     phone TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     designation TEXT NOT NULL,
+    student_batch INTEGER,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'pending',
@@ -95,6 +97,39 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     created_at TEXT NOT NULL,
     UNIQUE(species_name, name)
   )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS medications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS routes_of_administration (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    abbreviation TEXT NOT NULL DEFAULT '',
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS frequencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    short_code TEXT,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS dose_units (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS durations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    value INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
     key TEXT PRIMARY KEY,
     section TEXT NOT NULL,
@@ -118,6 +153,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     options_json TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     required INTEGER NOT NULL DEFAULT 0,
+    hide_label INTEGER NOT NULL DEFAULT 0,
     display_order INTEGER NOT NULL,
     is_builtin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -170,6 +206,30 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     actor_username TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS case_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER,
+    temp_token TEXT,
+    section_key TEXT NOT NULL DEFAULT 'treatment',
+    category TEXT NOT NULL DEFAULT 'diagnostic',
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    storage_path TEXT NOT NULL,
+    created_by INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS case_attachments_case_id_idx ON case_attachments(case_id)`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS case_attachments_temp_token_idx ON case_attachments(temp_token)`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS veterinarians (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    nvc_registration_number TEXT NOT NULL,
+    department TEXT NOT NULL,
+    display_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS veterinarians_display_order_idx ON veterinarians(display_order)`);
 
     try {
       await dbRun(sql`SELECT is_preset FROM breakpoints LIMIT 1`);
@@ -260,14 +320,80 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN custom_fields TEXT`);
     }
     try {
+      await dbRun(sql`SELECT treatment_details FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN treatment_details TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT display_order FROM medications LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE medications ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+    }
+    try {
+      await dbRun(sql`SELECT display_order FROM routes_of_administration LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+    }
+    try {
+      await dbRun(sql`SELECT abbreviation FROM routes_of_administration LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN abbreviation TEXT NOT NULL DEFAULT ''`);
+    }
+    try {
+      await dbRun(sql`SELECT display_order FROM frequencies LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE frequencies ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+    }
+    try {
+      await dbRun(sql`SELECT display_order FROM dose_units LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE dose_units ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+    }
+    await dbRun(sql`UPDATE medications SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE routes_of_administration SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE frequencies SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE dose_units SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE routes_of_administration SET abbreviation = name WHERE COALESCE(abbreviation, '') = ''`);
+    await dbRun(sql`UPDATE frequencies SET short_code = name WHERE COALESCE(short_code, '') = ''`);
+    try {
+      await dbRun(sql`SELECT student_batch FROM users LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE users ADD COLUMN student_batch INTEGER`);
+    }
+    try {
       await dbRun(sql`SELECT yearly_number FROM cases LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN yearly_number INTEGER`);
     }
     try {
+      await dbRun(sql`SELECT veterinarian_id FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN veterinarian_id INTEGER`);
+    }
+    try {
+      await dbRun(sql`SELECT veterinarian_name FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN veterinarian_name TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT veterinarian_nvc FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN veterinarian_nvc TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT veterinarian_department FROM cases LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE cases ADD COLUMN veterinarian_department TEXT`);
+    }
+    try {
       await dbRun(sql`SELECT options_json FROM form_questions LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE form_questions ADD COLUMN options_json TEXT`);
+    }
+    try {
+      await dbRun(sql`SELECT hide_label FROM form_questions LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE form_questions ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0`);
     }
     try {
       await dbRun(sql`SELECT form_scope FROM form_sections LIMIT 1`);
@@ -287,6 +413,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       phone TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       designation TEXT NOT NULL,
+      student_batch INTEGER,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'pending',
@@ -372,6 +499,39 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       created_at TEXT NOT NULL,
       UNIQUE(species_name, name)
     )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS medications (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS routes_of_administration (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      abbreviation TEXT NOT NULL DEFAULT '',
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS frequencies (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      short_code TEXT,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS dose_units (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS durations (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      value INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_field_configs (
       key TEXT PRIMARY KEY,
       section TEXT NOT NULL,
@@ -395,6 +555,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       options_json TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
       required INTEGER NOT NULL DEFAULT 0,
+      hide_label INTEGER NOT NULL DEFAULT 0,
       display_order INTEGER NOT NULL,
       is_builtin INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -438,6 +599,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       actor_username TEXT NOT NULL,
       created_at TEXT NOT NULL
     )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS case_attachments (
+      id SERIAL PRIMARY KEY,
+      case_id INTEGER,
+      temp_token TEXT,
+      section_key TEXT NOT NULL DEFAULT 'treatment',
+      category TEXT NOT NULL DEFAULT 'diagnostic',
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS cases (
       id SERIAL PRIMARY KEY,
       case_number TEXT NOT NULL,
@@ -472,19 +646,52 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_date_idx ON cases(date)`);
     await dbRun(sql`CREATE INDEX IF NOT EXISTS cases_case_number_idx ON cases(case_number)`);
     await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS options_json TEXT`);
+    await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS hide_label INTEGER NOT NULL DEFAULT 0`);
     await dbRun(sql`ALTER TABLE form_sections ADD COLUMN IF NOT EXISTS form_scope TEXT NOT NULL DEFAULT 'shared'`);
     await dbRun(sql`ALTER TABLE form_questions ADD COLUMN IF NOT EXISTS form_scope TEXT NOT NULL DEFAULT 'shared'`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by INTEGER`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_updated_by_name TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS custom_fields TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS treatment_details TEXT`);
+    await dbRun(sql`ALTER TABLE medications ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN IF NOT EXISTS abbreviation TEXT NOT NULL DEFAULT ''`);
+    await dbRun(sql`ALTER TABLE frequencies ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`ALTER TABLE dose_units ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`UPDATE medications SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE routes_of_administration SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE frequencies SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE dose_units SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE routes_of_administration SET abbreviation = name WHERE COALESCE(abbreviation, '') = ''`);
+    await dbRun(sql`UPDATE frequencies SET short_code = name WHERE COALESCE(short_code, '') = ''`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS yearly_number INTEGER`);
+    await dbRun(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS student_batch INTEGER`);
     await dbRun(
       sql`CREATE INDEX IF NOT EXISTS case_change_logs_created_at_idx ON case_change_logs(created_at)`,
     );
     await dbRun(
       sql`CREATE INDEX IF NOT EXISTS case_change_logs_scope_idx ON case_change_logs(case_scope)`,
     );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_attachments_case_id_idx ON case_attachments(case_id)`,
+    );
+    await dbRun(
+      sql`CREATE INDEX IF NOT EXISTS case_attachments_temp_token_idx ON case_attachments(temp_token)`,
+    );
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS veterinarians (
+      id SERIAL PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      nvc_registration_number TEXT NOT NULL,
+      department TEXT NOT NULL,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await dbRun(sql`CREATE INDEX IF NOT EXISTS veterinarians_display_order_idx ON veterinarians(display_order)`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS veterinarian_id INTEGER`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS veterinarian_name TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS veterinarian_nvc TEXT`);
+    await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS veterinarian_department TEXT`);
   }
 
   await runPendingMigrations();
@@ -568,6 +775,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["xrayDetails", "tests_suggested", "X-Ray Details", 1, 0],
     ["ultrasoundDetails", "tests_suggested", "Ultrasound Details", 1, 0],
     ["cultureDetails", "tests_suggested", "Culture Details", 1, 0],
+    ["diagnosis", "diagnosis", "Diagnosis", 1, 0],
+    ["attendingVeterinarian", "attending_veterinarian", "Attending veterinarian", 1, 0],
     ["sampleType", "sample", "Sample Type", 1, 0],
     ["sampleDate", "sample", "Sample Date", 1, 0],
     ["cultureResult", "sample", "Culture Result", 1, 0],
@@ -593,6 +802,9 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["sample", "Sample Information", 3000],
     ["ast", "AST Results", 4000],
     ["tests_suggested", "Tests Suggested", 4500],
+    ["diagnosis", "Diagnosis", 4600],
+    ["attending_veterinarian", "Attending veterinarian", 4650],
+    ["treatment", "Treatment / Prescription", 4700],
     ["final", "General Remarks", 5000],
   ] as const;
   for (const [key, title, displayOrder] of sectionSeeds) {
@@ -616,6 +828,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     displayOrder: number;
     isBuiltin: number;
     optionsJson?: string | null;
+    hideLabel?: number;
   }> = [
     { key: "ownerName", sectionKey: "owner", label: "Owner Name", inputType: "text", enabled: 1, required: 1, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
     { key: "ownerPhone", sectionKey: "owner", label: "Phone Number", inputType: "text", enabled: 1, required: 1, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
@@ -695,6 +908,20 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     { key: "xrayDetails", sectionKey: "tests_suggested", label: "X-Ray Details", inputType: "text", enabled: 1, required: 0, displayOrder: 6000, isBuiltin: 1, optionsJson: null },
     { key: "ultrasoundDetails", sectionKey: "tests_suggested", label: "Ultrasound Details", inputType: "text", enabled: 1, required: 0, displayOrder: 7000, isBuiltin: 1, optionsJson: null },
     { key: "cultureDetails", sectionKey: "tests_suggested", label: "Culture Details", inputType: "text", enabled: 1, required: 0, displayOrder: 8000, isBuiltin: 1, optionsJson: null },
+    { key: "diagnosis", sectionKey: "diagnosis", label: "Diagnosis", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null, hideLabel: 1 },
+    {
+      key: "attendingVeterinarian",
+      sectionKey: "attending_veterinarian",
+      label: "Attending veterinarian",
+      inputType: "hospital_veterinarian",
+      enabled: 1,
+      required: 0,
+      displayOrder: 1000,
+      isBuiltin: 1,
+      optionsJson: null,
+      hideLabel: 0,
+    },
+    { key: "treatmentPrescription", sectionKey: "treatment", label: "Treatment / Prescription", inputType: "treatment_prescription", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null, hideLabel: 0 },
     { key: "sampleType", sectionKey: "sample", label: "Sample Type", inputType: "text", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
     { key: "sampleDate", sectionKey: "sample", label: "Sample Collection Date (BS)", inputType: "sampleDate", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
     { key: "cultureResult", sectionKey: "sample", label: "Culture / Organism Isolated", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
@@ -708,7 +935,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     if (!exists) {
       await dbRun(
         sql`INSERT INTO form_questions
-            (key, section_key, label, input_type, options_json, enabled, required, display_order, is_builtin, created_at)
+            (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at)
             VALUES (
               ${q.key},
               ${q.sectionKey},
@@ -717,6 +944,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
               ${q.optionsJson ?? null},
               ${q.enabled},
               ${q.required},
+              ${q.hideLabel ?? 0},
               ${q.displayOrder},
               ${q.isBuiltin},
               ${new Date().toISOString()}
@@ -857,13 +1085,19 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             'ultrasounddetails',
             'biopsydetails',
             'cytologydetails',
-            'culturedetails'
+            'culturedetails',
+            'treatmentprescription'
           )`,
   );
   await dbRun(
     sql`UPDATE form_questions
         SET label = 'Please select the required tests'
         WHERE LOWER(key) = 'testssuggested' AND LOWER(section_key) = 'tests_suggested'`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET hide_label = 1
+        WHERE LOWER(key) = 'diagnosis' AND LOWER(section_key) = 'diagnosis'`,
   );
   await dbRun(
     sql`DELETE FROM form_questions
@@ -876,21 +1110,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   await dbRun(
     sql`UPDATE form_sections
         SET form_scope = 'hospital'
-        WHERE LOWER(key) IN ('history', 'avian', 'vitals', 'tests_suggested')
-           OR LOWER(REPLACE(REPLACE(REPLACE(title, ' ', ''), '-', ''), '_', '')) IN ('historyandpreviousmedication', 'avianinformation', 'vitals', 'testsuggested', 'testssuggested')`,
+        WHERE LOWER(key) IN ('history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
+           OR LOWER(REPLACE(REPLACE(REPLACE(title, ' ', ''), '-', ''), '_', '')) IN ('historyandpreviousmedication', 'avianinformation', 'vitals', 'testsuggested', 'testssuggested', 'diagnosis', 'treatmentprescription')`,
   );
   await dbRun(
     sql`UPDATE form_questions
         SET form_scope = 'hospital'
-        WHERE LOWER(section_key) IN ('history', 'avian', 'vitals', 'tests_suggested')
+        WHERE LOWER(section_key) IN ('history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%history%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%previousmedication%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%testsuggested%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%diagnosis%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%flock%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%hatchery%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%feedintake%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%waterintake%'
-           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%mortality%'`,
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%mortality%'
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%treatmentprescription%'`,
   );
 
   const roleVisibilityDefaults = [
@@ -984,6 +1220,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
 
   registerAuthRoutes(app);
   registerAdminRoutes(app);
+  registerVeterinarianAdminRoutes(app);
   registerCaseAndDownloadRoutes(app);
   registerExportRoutes(app);
   registerBreakpointRoutes(app);

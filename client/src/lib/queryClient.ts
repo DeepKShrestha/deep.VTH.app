@@ -36,6 +36,89 @@ export async function apiRequest(
   return res;
 }
 
+export async function apiRequestForm(
+  method: string,
+  url: string,
+  formData: FormData,
+): Promise<Response> {
+  const res = await fetch(`${API_BASE}${url}`, {
+    method,
+    headers: {
+      ...getAuthHeaders(),
+    },
+    body: formData,
+  });
+
+  await throwIfResNotOk(res);
+  return res;
+}
+
+/**
+ * Multipart POST with upload progress (fetch does not expose upload progress).
+ * `onProgress(0–100)` when length is known; `onProgress(-1)` for indeterminate uploads.
+ */
+export function postFormDataWithProgress<T>(
+  url: string,
+  formData: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}${url}`);
+    const headers = getAuthHeaders();
+    if (headers.Authorization) {
+      xhr.setRequestHeader("Authorization", headers.Authorization);
+    }
+    xhr.upload.onprogress = (ev) => {
+      if (!onProgress) return;
+      if (ev.lengthComputable && ev.total > 0) {
+        onProgress(Math.min(100, Math.round((ev.loaded / ev.total) * 100)));
+      } else {
+        onProgress(-1);
+      }
+    };
+    xhr.onload = () => {
+      const text = xhr.responseText ?? "";
+      const start = text.trimStart();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`${xhr.status}: ${text || xhr.statusText}`));
+        return;
+      }
+      if (start.startsWith("<!") || start.toLowerCase().startsWith("<html")) {
+        reject(
+          new Error(
+            "Server returned a web page instead of JSON. Ensure the app and API share the same origin in dev.",
+          ),
+        );
+        return;
+      }
+      try {
+        resolve(JSON.parse(text) as T);
+      } catch {
+        reject(new Error((text || "Empty body").slice(0, 280) || "Response was not valid JSON"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.send(formData);
+  });
+}
+
+/** Use after a successful (2xx) fetch when the body must be JSON — catches HTML error pages that slip through with 200. */
+export async function readResponseJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  const start = text.trimStart();
+  if (start.startsWith("<!") || start.toLowerCase().startsWith("<html")) {
+    throw new Error(
+      "Server returned a web page instead of JSON. Ensure the app and API share the same origin in dev, or redeploy so POST /api routes are not handled by the SPA fallback.",
+    );
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error((text || "Empty body").slice(0, 280) || "Response was not valid JSON");
+  }
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

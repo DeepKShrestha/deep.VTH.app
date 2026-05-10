@@ -33,6 +33,7 @@ export default function SignupPage() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [designation, setDesignation] = useState("");
+  const [studentBatch, setStudentBatch] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -66,9 +67,37 @@ export default function SignupPage() {
       toast({ title: "Passwords do not match", variant: "destructive" });
       return;
     }
+    let normalizedBatch: number | null = null;
+    if (designation === "student") {
+      normalizedBatch = Number.parseInt(studentBatch.trim(), 10);
+    }
+    if (designation === "student") {
+      if (
+        !studentBatch.trim() ||
+        normalizedBatch == null ||
+        !Number.isInteger(normalizedBatch) ||
+        normalizedBatch < 1 ||
+        normalizedBatch > 99
+      ) {
+        toast({
+          title: "Student batch must be a number between 1 and 99",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
 
     setLoading(true);
-    const result = await signup({ fullName, address, phone, email, designation, username, password });
+    const result = await signup({
+      fullName,
+      address,
+      phone,
+      email,
+      designation,
+      studentBatch: designation === "student" ? normalizedBatch : null,
+      username,
+      password,
+    });
     setLoading(false);
 
     if (result.success) {
@@ -132,7 +161,13 @@ export default function SignupPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Designation <span className="text-destructive">*</span></Label>
-                  <Select value={designation} onValueChange={setDesignation}>
+                  <Select
+                    value={designation}
+                    onValueChange={(value) => {
+                      setDesignation(value);
+                      if (value !== "student") setStudentBatch("");
+                    }}
+                  >
                     <SelectTrigger data-testid="select-signup-designation">
                       <SelectValue placeholder="Select your role" />
                     </SelectTrigger>
@@ -147,6 +182,22 @@ export default function SignupPage() {
                   <Label htmlFor="username">Username <span className="text-destructive">*</span></Label>
                   <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Choose a username" data-testid="input-signup-username" />
                 </div>
+                {designation === "student" && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="studentBatch">Batch <span className="text-destructive">*</span></Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="studentBatch"
+                        value={studentBatch}
+                        onChange={(e) => setStudentBatch(e.target.value.replace(/[^0-9]/g, ""))}
+                        placeholder="e.g. 9"
+                        inputMode="numeric"
+                        data-testid="input-signup-student-batch"
+                      />
+                      <span className="text-sm text-muted-foreground whitespace-nowrap">th batch</span>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Password <span className="text-destructive">*</span></Label>
                   <div className="relative">

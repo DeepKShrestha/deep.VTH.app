@@ -30,7 +30,7 @@ function toSafeUser(user: User): SafeUser {
 
 interface IStorage {
   // Users
-  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; username: string; passwordHash: string; role: string; approved: boolean }): User;
+  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; studentBatch?: number | null; username: string; passwordHash: string; role: string; approved: boolean }): User;
   getUserByUsername(username: string): User | undefined;
   getUserByEmail(email: string): User | undefined;
   getUserById(id: number): User | undefined;
@@ -86,7 +86,7 @@ interface IStorage {
 
 class DatabaseStorage implements IStorage {
   // ---- Users ----
-  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; username: string; passwordHash: string; role: string; approved: boolean }): User {
+  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; studentBatch?: number | null; username: string; passwordHash: string; role: string; approved: boolean }): User {
     return db
       .insert(users)
       .values({ ...data, createdAt: new Date().toISOString() })

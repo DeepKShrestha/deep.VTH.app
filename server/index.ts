@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import crypto from "crypto";
 import { Pool } from "pg";
 import { dbGet } from "./db-query";
+import { scheduleTempCaseAttachmentCleanup } from "./temp-attachment-cleanup";
 
 const app = express();
 const httpServer = createServer(app);
@@ -198,6 +199,17 @@ app.get("/api/ready", async (_req, res) => {
     return res.status(status).json({ message, requestId: _req.requestId });
   });
 
+  // Never allow SPA/Vite fallback to answer unknown API routes with HTML.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const p = req.path || "";
+    if (!p.startsWith("/api")) return next();
+    if (res.headersSent) return next();
+    return res.status(404).json({
+      message: `API route not found: ${req.method} ${p}`,
+      requestId: req.requestId,
+    });
+  });
+
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
@@ -226,6 +238,7 @@ app.get("/api/ready", async (_req, res) => {
       log(`serving on port ${port}`);
       log(`db provider: ${DB_PROVIDER}`);
       log(`using database: ${DB_FILE}`);
+      scheduleTempCaseAttachmentCleanup();
     },
   );
 

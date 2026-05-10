@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, postFormDataWithProgress, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,8 +18,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Trash2, Save, Sparkles, Info } from "lucide-react";
-import type { Breakpoint } from "@shared/schema";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  ArrowLeft,
+  Plus,
+  Trash2,
+  Save,
+  Sparkles,
+  Info,
+  Upload,
+  Camera,
+  ChevronDown,
+  X,
+  Loader2,
+} from "lucide-react";
+import type { Breakpoint, Veterinarian } from "@shared/schema";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd, formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
@@ -48,6 +71,76 @@ interface AstRow {
   manualOverride: boolean;
 }
 
+type TreatmentMedicationEntry = {
+  clientId?: string;
+  medication: string;
+  dose: string;
+  doseUnit: string;
+  route: string;
+  frequency: string;
+  duration: string;
+  note: string;
+  showNote?: boolean;
+};
+
+type TreatmentEntryOrderItem = {
+  type: "medication" | "general";
+  id: string;
+};
+
+type TreatmentFieldValue = {
+  medications: TreatmentMedicationEntry[];
+  generalInstructions: string;
+  generalInstructionId?: string | null;
+  entryOrder?: TreatmentEntryOrderItem[];
+};
+
+type TempCaseAttachment = {
+  id: number;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  url: string;
+  category: string;
+  /** Local preview only; replaced after upload completes */
+  pending?: boolean;
+};
+
+function treatmentAttachmentSourceLabel(category: string): string {
+  return category === "handwritten" ? "Capture" : "Import";
+}
+
+function revokeAttachmentPreviewUrl(url: string) {
+  if (url.startsWith("blob:")) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+type AbbreviationOption = {
+  abbreviation: string;
+  name?: string;
+};
+
+type FilterableOption = {
+  value: string;
+  label: string;
+  searchText?: string;
+  rowKey?: string;
+  meta?: {
+    veterinarianId?: number;
+    nvcRegistrationNumber?: string;
+    department?: string;
+  };
+};
+
+type AttendingVeterinarianField = {
+  veterinarianId: number | null;
+  name: string;
+  nvc: string;
+  department: string;
+  customMode: boolean;
+};
+
 type FormDefinition = {
   sections: Array<{
     key: string;
@@ -61,6 +154,7 @@ type FormDefinition = {
       options?: string[];
       enabled: boolean;
       required: boolean;
+      hideLabel?: boolean;
       displayOrder: number;
       isBuiltin: boolean;
     }>;
@@ -74,6 +168,14 @@ interface RegisterCaseProps {
   mode?: "ast" | "hospital";
   createEndpoint?: "/api/cases" | "/api/ast/cases";
   caseScope?: "ast" | "hospital";
+}
+
+function createTreatmentEntryId(prefix: string): string {
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${randomPart}`;
 }
 
 function AutoGrowTextarea({
@@ -105,6 +207,116 @@ function AutoGrowTextarea({
         onInput?.(event);
       }}
     />
+  );
+}
+
+function FilterableField({
+  value,
+  options,
+  placeholder,
+  customMode,
+  onCustomModeChange,
+  onChange,
+  onPickOption,
+}: {
+  value: string;
+  options: FilterableOption[];
+  placeholder: string;
+  customMode: boolean;
+  onCustomModeChange: (next: boolean) => void;
+  onChange: (value: string) => void;
+  onPickOption?: (option: FilterableOption) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeIfOutside = (e: MouseEvent | TouchEvent) => {
+      const el = rootRef.current;
+      const target = e.target;
+      if (!el || !(target instanceof Node)) return;
+      if (!el.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", closeIfOutside);
+    document.addEventListener("touchstart", closeIfOutside, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", closeIfOutside);
+      document.removeEventListener("touchstart", closeIfOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const q = value.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((option) =>
+        `${option.value} ${option.label} ${option.searchText ?? ""}`.toLowerCase().includes(q),
+      )
+    : options;
+  return (
+    <div ref={rootRef} className="relative">
+      <div className="relative">
+        <Input
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      </div>
+      {open && (
+        <div
+          className="absolute z-40 mt-1 max-h-52 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onClick={() => {
+              onCustomModeChange(true);
+              onChange("");
+              setOpen(false);
+            }}
+          >
+            Other
+          </button>
+          {filtered.map((option) => (
+            <button
+              key={option.rowKey ?? option.value}
+              type="button"
+              className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                onCustomModeChange(false);
+                onPickOption?.(option);
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">No matches</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -223,6 +435,7 @@ function isHospitalBuiltinQuestionKeyOrLabel(key: string, label?: string, sectio
   const normalizedLabel = normalizeQuestionId(label || "");
   return (
     normalizedSectionKey === "vitals" ||
+    normalizedSectionKey === "diagnosis" ||
     normalizedKey === "historynotes" ||
     normalizedKey === "previousmedicationnotes" ||
     normalizedKey.includes("clinicalsign") ||
@@ -240,6 +453,7 @@ function isHospitalBuiltinQuestionKeyOrLabel(key: string, label?: string, sectio
     normalizedKey === "crt" ||
     normalizedKey.includes("capillaryrefilltime") ||
     normalizedKey.includes("dehydration") ||
+    normalizedKey.includes("diagnosis") ||
     normalizedLabel === "history" ||
     normalizedLabel === "previousmedication" ||
     normalizedLabel.includes("clinicalsign") ||
@@ -257,6 +471,7 @@ function isHospitalBuiltinQuestionKeyOrLabel(key: string, label?: string, sectio
     normalizedLabel === "crt" ||
     normalizedLabel.includes("capillaryrefilltime") ||
     normalizedLabel.includes("dehydration")
+    || normalizedLabel.includes("diagnosis")
   );
 }
 
@@ -270,6 +485,12 @@ function isChiefComplaintKeyOrLabel(key: string, label?: string): boolean {
   const normalizedKey = normalizeQuestionId(key);
   const normalizedLabel = normalizeQuestionId(label || "");
   return normalizedKey.includes("chiefcomplaint") || normalizedLabel.includes("chiefcomplaint");
+}
+
+function isDiagnosisKeyOrLabel(key: string, label?: string): boolean {
+  const normalizedKey = normalizeQuestionId(key);
+  const normalizedLabel = normalizeQuestionId(label || "");
+  return normalizedKey.includes("diagnosis") || normalizedLabel.includes("diagnosis");
 }
 
 function isTestsSuggestedSectionTitle(title: string): boolean {
@@ -290,6 +511,7 @@ function isHospitalOnlySectionForAst(sectionKey: string, sectionTitle?: string):
   return (
     normalizedKey === "history" ||
     normalizedKey.includes("clinical") ||
+    normalizedKey === "attending_veterinarian" ||
     normalizedKey === "avian" ||
     normalizedKey === "vitals" ||
     normalizedKey === "testssuggested" ||
@@ -334,6 +556,8 @@ function isHospitalOnlyQuestionForAst(question: {
     "feedintake",
     "waterintake",
     "mortality",
+    "veterinarian",
+    "attending",
   ];
   return hospitalOnlyKeywords.some(
     (keyword) => normalizedKey.includes(keyword) || normalizedLabel.includes(keyword),
@@ -496,6 +720,36 @@ export default function RegisterCase({
   const { data: speciesOptionsData } = useQuery<string[]>({
     queryKey: ["/api/species-options"],
   });
+  const { data: medicationOptionsData = [] } = useQuery<string[]>({
+    queryKey: ["/api/medications"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const { data: routeOptionsData = [] } = useQuery<Array<string | AbbreviationOption>>({
+    queryKey: ["/api/routes-of-administration"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const { data: frequencyOptionsData = [] } = useQuery<Array<string | AbbreviationOption>>({
+    queryKey: ["/api/frequencies"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const { data: doseUnitOptionsData = [] } = useQuery<string[]>({
+    queryKey: ["/api/dose-units"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const { data: veterinariansData = [] } = useQuery<Veterinarian[]>({
+    queryKey: ["/api/veterinarians"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/veterinarians");
+      return res.json();
+    },
+    enabled: mode === "hospital",
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
   const { data: formDefinition } = useQuery<FormDefinition>({
     queryKey: ["/api/form-definition", mode],
     queryFn: async () => {
@@ -520,7 +774,27 @@ export default function RegisterCase({
   const [sex, setSex] = useState("");
   const [sampleType, setSampleType] = useState("");
   const [customAnswers, setCustomAnswers] = useState<Record<string, string | string[]>>({});
+  const [treatmentAnswers, setTreatmentAnswers] = useState<Record<string, TreatmentFieldValue>>({});
   const [sectionAnswers, setSectionAnswers] = useState<Record<string, string>>({});
+  const [treatmentCustomSelectMode, setTreatmentCustomSelectMode] = useState<Record<string, boolean>>({});
+  const [attendingVetByQuestion, setAttendingVetByQuestion] = useState<
+    Record<string, AttendingVeterinarianField>
+  >({});
+  const [treatmentAttachments, setTreatmentAttachments] = useState<TempCaseAttachment[]>([]);
+  const [uploadingTreatmentAttachments, setUploadingTreatmentAttachments] = useState(false);
+  const [treatmentUploadProgress, setTreatmentUploadProgress] = useState<number | null>(null);
+  const [treatmentAttachmentPreviewIndex, setTreatmentAttachmentPreviewIndex] = useState<number | null>(
+    null,
+  );
+  const [removingTreatmentAttachmentId, setRemovingTreatmentAttachmentId] = useState<number | null>(
+    null,
+  );
+  const [attachmentRemovePrompt, setAttachmentRemovePrompt] = useState<TempCaseAttachment | null>(
+    null,
+  );
+  const treatmentOptimisticIdRef = useRef(0);
+  const treatmentFileInputRef = useRef<HTMLInputElement | null>(null);
+  const treatmentCaptureInputRef = useRef<HTMLInputElement | null>(null);
   const [bulletPointModes, setBulletPointModes] = useState<Record<string, boolean>>({
     historyNotes: hospitalToggleDefaults?.historyNotesBulletPoints ?? true,
     previousMedicationNotes: hospitalToggleDefaults?.previousMedicationNotesBulletPoints ?? true,
@@ -779,10 +1053,183 @@ export default function RegisterCase({
       toast({ title: "Case registered successfully" });
       setLocation(onSuccessRedirect);
     },
-    onError: () => {
-      toast({ title: "Failed to register case", variant: "destructive" });
+    onError: (error: unknown) => {
+      let description = "Please check required fields and try again.";
+      if (error instanceof Error && error.message) {
+        const raw = error.message;
+        const jsonStart = raw.indexOf("{");
+        if (jsonStart >= 0) {
+          try {
+            const parsed = JSON.parse(raw.slice(jsonStart)) as {
+              message?: string;
+              errors?: { fieldErrors?: Record<string, string[]> };
+            };
+            if (parsed.message) {
+              description = parsed.message;
+            }
+            const firstFieldError = Object.values(parsed.errors?.fieldErrors ?? {}).find(
+              (entries) => Array.isArray(entries) && entries.length > 0,
+            )?.[0];
+            if (firstFieldError) {
+              description = firstFieldError;
+            }
+          } catch {
+            description = raw;
+          }
+        } else {
+          description = raw;
+        }
+      }
+      toast({ title: "Failed to register case", description, variant: "destructive" });
     },
   });
+
+  const uploadTreatmentAttachments = async (
+    files: FileList | null,
+    source: "diagnostic" | "handwritten",
+  ) => {
+    if (!files || files.length === 0) return;
+    if (treatmentAttachments.length + files.length > 10) {
+      toast({
+        title: "Too many images",
+        description: "You can upload up to 10 images per case.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const selected = Array.from(files);
+    for (const file of selected) {
+      const mime = (file.type || "").toLowerCase();
+      const ext = file.name.match(/\.[^.]+$/);
+      const extLower = (ext?.[0] || "").toLowerCase();
+      const extOk = [".jpg", ".jpeg", ".png"].includes(extLower);
+      const mimeOk =
+        ["image/jpeg", "image/jpg", "image/png", "image/pjpeg", "image/x-png"].includes(mime) ||
+        mime === "" || // some Windows pickers leave type empty
+        mime === "application/octet-stream"; // some systems use this for .jpg
+      if (!mimeOk || !extOk) {
+        toast({
+          title: "Invalid file type",
+          description: "Only JPG, JPEG, and PNG images are allowed.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (file.size > 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: `${file.name} is over 1MB. Please compress and retry.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    const category = source === "handwritten" ? "handwritten" : "diagnostic";
+    const optimistic: TempCaseAttachment[] = selected.map((file) => {
+      treatmentOptimisticIdRef.current -= 1;
+      return {
+        id: treatmentOptimisticIdRef.current,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || "image/jpeg",
+        url: URL.createObjectURL(file),
+        category,
+        pending: true,
+      };
+    });
+    setTreatmentAttachments((prev) => [...prev, ...optimistic]);
+    setUploadingTreatmentAttachments(true);
+    setTreatmentUploadProgress(0);
+    const optimisticIds = new Set(optimistic.map((o) => o.id));
+    try {
+      const formData = new FormData();
+      for (const file of selected) formData.append("files", file);
+      formData.append("sectionKey", "treatment");
+      formData.append("category", category);
+      const payload = await postFormDataWithProgress<{ files: TempCaseAttachment[] }>(
+        "/api/case-attachments/temp",
+        formData,
+        (pct) => setTreatmentUploadProgress(pct),
+      );
+      optimistic.forEach((o) => revokeAttachmentPreviewUrl(o.url));
+      setTreatmentAttachments((prev) => {
+        const without = prev.filter((a) => !optimisticIds.has(a.id));
+        return [...without, ...(payload.files ?? [])];
+      });
+      toast({ title: "Image(s) uploaded" });
+      if (treatmentFileInputRef.current) treatmentFileInputRef.current.value = "";
+      if (treatmentCaptureInputRef.current) treatmentCaptureInputRef.current.value = "";
+    } catch (error) {
+      optimistic.forEach((o) => revokeAttachmentPreviewUrl(o.url));
+      setTreatmentAttachments((prev) => prev.filter((a) => !optimisticIds.has(a.id)));
+      toast({
+        title: "Failed to upload image(s)",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingTreatmentAttachments(false);
+      setTreatmentUploadProgress(null);
+    }
+  };
+
+  const detachTreatmentAttachmentFromState = (attachment: TempCaseAttachment) => {
+    revokeAttachmentPreviewUrl(attachment.url);
+    setTreatmentAttachments((prev) => {
+      const removedIdx = prev.findIndex((a) => a.id === attachment.id);
+      const next = prev.filter((item) => item.id !== attachment.id);
+      setTreatmentAttachmentPreviewIndex((pIdx) => {
+        if (pIdx === null) return null;
+        if (removedIdx === -1) return pIdx;
+        if (pIdx === removedIdx) {
+          if (next.length === 0) return null;
+          return Math.min(removedIdx, next.length - 1);
+        }
+        if (removedIdx < pIdx) return pIdx - 1;
+        return pIdx;
+      });
+      return next;
+    });
+  };
+
+  const finalizeRemoveTreatmentAttachment = async (attachment: TempCaseAttachment) => {
+    if (attachment.pending) {
+      detachTreatmentAttachmentFromState(attachment);
+      return;
+    }
+    setRemovingTreatmentAttachmentId(attachment.id);
+    try {
+      await apiRequest("DELETE", `/api/case-attachments/temp/${attachment.id}`);
+      detachTreatmentAttachmentFromState(attachment);
+    } catch (error) {
+      toast({
+        title: "Failed to remove image",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setRemovingTreatmentAttachmentId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (treatmentAttachmentPreviewIndex === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setTreatmentAttachmentPreviewIndex((prev) =>
+          prev === null ? prev : (prev - 1 + treatmentAttachments.length) % treatmentAttachments.length,
+        );
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setTreatmentAttachmentPreviewIndex((prev) =>
+          prev === null ? prev : (prev + 1) % treatmentAttachments.length,
+        );
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [treatmentAttachmentPreviewIndex, treatmentAttachments.length]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -826,10 +1273,35 @@ export default function RegisterCase({
           !(mode === "hospital" && isHospitalBuiltinQuestionKeyOrLabel(q.key, q.label, q.sectionKey)) &&
           q.enabled &&
           q.required &&
-          (Array.isArray(mergedCustomAnswers[q.key])
-            ? (mergedCustomAnswers[q.key] as string[]).length === 0
-            : !String(mergedCustomAnswers[q.key] || "").trim()),
-      );
+          (q.inputType === "treatment_prescription"
+            ? !(
+                (treatmentAnswers[q.key]?.medications ?? []).some((entry) =>
+                  [
+                    entry.medication,
+                    entry.dose,
+                    entry.doseUnit,
+                    entry.route,
+                    entry.frequency,
+                    entry.duration,
+                    entry.note,
+                  ].some((v) => v.trim().length > 0),
+                ) || (treatmentAnswers[q.key]?.generalInstructions ?? "").trim().length > 0
+              )
+            : Array.isArray(mergedCustomAnswers[q.key])
+              ? (mergedCustomAnswers[q.key] as string[]).length === 0
+              : !String(mergedCustomAnswers[q.key] || "").trim()),
+      ) ||
+      (mode === "hospital" &&
+        allQuestions.some((q) => {
+          if (q.inputType !== "hospital_veterinarian" || !q.enabled || !q.required) return false;
+          if (shouldSkipQuestionValidation(q)) return false;
+          const hv = attendingVetByQuestion[q.key];
+          return (
+            !String(hv?.name ?? "").trim() ||
+            !String(hv?.nvc ?? "").trim() ||
+            !String(hv?.department ?? "").trim()
+          );
+        }));
     const missingHospitalBuiltinRequired =
       mode === "hospital" &&
       allQuestions.some((q) => {
@@ -1076,6 +1548,45 @@ export default function RegisterCase({
         : toEnglishSentence(raw.trim());
     }
 
+    if (treatmentAttachments.some((a) => a.pending) || uploadingTreatmentAttachments) {
+      toast({
+        title: "Please wait for images to finish uploading",
+        description: treatmentAttachments.some((a) => a.pending)
+          ? "One or more attachments are still being saved to the server."
+          : undefined,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const attendingVetPayload = (() => {
+      const q = allQuestions.find((x) => x.inputType === "hospital_veterinarian");
+      if (mode !== "hospital" || !q?.enabled) {
+        return {
+          veterinarianId: null as number | null,
+          veterinarianName: null as string | null,
+          veterinarianNvc: null as string | null,
+          veterinarianDepartment: null as string | null,
+        };
+      }
+      const hv = attendingVetByQuestion[q.key];
+      const name = String(hv?.name ?? "").trim();
+      if (!name) {
+        return {
+          veterinarianId: null,
+          veterinarianName: null,
+          veterinarianNvc: null,
+          veterinarianDepartment: null,
+        };
+      }
+      return {
+        veterinarianId: hv?.veterinarianId ?? null,
+        veterinarianName: toTitleCase(name),
+        veterinarianNvc: String(hv?.nvc ?? "").trim() || null,
+        veterinarianDepartment: String(hv?.department ?? "").trim() || null,
+      };
+    })();
+
     createMutation.mutate({
       caseNumber:
         mode === "hospital"
@@ -1108,6 +1619,17 @@ export default function RegisterCase({
         Object.keys(normalizedCustomAnswers).length > 0
           ? JSON.stringify(normalizedCustomAnswers)
           : null,
+      treatmentDetails:
+        Object.keys(treatmentAnswers).length > 0
+          ? JSON.stringify(treatmentAnswers)
+          : null,
+      treatmentAttachmentIds: treatmentAttachments
+        .filter((file) => !file.pending && file.id > 0)
+        .map((file) => file.id),
+      veterinarianId: attendingVetPayload.veterinarianId,
+      veterinarianName: attendingVetPayload.veterinarianName,
+      veterinarianNvc: attendingVetPayload.veterinarianNvc,
+      veterinarianDepartment: attendingVetPayload.veterinarianDepartment,
     });
   };
 
@@ -1315,6 +1837,58 @@ export default function RegisterCase({
         },
       ];
     }
+    const hasTreatmentSection = nextSections.some((s) => {
+      const normalized = normalizeQuestionId(s.key || s.title || "");
+      return normalized.includes("treatment");
+    });
+    if (!hasTreatmentSection) {
+      nextSections = [
+        ...nextSections,
+        {
+          key: "treatment",
+          title: "Treatment / Prescription",
+          displayOrder: 4700,
+          questions: [
+            {
+              id: -1301,
+              key: "treatmentPrescription",
+              label: "Treatment / Prescription",
+              inputType: "treatment_prescription",
+              enabled: true,
+              required: false,
+              displayOrder: 1000,
+              isBuiltin: true,
+            },
+          ],
+        },
+      ];
+    }
+    const hasAttendingVetSection = nextSections.some((s) => {
+      const normalized = normalizeQuestionId(s.key || s.title || "");
+      return normalized.includes("attendingveterinarian") || normalized === "attending_veterinarian";
+    });
+    if (!hasAttendingVetSection) {
+      nextSections = [
+        ...nextSections,
+        {
+          key: "attending_veterinarian",
+          title: "Attending veterinarian",
+          displayOrder: 4650,
+          questions: [
+            {
+              id: -1350,
+              key: "attendingVeterinarian",
+              label: "Attending veterinarian",
+              inputType: "hospital_veterinarian",
+              enabled: true,
+              required: false,
+              displayOrder: 1000,
+              isBuiltin: true,
+            },
+          ],
+        },
+      ];
+    }
     return nextSections;
   }, [effectiveDefinition, mode, isAvianSpecies]);
   const sectionLevelQuestionKeyBySection = useMemo(() => {
@@ -1335,12 +1909,726 @@ export default function RegisterCase({
     const value = customAnswers[q.key] ?? "";
     const required = q.required;
     const options = q.options ?? [];
+    const showLabel = !q.hideLabel;
+    if (q.inputType === "hospital_veterinarian") {
+      const vetKey = q.key;
+      const data =
+        attendingVetByQuestion[vetKey] ?? {
+          veterinarianId: null,
+          name: "",
+          nvc: "",
+          department: "",
+          customMode: false,
+        };
+      const vetOptions: FilterableOption[] = veterinariansData.map((v) => ({
+        value: v.fullName,
+        label: `${v.fullName} — ${v.department}`,
+        rowKey: `vet-${v.id}`,
+        searchText: `${v.fullName} ${v.nvcRegistrationNumber} ${v.department}`,
+        meta: {
+          veterinarianId: v.id,
+          nvcRegistrationNumber: v.nvcRegistrationNumber,
+          department: v.department,
+        },
+      }));
+      return (
+        <div className="space-y-3 sm:col-span-2" key={q.key}>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
+          <FilterableField
+            value={data.name}
+            options={vetOptions}
+            placeholder="Veterinarian name (select suggestion or type)"
+            customMode={data.customMode}
+            onCustomModeChange={(next) => {
+              setAttendingVetByQuestion((prev) => ({
+                ...prev,
+                [vetKey]: next
+                  ? {
+                      veterinarianId: null,
+                      name: "",
+                      nvc: "",
+                      department: "",
+                      customMode: true,
+                    }
+                  : {
+                      ...(prev[vetKey] ?? data),
+                      customMode: false,
+                    },
+              }));
+            }}
+            onPickOption={(option) => {
+              const m = option.meta;
+              const vid = m?.veterinarianId;
+              if (vid == null) return;
+              setAttendingVetByQuestion((prev) => ({
+                ...prev,
+                [vetKey]: {
+                  veterinarianId: vid,
+                  name: String(option.value),
+                  nvc: String(m?.nvcRegistrationNumber ?? ""),
+                  department: String(m?.department ?? ""),
+                  customMode: false,
+                },
+              }));
+            }}
+            onChange={(name) => {
+              setAttendingVetByQuestion((prev) => {
+                const cur = prev[vetKey] ?? {
+                  veterinarianId: null,
+                  name: "",
+                  nvc: "",
+                  department: "",
+                  customMode: false,
+                };
+                const next = { ...cur, name };
+                const match = veterinariansData.find((v) => v.fullName === name.trim());
+                if (match && cur.veterinarianId === match.id) {
+                  return { ...prev, [vetKey]: next };
+                }
+                return {
+                  ...prev,
+                  [vetKey]: {
+                    ...next,
+                    veterinarianId: null,
+                  },
+                };
+              });
+            }}
+          />
+          {(data.customMode || data.veterinarianId === null) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Nepal Veterinary Council registration no.</Label>
+                <Input
+                  value={data.nvc}
+                  onChange={(e) =>
+                    setAttendingVetByQuestion((prev) => ({
+                      ...prev,
+                      [vetKey]: { ...(prev[vetKey] ?? data), nvc: e.target.value },
+                    }))
+                  }
+                  placeholder="NVC no."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Department</Label>
+                <Input
+                  value={data.department}
+                  onChange={(e) =>
+                    setAttendingVetByQuestion((prev) => ({
+                      ...prev,
+                      [vetKey]: { ...(prev[vetKey] ?? data), department: e.target.value },
+                    }))
+                  }
+                  placeholder="Department"
+                />
+              </div>
+            </div>
+          )}
+          {!data.customMode && data.veterinarianId !== null && (data.nvc || data.department) && (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              {data.nvc ? <p>NVC no.: {data.nvc}</p> : null}
+              {data.department ? <p>Department: {data.department}</p> : null}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (q.inputType === "treatment_prescription") {
+      const current = treatmentAnswers[q.key] ?? { medications: [], generalInstructions: "" };
+      const medicationOptions = Array.from(new Set(medicationOptionsData.filter(Boolean)));
+      const routeOptionItems = Array.from(
+        new Map(
+          routeOptionsData
+            .map((item) => {
+              if (typeof item === "string") {
+                const value = item.trim();
+                return value
+                  ? {
+                      value,
+                      label: value,
+                      search: value.toLowerCase(),
+                    }
+                  : null;
+              }
+              const abbreviation = String(item?.abbreviation ?? "").trim();
+              const name = String(item?.name ?? "").trim();
+              const value = abbreviation || name;
+              if (!value) return null;
+              const label = name && name.toLowerCase() !== value.toLowerCase() ? `${value} - ${name}` : value;
+              return {
+                value,
+                label,
+                search: `${value} ${name}`.toLowerCase(),
+              };
+            })
+            .filter((item): item is { value: string; label: string; search: string } => Boolean(item))
+            .map((item) => [item.value.toLowerCase(), item]),
+        ).values(),
+      );
+      const frequencyOptionItems = Array.from(
+        new Map(
+          frequencyOptionsData
+            .map((item) => {
+              if (typeof item === "string") {
+                const value = item.trim();
+                return value
+                  ? {
+                      value,
+                      label: value,
+                      search: value.toLowerCase(),
+                    }
+                  : null;
+              }
+              const abbreviation = String(item?.abbreviation ?? "").trim();
+              const name = String(item?.name ?? "").trim();
+              const value = abbreviation || name;
+              if (!value) return null;
+              const label = name && name.toLowerCase() !== value.toLowerCase() ? `${value} - ${name}` : value;
+              return {
+                value,
+                label,
+                search: `${value} ${name}`.toLowerCase(),
+              };
+            })
+            .filter((item): item is { value: string; label: string; search: string } => Boolean(item))
+            .map((item) => [item.value.toLowerCase(), item]),
+        ).values(),
+      );
+      const routeOptions = routeOptionItems.map((item) => item.value);
+      const frequencyOptions = frequencyOptionItems.map((item) => item.value);
+      const doseUnitOptions = Array.from(new Set(doseUnitOptionsData.filter(Boolean)));
+
+      const normalizedRows = current.medications.map((row) => ({
+        ...row,
+        clientId: row.clientId ?? createTreatmentEntryId("med"),
+        showNote: row.showNote ?? Boolean(row.note?.trim()),
+      }));
+      const hasGeneralInstructionBlock = Boolean(current.generalInstructionId);
+      const normalizedOrder: TreatmentEntryOrderItem[] =
+        (current.entryOrder ?? []).filter((item) =>
+          item.type === "general"
+            ? hasGeneralInstructionBlock && item.id === current.generalInstructionId
+            : normalizedRows.some((row) => row.clientId === item.id),
+        );
+      for (const row of normalizedRows) {
+        if (!normalizedOrder.some((item) => item.type === "medication" && item.id === row.clientId)) {
+          normalizedOrder.push({ type: "medication", id: row.clientId as string });
+        }
+      }
+      if (
+        hasGeneralInstructionBlock &&
+        !normalizedOrder.some(
+          (item) => item.type === "general" && item.id === current.generalInstructionId,
+        )
+      ) {
+        normalizedOrder.push({ type: "general", id: current.generalInstructionId as string });
+      }
+
+      const updateMedicationRow = (rowId: string, patch: Partial<TreatmentMedicationEntry>) => {
+        setTreatmentAnswers((prev) => {
+          const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+          const nextRows = existing.medications.map((row) => {
+            const normalizedRow = {
+              ...row,
+              clientId: row.clientId ?? createTreatmentEntryId("med"),
+              showNote: row.showNote ?? Boolean(row.note?.trim()),
+            };
+            return normalizedRow.clientId === rowId ? { ...normalizedRow, ...patch } : normalizedRow;
+          });
+          const nextOrder = (existing.entryOrder ?? []).filter((item) =>
+            item.type === "general"
+              ? existing.generalInstructionId && item.id === existing.generalInstructionId
+              : nextRows.some((row) => row.clientId === item.id),
+          );
+          for (const row of nextRows) {
+            if (!nextOrder.some((item) => item.type === "medication" && item.id === row.clientId)) {
+              nextOrder.push({ type: "medication", id: row.clientId as string });
+            }
+          }
+          if (
+            existing.generalInstructionId &&
+            !nextOrder.some(
+              (item) => item.type === "general" && item.id === existing.generalInstructionId,
+            )
+          ) {
+            nextOrder.push({ type: "general", id: existing.generalInstructionId });
+          }
+          return { ...prev, [q.key]: { ...existing, medications: nextRows, entryOrder: nextOrder } };
+        });
+      };
+
+      return (
+        <div className="space-y-3 sm:col-span-2" key={q.key}>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
+          <div className="space-y-3 rounded border p-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() =>
+                  setTreatmentAnswers((prev) => {
+                    const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                    const newId = createTreatmentEntryId("med");
+                    const nextRows = [
+                      ...existing.medications.map((row) => ({
+                        ...row,
+                        clientId: row.clientId ?? createTreatmentEntryId("med"),
+                        showNote: row.showNote ?? Boolean(row.note?.trim()),
+                      })),
+                      {
+                        clientId: newId,
+                        medication: "",
+                        dose: "",
+                        doseUnit: "",
+                        route: "",
+                        frequency: "",
+                        duration: "",
+                        note: "",
+                        showNote: false,
+                      },
+                    ];
+                    const nextOrder = [...(existing.entryOrder ?? []), { type: "medication" as const, id: newId }];
+                    return {
+                      ...prev,
+                      [q.key]: {
+                        ...existing,
+                        medications: nextRows,
+                        entryOrder: nextOrder,
+                      },
+                    };
+                  })
+                }
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add medication
+              </Button>
+              {!hasGeneralInstructionBlock && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() =>
+                    setTreatmentAnswers((prev) => {
+                      const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                      const generalId = createTreatmentEntryId("general");
+                      return {
+                        ...prev,
+                        [q.key]: {
+                          ...existing,
+                          generalInstructionId: generalId,
+                          generalInstructions: existing.generalInstructions ?? "",
+                          entryOrder: [...(existing.entryOrder ?? []), { type: "general", id: generalId }],
+                        },
+                      };
+                    })
+                  }
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add general instruction
+                </Button>
+              )}
+            </div>
+
+            {normalizedOrder.map((item) => {
+              if (item.type === "general") {
+                return (
+                  <div key={`${q.key}-general-${item.id}`} className="rounded border p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">General treatment instruction</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                        onClick={() =>
+                          setTreatmentAnswers((prev) => {
+                            const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                            return {
+                              ...prev,
+                              [q.key]: {
+                                ...existing,
+                                generalInstructions: "",
+                                generalInstructionId: null,
+                                entryOrder: (existing.entryOrder ?? []).filter(
+                                  (entry) => !(entry.type === "general" && entry.id === item.id),
+                                ),
+                              },
+                            };
+                          })
+                        }
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={current.generalInstructions}
+                      onChange={(e) =>
+                        setTreatmentAnswers((prev) => {
+                          const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                          return { ...prev, [q.key]: { ...existing, generalInstructions: e.target.value } };
+                        })
+                      }
+                      placeholder="General treatment instructions (non-medication)"
+                      rows={3}
+                    />
+                  </div>
+                );
+              }
+
+              const row = normalizedRows.find((med) => med.clientId === item.id);
+              if (!row) return null;
+              const rowId = row.clientId as string;
+              const doseUnitKey = `${q.key}:${rowId}:doseUnit`;
+              const routeKey = `${q.key}:${rowId}:route`;
+              const frequencyKey = `${q.key}:${rowId}:frequency`;
+              const doseUnitOptionItems: FilterableOption[] = doseUnitOptions.map((option) => ({
+                value: option,
+                label: option,
+                searchText: option,
+              }));
+              return (
+                <div key={`${q.key}-med-${rowId}`} className="rounded border p-3 space-y-2">
+                  <FilterableField
+                    value={row.medication}
+                    options={medicationOptions.map((option) => ({
+                      value: option,
+                      label: option,
+                      searchText: option,
+                    }))}
+                    placeholder="Medication (select suggestion or type custom)"
+                    customMode={false}
+                    onCustomModeChange={() => {}}
+                    onChange={(value) => updateMedicationRow(rowId, { medication: value })}
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                    <Input value={row.dose} onChange={(e) => updateMedicationRow(rowId, { dose: e.target.value })} placeholder="Dose" />
+                    <FilterableField
+                      value={row.doseUnit}
+                      options={doseUnitOptionItems}
+                      placeholder="Dose unit"
+                      customMode={Boolean(treatmentCustomSelectMode[doseUnitKey])}
+                      onCustomModeChange={(next) =>
+                        setTreatmentCustomSelectMode((prev) => ({ ...prev, [doseUnitKey]: next }))
+                      }
+                      onChange={(value) => updateMedicationRow(rowId, { doseUnit: value })}
+                    />
+                    <FilterableField
+                      value={row.route}
+                      options={routeOptionItems}
+                      placeholder="Route"
+                      customMode={Boolean(treatmentCustomSelectMode[routeKey])}
+                      onCustomModeChange={(next) =>
+                        setTreatmentCustomSelectMode((prev) => ({ ...prev, [routeKey]: next }))
+                      }
+                      onChange={(value) => updateMedicationRow(rowId, { route: value })}
+                    />
+                    <FilterableField
+                      value={row.frequency}
+                      options={frequencyOptionItems}
+                      placeholder="Frequency"
+                      customMode={Boolean(treatmentCustomSelectMode[frequencyKey])}
+                      onCustomModeChange={(next) =>
+                        setTreatmentCustomSelectMode((prev) => ({ ...prev, [frequencyKey]: next }))
+                      }
+                      onChange={(value) => updateMedicationRow(rowId, { frequency: value })}
+                    />
+                    <Input value={row.duration} onChange={(e) => updateMedicationRow(rowId, { duration: e.target.value })} placeholder="Duration" />
+                  </div>
+
+                  {row.showNote ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={row.note}
+                        onChange={(e) => updateMedicationRow(rowId, { note: e.target.value })}
+                        placeholder="Optional note"
+                        rows={2}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateMedicationRow(rowId, { note: "", showNote: false })}
+                      >
+                        Remove optional note
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => updateMedicationRow(rowId, { showNote: true })}
+                    >
+                      Add optional note
+                    </Button>
+                  )}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                      onClick={() =>
+                        setTreatmentAnswers((prev) => {
+                          const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                          const nextRows = existing.medications.filter((med) => {
+                            const normalizedRow = {
+                              ...med,
+                              clientId: med.clientId ?? createTreatmentEntryId("med"),
+                            };
+                            return normalizedRow.clientId !== rowId;
+                          });
+                          return {
+                            ...prev,
+                            [q.key]: {
+                              ...existing,
+                              medications: nextRows,
+                              entryOrder: (existing.entryOrder ?? []).filter(
+                                (entry) => !(entry.type === "medication" && entry.id === rowId),
+                              ),
+                            },
+                          };
+                        })
+                      }
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remove medication
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="rounded border border-dashed p-3 space-y-3">
+              <div>
+                <p className="text-sm font-medium">Treatment attachments</p>
+                <p className="text-xs text-muted-foreground">
+                  Add up to 10 images (JPG/JPEG/PNG, max 1MB each).
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={treatmentFileInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => uploadTreatmentAttachments(e.target.files, "diagnostic")}
+                  disabled={uploadingTreatmentAttachments}
+                />
+                <input
+                  ref={treatmentCaptureInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                  capture="environment"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => uploadTreatmentAttachments(e.target.files, "handwritten")}
+                  disabled={uploadingTreatmentAttachments}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={uploadingTreatmentAttachments}
+                  onClick={() => treatmentFileInputRef.current?.click()}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Import from files
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={uploadingTreatmentAttachments}
+                  onClick={() => treatmentCaptureInputRef.current?.click()}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  Scan / capture
+                </Button>
+              </div>
+              {treatmentUploadProgress !== null && (
+                <div className="space-y-1">
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    {treatmentUploadProgress < 0 ? (
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+                    ) : (
+                      <div
+                        className="h-full bg-primary transition-[width] duration-150"
+                        style={{ width: `${treatmentUploadProgress}%` }}
+                      />
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {treatmentUploadProgress < 0 ? "Uploading…" : `${treatmentUploadProgress}% uploaded`}
+                  </p>
+                </div>
+              )}
+              {treatmentAttachments.length > 0 && (
+                <>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {treatmentAttachments.map((attachment, idx) => (
+                      <div
+                        key={attachment.pending ? `p-${attachment.id}` : attachment.id}
+                        className="relative rounded-md border bg-muted/30 overflow-hidden group aspect-square"
+                      >
+                        <button
+                          type="button"
+                          className="absolute inset-0 flex items-center justify-center"
+                          onClick={() => setTreatmentAttachmentPreviewIndex(idx)}
+                          aria-label={`View full size: ${attachment.fileName}`}
+                        >
+                          <img
+                            src={attachment.url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        </button>
+                        {attachment.pending && (
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/40">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden />
+                          </div>
+                        )}
+                        <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-sm">
+                          {treatmentAttachmentSourceLabel(attachment.category)}
+                        </span>
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background/95 text-foreground shadow-sm hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50"
+                          aria-label={`Remove ${attachment.fileName}`}
+                          disabled={
+                            removingTreatmentAttachmentId === attachment.id ||
+                            uploadingTreatmentAttachments
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAttachmentRemovePrompt(attachment);
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <AlertDialog
+                    open={attachmentRemovePrompt !== null}
+                    onOpenChange={(open) => {
+                      if (!open) setAttachmentRemovePrompt(null);
+                    }}
+                  >
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove this image?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {attachmentRemovePrompt?.pending
+                            ? "This file has not finished uploading yet. It will be discarded."
+                            : "This deletes the file from the server. You can upload it again if needed."}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => {
+                            const target = attachmentRemovePrompt;
+                            setAttachmentRemovePrompt(null);
+                            if (target) void finalizeRemoveTreatmentAttachment(target);
+                          }}
+                        >
+                          Remove
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  <Dialog
+                    open={treatmentAttachmentPreviewIndex !== null}
+                    onOpenChange={(open) => {
+                      if (!open) setTreatmentAttachmentPreviewIndex(null);
+                    }}
+                  >
+                    <DialogContent className="max-w-5xl w-[95vw]">
+                      <DialogHeader>
+                        <DialogTitle>
+                          {treatmentAttachmentPreviewIndex !== null
+                            ? treatmentAttachments[treatmentAttachmentPreviewIndex]?.fileName
+                            : "Attachment"}
+                        </DialogTitle>
+                      </DialogHeader>
+                      {treatmentAttachmentPreviewIndex !== null &&
+                        treatmentAttachments[treatmentAttachmentPreviewIndex] && (
+                          <div className="space-y-3">
+                            <img
+                              src={treatmentAttachments[treatmentAttachmentPreviewIndex].url}
+                              alt={treatmentAttachments[treatmentAttachmentPreviewIndex].fileName}
+                              className="max-h-[75vh] w-full object-contain bg-black/5 rounded-md"
+                            />
+                            {treatmentAttachments.length > 1 && (
+                              <div className="flex justify-between gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setTreatmentAttachmentPreviewIndex((prev) =>
+                                      prev === null
+                                        ? prev
+                                        : (prev - 1 + treatmentAttachments.length) %
+                                          treatmentAttachments.length,
+                                    )
+                                  }
+                                >
+                                  Previous
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setTreatmentAttachmentPreviewIndex((prev) =>
+                                      prev === null
+                                        ? prev
+                                        : (prev + 1) % treatmentAttachments.length,
+                                    )
+                                  }
+                                >
+                                  Next
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                    </DialogContent>
+                  </Dialog>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
     if (q.inputType === "singleSelect") {
   return (
         <div className="space-y-1.5" key={q.key}>
-          <Label>
-            {q.label} {required && <span className="text-destructive">*</span>}
-          </Label>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
           <Select
             value={typeof value === "string" ? value : ""}
             onValueChange={(v) => setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))}
@@ -1363,9 +2651,11 @@ export default function RegisterCase({
       const selected = Array.isArray(value) ? value : [];
       return (
         <div className="space-y-1.5" key={q.key}>
-          <Label>
-            {q.label} {required && <span className="text-destructive">*</span>}
-          </Label>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
           <div className="space-y-2 rounded border p-2">
             {options.map((opt) => {
               const checked = selected.includes(opt);
@@ -1392,9 +2682,11 @@ export default function RegisterCase({
     if (q.inputType === "yesNo") {
       return (
         <div className="space-y-1.5" key={q.key}>
-          <Label>
-            {q.label} {required && <span className="text-destructive">*</span>}
-          </Label>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
           <Select
             value={typeof value === "string" ? value : ""}
             onValueChange={(v) => setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))}
@@ -1413,9 +2705,11 @@ export default function RegisterCase({
     if (q.inputType === "date") {
       return (
         <div className="space-y-1.5" key={q.key}>
-          <Label>
-            {q.label} {required && <span className="text-destructive">*</span>}
-          </Label>
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
           <Input
             type="date"
             value={typeof value === "string" ? value : ""}
@@ -1429,10 +2723,12 @@ export default function RegisterCase({
     if (q.inputType === "textarea") {
       return (
         <div className="space-y-1.5" key={q.key}>
-          <Label>
-            {q.label} {required && <span className="text-destructive">*</span>}
-          </Label>
-          <Textarea
+          {showLabel && (
+            <Label>
+              {q.label} {required && <span className="text-destructive">*</span>}
+            </Label>
+          )}
+          <AutoGrowTextarea
             value={typeof value === "string" ? value : ""}
             onChange={(e) =>
               setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -1440,16 +2736,17 @@ export default function RegisterCase({
             onBlur={(e) =>
               setCustomAnswers((prev) => ({ ...prev, [q.key]: toTitleCase(e.target.value) }))
             }
-            rows={2}
           />
         </div>
       );
     }
     return (
       <div className="space-y-1.5" key={q.key}>
-        <Label>
-          {q.label} {required && <span className="text-destructive">*</span>}
-        </Label>
+        {showLabel && (
+          <Label>
+            {q.label} {required && <span className="text-destructive">*</span>}
+          </Label>
+        )}
         <Input
           type={q.inputType === "number" ? "number" : "text"}
           value={typeof value === "string" ? value : ""}
@@ -1609,7 +2906,9 @@ export default function RegisterCase({
               return false;
             }
             return (
-              shouldShowQuestion(q.required, q.key) &&
+              (q.inputType === "treatment_prescription" ||
+                q.inputType === "hospital_veterinarian" ||
+                shouldShowQuestion(q.required, q.key)) &&
               !(isAvianSpecies && shouldHideQuestionForAvian(q.key, q.label, section.key))
             );
           });
@@ -1848,7 +3147,7 @@ export default function RegisterCase({
                         />
                       </div>
                     )}
-                    <Textarea
+                    <AutoGrowTextarea
                       id={`section-answer-${section.key}`}
                       className={quickRegisterMode ? "text-base" : ""}
                       value={sectionAnswers[section.key] ?? ""}
@@ -1877,7 +3176,6 @@ export default function RegisterCase({
                           }
                         }
                       }}
-                      rows={4}
                       data-testid={`textarea-section-${section.key}`}
                     />
                   </div>
@@ -1885,6 +3183,10 @@ export default function RegisterCase({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {visibleQuestions.map((q) => {
                     const required = q.required;
+                    const showLabel = !q.hideLabel;
+                    if (q.inputType === "treatment_prescription" || q.inputType === "hospital_veterinarian") {
+                      return renderCustomQuestion(q);
+                    }
                     if (!q.isBuiltin && !(mode === "hospital" && isHospitalBuiltinQuestionKeyOrLabel(q.key, q.label, section.key))) {
                       return renderCustomQuestion(q);
                     }
@@ -1893,9 +3195,11 @@ export default function RegisterCase({
                       case "ownerName":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label htmlFor="ownerName">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="ownerName">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Input
                               id="ownerName"
                               className={quickRegisterMode ? "h-11 text-base" : ""}
@@ -1910,9 +3214,11 @@ export default function RegisterCase({
                       case "ownerPhone":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label htmlFor="ownerPhone">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="ownerPhone">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Input
                               id="ownerPhone"
                               className={quickRegisterMode ? "h-11 text-base" : ""}
@@ -1926,9 +3232,11 @@ export default function RegisterCase({
                       case "species":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label>
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Select value={species} onValueChange={setSpecies}>
                               <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-species">
                                 <SelectValue placeholder="Select species" />
@@ -1956,9 +3264,11 @@ export default function RegisterCase({
                       case "breed":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label>
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Select value={breedChoice} onValueChange={setBreedChoice}>
                               <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-breed">
                                 <SelectValue placeholder="Select breed" />
@@ -1986,9 +3296,11 @@ export default function RegisterCase({
                       case "sex":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label>
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Select value={sex} onValueChange={setSex}>
                               <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-sex">
                                 <SelectValue placeholder="Select" />
@@ -2017,9 +3329,11 @@ export default function RegisterCase({
                       case "ownerAddress":
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label htmlFor="ownerAddress">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="ownerAddress">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Textarea
                               id="ownerAddress"
                               className={quickRegisterMode ? "text-base" : ""}
@@ -2035,9 +3349,11 @@ export default function RegisterCase({
                       case "cultureResult":
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label htmlFor="cultureResult">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="cultureResult">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Input
                               id="cultureResult"
                               className={quickRegisterMode ? "h-11 text-base" : ""}
@@ -2066,9 +3382,11 @@ export default function RegisterCase({
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             <div className="flex items-center justify-between gap-2">
-                              <Label htmlFor="historyNotes">
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
+                              {showLabel ? (
+                                <Label htmlFor="historyNotes">
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              ) : <span />}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">Bullet points</span>
                                 <Switch
@@ -2098,9 +3416,11 @@ export default function RegisterCase({
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             <div className="flex items-center justify-between gap-2">
-                              <Label htmlFor="previousMedicationNotes">
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
+                              {showLabel ? (
+                                <Label htmlFor="previousMedicationNotes">
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              ) : <span />}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">Bullet points</span>
                                 <Switch
@@ -2133,9 +3453,11 @@ export default function RegisterCase({
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             <div className="flex items-center justify-between gap-2">
-                              <Label htmlFor="clinicalSignsSymptomsNotes">
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
+                              {showLabel ? (
+                                <Label htmlFor="clinicalSignsSymptomsNotes">
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              ) : <span />}
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">Bullet points</span>
                                 <Switch
@@ -2389,9 +3711,11 @@ export default function RegisterCase({
                         ]);
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>
-                              {testsPromptLabel} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {testsPromptLabel} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <ToggleGrid
                               options={options}
                               selected={testsSuggested}
@@ -2414,9 +3738,11 @@ export default function RegisterCase({
                         ]);
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <ToggleGrid
                               options={options}
                               selected={enzymePanelTests}
@@ -2442,9 +3768,11 @@ export default function RegisterCase({
                         ]);
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <ToggleGrid
                               options={options}
                               selected={rapidDiagnosticTests}
@@ -2462,7 +3790,7 @@ export default function RegisterCase({
                         if (!hasMainSuggestedTest(testsSuggested, "xray")) return null;
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                            {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
                               className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
                               value={xrayDetails}
@@ -2476,7 +3804,7 @@ export default function RegisterCase({
                         if (!hasMainSuggestedTest(testsSuggested, "biopsy")) return null;
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                            {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
                               className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
                               value={biopsyDetails}
@@ -2490,7 +3818,7 @@ export default function RegisterCase({
                         if (!hasMainSuggestedTest(testsSuggested, "cytology")) return null;
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                            {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
                               className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
                               value={cytologyDetails}
@@ -2504,7 +3832,7 @@ export default function RegisterCase({
                         if (!hasMainSuggestedTest(testsSuggested, "ultrasound")) return null;
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                            {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
                               className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
                               value={ultrasoundDetails}
@@ -2518,7 +3846,7 @@ export default function RegisterCase({
                         if (!hasMainSuggestedTest(testsSuggested, "culture")) return null;
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                            {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
                               className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
                               value={cultureDetails}
@@ -2531,9 +3859,11 @@ export default function RegisterCase({
                       case "age":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label htmlFor="age">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="age">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <div className="flex gap-2">
                               <Input
                                 id="age"
@@ -2566,9 +3896,11 @@ export default function RegisterCase({
                       case "sampleType":
                         return (
                           <div className="space-y-1.5" key={q.key}>
-                            <Label htmlFor="sampleType">
-                              {q.label} {required && <span className="text-destructive">*</span>}
-                            </Label>
+                            {showLabel && (
+                              <Label htmlFor="sampleType">
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
                             <Input
                               id="sampleType"
                               className={quickRegisterMode ? "h-11 text-base" : ""}
@@ -2586,7 +3918,7 @@ export default function RegisterCase({
                           if (normalized.includes("temperature")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex gap-2">
                                   <Input
                                     type="number"
@@ -2611,7 +3943,7 @@ export default function RegisterCase({
                           if (normalized === "crt" || normalized.includes("capillaryrefilltime")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>CRT {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>CRT {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2628,7 +3960,7 @@ export default function RegisterCase({
                           if (normalized.includes("dehydration")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2645,7 +3977,7 @@ export default function RegisterCase({
                           if (normalized.includes("heartrate")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>Heart Rate {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>Heart Rate {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2668,7 +4000,7 @@ export default function RegisterCase({
                           ) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>Respiration {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>Respiration {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2687,7 +4019,7 @@ export default function RegisterCase({
                           if (normalized.includes("rumenmotility")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>Rumen Motility {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>Rumen Motility {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2706,7 +4038,7 @@ export default function RegisterCase({
                           if (normalized.includes("weight")) {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>
+                                {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -2735,9 +4067,11 @@ export default function RegisterCase({
                             return (
                               <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                                 <div className="flex items-center justify-between gap-2">
-                                  <Label>
-                                    {q.label} {required && <span className="text-destructive">*</span>}
-                                  </Label>
+                                  {showLabel ? (
+                                    <Label>
+                                      {q.label} {required && <span className="text-destructive">*</span>}
+                                    </Label>
+                                  ) : <span />}
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs text-muted-foreground">Bullet points</span>
                                     <Switch
@@ -2770,28 +4104,43 @@ export default function RegisterCase({
                             );
                           }
                           if (q.inputType === "textarea") {
+                            const isDiagnosis = isDiagnosisKeyOrLabel(q.key, q.label);
                             return (
                               <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                                <Label>
-                                  {q.label} {required && <span className="text-destructive">*</span>}
-                                </Label>
-                                <Textarea
-                                  className={quickRegisterMode ? "text-base" : ""}
-                                  value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
-                                  onChange={(e) =>
-                                    setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
-                                  }
-                                  rows={3}
-                                />
+                                {showLabel && (
+                                  <Label>
+                                    {q.label} {required && <span className="text-destructive">*</span>}
+                                  </Label>
+                                )}
+                                {isDiagnosis ? (
+                                  <AutoGrowTextarea
+                                    className={quickRegisterMode ? "text-base" : ""}
+                                    value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                                    onChange={(e) =>
+                                      setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+                                    }
+                                  />
+                                ) : (
+                                  <Textarea
+                                    className={quickRegisterMode ? "text-base" : ""}
+                                    value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                                    onChange={(e) =>
+                                      setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+                                    }
+                                    rows={3}
+                                  />
+                                )}
                               </div>
                             );
                           }
                           if (q.inputType === "singleSelect" || q.inputType === "yesNo") {
                             return (
                               <div className="space-y-1.5" key={q.key}>
-                                <Label>
-                                  {q.label} {required && <span className="text-destructive">*</span>}
-                                </Label>
+                                {showLabel && (
+                                  <Label>
+                                    {q.label} {required && <span className="text-destructive">*</span>}
+                                  </Label>
+                                )}
                                 <Select
                                   value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                   onValueChange={(v) =>
@@ -2814,9 +4163,11 @@ export default function RegisterCase({
                           }
                           return (
                             <div className="space-y-1.5" key={q.key}>
-                              <Label>
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
+                              {showLabel && (
+                                <Label>
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              )}
                               <Input
                                 type={q.inputType === "number" ? "number" : "text"}
                                 className={quickRegisterMode ? "h-11 text-base" : ""}
@@ -2828,7 +4179,81 @@ export default function RegisterCase({
                             </div>
                           );
                         }
-                        return null;
+                        if (q.inputType === "textarea") {
+                          const isDiagnosis = isDiagnosisKeyOrLabel(q.key, q.label);
+                          return (
+                            <div className="space-y-1.5 sm:col-span-2" key={q.key}>
+                              {showLabel && (
+                                <Label>
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              )}
+                              {isDiagnosis ? (
+                                <AutoGrowTextarea
+                                  className={quickRegisterMode ? "text-base" : ""}
+                                  value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                                  onChange={(e) =>
+                                    setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+                                  }
+                                />
+                              ) : (
+                                <Textarea
+                                  className={quickRegisterMode ? "text-base" : ""}
+                                  value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                                  onChange={(e) =>
+                                    setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+                                  }
+                                  rows={3}
+                                />
+                              )}
+                            </div>
+                          );
+                        }
+                        if (q.inputType === "singleSelect" || q.inputType === "yesNo") {
+                          return (
+                            <div className="space-y-1.5" key={q.key}>
+                              {showLabel && (
+                                <Label>
+                                  {q.label} {required && <span className="text-destructive">*</span>}
+                                </Label>
+                              )}
+                              <Select
+                                value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                                onValueChange={(v) =>
+                                  setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))
+                                }
+                              >
+                                <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""}>
+                                  <SelectValue placeholder="Select" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(q.inputType === "yesNo" ? ["Yes", "No"] : q.options || []).map((opt) => (
+                                    <SelectItem key={opt} value={opt}>
+                                      {opt}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="space-y-1.5" key={q.key}>
+                            {showLabel && (
+                              <Label>
+                                {q.label} {required && <span className="text-destructive">*</span>}
+                              </Label>
+                            )}
+                            <Input
+                              type={q.inputType === "number" ? "number" : "text"}
+                              className={quickRegisterMode ? "h-11 text-base" : ""}
+                              value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
+                              onChange={(e) =>
+                                setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
+                              }
+                            />
+                          </div>
+                        );
                     }
                   })}
                 </div>

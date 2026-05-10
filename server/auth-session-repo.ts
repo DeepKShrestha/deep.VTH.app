@@ -3,7 +3,7 @@ import type { PasswordResetRequest, User } from "@shared/schema";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
-import { dbRun } from "./db-query";
+import { dbAll, dbRun } from "./db-query";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
@@ -37,6 +37,7 @@ function mapPgUser(row: Record<string, unknown>): User {
     phone: String(row.phone),
     email: String(row.email),
     designation: String(row.designation),
+    studentBatch: row.student_batch == null ? null : Number(row.student_batch),
     username: String(row.username),
     passwordHash: String(row.password_hash),
     role: String(row.role),
@@ -123,6 +124,21 @@ export const authSessionRepo = {
     await getPgPool().query("DELETE FROM sessions WHERE user_id = $1", [userId]);
   },
 
+  async getActiveSessionUserIds(): Promise<number[]> {
+    if (getProvider() === "sqlite") {
+      const rows = await dbAll<{ user_id: number }>(
+        sql`SELECT DISTINCT user_id
+            FROM sessions
+            WHERE expires_at > ${new Date().toISOString()}`,
+      );
+      return rows.map((row) => Number(row.user_id));
+    }
+    const result = await getPgPool().query<{ user_id: number }>(
+      "SELECT DISTINCT user_id FROM sessions WHERE expires_at > NOW()",
+    );
+    return result.rows.map((row) => Number(row.user_id));
+  },
+
   async getUserById(id: number): Promise<User | undefined> {
     if (getProvider() === "sqlite") {
       return storage.getUserById(id);
@@ -174,6 +190,7 @@ export const authSessionRepo = {
     phone: string;
     email: string;
     designation: string;
+    studentBatch?: number | null;
     username: string;
     passwordHash: string;
     role: string;
@@ -186,8 +203,8 @@ export const authSessionRepo = {
     const createdAt = new Date().toISOString();
     const result = await getPgPool().query(
       `INSERT INTO users
-      (full_name, address, phone, email, designation, username, password_hash, role, approved, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      (full_name, address, phone, email, designation, student_batch, username, password_hash, role, approved, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
       [
         data.fullName,
@@ -195,6 +212,7 @@ export const authSessionRepo = {
         data.phone,
         data.email,
         data.designation,
+        data.studentBatch ?? null,
         data.username,
         data.passwordHash,
         data.role,
@@ -223,6 +241,7 @@ export const authSessionRepo = {
     if (data.phone !== undefined) set("phone", data.phone);
     if (data.email !== undefined) set("email", data.email);
     if (data.designation !== undefined) set("designation", data.designation);
+    if (data.studentBatch !== undefined) set("student_batch", data.studentBatch);
     if (data.username !== undefined) set("username", data.username);
     if (data.passwordHash !== undefined) set("password_hash", data.passwordHash);
     if (data.role !== undefined) set("role", data.role);

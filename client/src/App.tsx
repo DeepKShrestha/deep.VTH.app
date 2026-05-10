@@ -13,6 +13,12 @@ import AstFormEditorPage from "@/pages/ast-form-editor";
 import NewCaseHome from "@/pages/new-case-home";
 import HospitalFormEditorPage from "@/pages/hospital-form-editor";
 import HospitalSettingsPage from "@/pages/hospital-settings";
+import HospitalTreatmentSettingsPage from "@/pages/hospital-treatment-settings";
+import HospitalTreatmentMedicationsPage from "@/pages/hospital-treatment-medications";
+import HospitalTreatmentRoutesPage from "@/pages/hospital-treatment-routes";
+import HospitalTreatmentFrequenciesPage from "@/pages/hospital-treatment-frequencies";
+import HospitalTreatmentDoseUnitsPage from "@/pages/hospital-treatment-dose-units";
+import HospitalVeterinariansPage from "@/pages/hospital-veterinarians";
 import RegisterCase from "@/pages/register-case";
 import CaseList from "@/pages/case-list";
 import CaseView from "@/pages/case-view";
@@ -76,6 +82,24 @@ function ProtectedRoutes() {
           </Route>
           <Route path="/new-case/settings">
             {canManageAstAdmin ? <HospitalSettingsPage /> : <Redirect to="/new-case" />}
+          </Route>
+          <Route path="/new-case/settings/treatment">
+            {canManageAstAdmin ? <HospitalTreatmentSettingsPage /> : <Redirect to="/new-case" />}
+          </Route>
+          <Route path="/new-case/settings/treatment/medications">
+            {canManageAstAdmin ? <HospitalTreatmentMedicationsPage /> : <Redirect to="/new-case/settings/treatment" />}
+          </Route>
+          <Route path="/new-case/settings/treatment/routes">
+            {canManageAstAdmin ? <HospitalTreatmentRoutesPage /> : <Redirect to="/new-case/settings/treatment" />}
+          </Route>
+          <Route path="/new-case/settings/treatment/frequencies">
+            {canManageAstAdmin ? <HospitalTreatmentFrequenciesPage /> : <Redirect to="/new-case/settings/treatment" />}
+          </Route>
+          <Route path="/new-case/settings/treatment/dose-units">
+            {canManageAstAdmin ? <HospitalTreatmentDoseUnitsPage /> : <Redirect to="/new-case/settings/treatment" />}
+          </Route>
+          <Route path="/new-case/settings/veterinarians">
+            {canManageAstAdmin ? <HospitalVeterinariansPage /> : <Redirect to="/new-case/settings" />}
           </Route>
           <Route path="/new-case/register">
             {canRegisterHospitalCase ? (
