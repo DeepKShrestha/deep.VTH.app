@@ -200,6 +200,13 @@ export function registerAuthRoutes(app: Express) {
 
     await clearLoginFailures(user.id);
 
+    if (user.role === "admin" && user.totpEnforced && !user.totpEnabled) {
+      return res.status(403).json({
+        message:
+          "Two-factor authentication is required for this administrator account but is not set up yet. Ask a Super Admin to turn off the requirement temporarily, then sign in and enable 2FA in your Profile.",
+      });
+    }
+
     if (!user.approved) {
       return res
         .status(403)
@@ -330,6 +337,12 @@ export function registerAuthRoutes(app: Express) {
     const user = await authSessionRepo.getUserById(currentUser.id);
     if (!user?.totpEnabled) {
       return res.status(400).json({ message: "Two-factor authentication is not enabled" });
+    }
+    if (user.totpEnforced) {
+      return res.status(403).json({
+        message:
+          "Two-factor authentication is required for your account and cannot be turned off. Contact a Super Admin if you need an exception.",
+      });
     }
     const hasPassword = typeof password === "string" && password.length > 0;
     const hasCode = typeof code === "string" && code.trim().length > 0;

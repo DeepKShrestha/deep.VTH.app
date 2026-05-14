@@ -2290,7 +2290,9 @@ export function registerAdminRoutes(app: Express) {
           message: "Only Super Admin can assign or modify admin roles",
         });
       }
-      const user = await authSessionRepo.updateUser(id, { role });
+      const updatePayload =
+        role === "admin" ? { role } : { role, totpEnforced: false };
+      const user = await authSessionRepo.updateUser(id, updatePayload);
       if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
       await logAdminAction({
         actorUserId: currentUser.id,
@@ -2301,6 +2303,47 @@ export function registerAdminRoutes(app: Express) {
         details: { fromRole: targetUser.role, toRole: role },
       });
       res.json(toClientSafeUser(user));
+    },
+  );
+
+  app.patch(
+    "/api/admin/users/:id/totp-enforcement",
+    requireAuth,
+    requireRole("superadmin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const targetUser = await authSessionRepo.getUserById(id);
+      if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      if (isHiddenSuperadminUser(targetUser)) {
+        return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      }
+      if (targetUser.role !== "admin") {
+        return res.status(400).json({
+          message: "Mandatory two-factor can only be applied to Administrator accounts.",
+        });
+      }
+      const enforced = (req.body as { enforced?: unknown }).enforced;
+      if (typeof enforced !== "boolean") {
+        return res.status(400).json({ message: "Body must include enforced: boolean" });
+      }
+      if (enforced && !targetUser.totpEnabled) {
+        return res.status(400).json({
+          message:
+            "This administrator must enable two-factor authentication in their Profile before it can be required.",
+        });
+      }
+      const updated = await authSessionRepo.updateUser(id, { totpEnforced: enforced });
+      if (!updated) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.totp_enforcement",
+        targetType: "user",
+        targetId: updated.id,
+        details: { enforced },
+      });
+      res.json(toClientSafeUser(updated));
     },
   );
 

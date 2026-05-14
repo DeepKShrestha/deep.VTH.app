@@ -24,6 +24,8 @@ export const users = sqliteTable("users", {
   /** Base32 TOTP secret (RFC 6238); never expose to client JSON. */
   totpSecret: text("totp_secret"),
   totpEnabled: integer("totp_enabled", { mode: "boolean" }).notNull().default(false),
+  /** When true (admin role only), user cannot disable TOTP; login requires TOTP once enabled. Set by Super Admin. */
+  totpEnforced: integer("totp_enforced", { mode: "boolean" }).notNull().default(false),
   /** Stored filename only (e.g. `12.jpg`) under the profile-photos upload directory. */
   profilePhotoPath: text("profile_photo_path"),
 });
@@ -240,6 +242,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
   lockedUntil: true,
   totpSecret: true,
   totpEnabled: true,
+  totpEnforced: true,
   profilePhotoPath: true,
 }).extend({
   password: z

@@ -803,6 +803,15 @@ export default function ProfilePage() {
                         Adds a second step at login using a time-based code from an authenticator app.
                       </p>
                       {user?.totpEnabled ? (
+                        user?.totpEnforced ? (
+                          <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2.5">
+                            <p className="text-xs font-medium">Two-factor is enabled.</p>
+                            <p className="text-xs text-muted-foreground">
+                              Your administrator account is required to use two-factor authentication. It
+                              cannot be turned off here. Contact a Super Admin if you need an exception.
+                            </p>
+                          </div>
+                        ) : (
                         <div className="space-y-3">
                           <p className="text-xs font-medium text-emerald-700">Two-factor is enabled.</p>
                           <div className="space-y-1.5">
@@ -855,8 +864,15 @@ export default function ProfilePage() {
                             Disable 2FA
                           </Button>
                         </div>
+                        )
                       ) : (
                         <div className="space-y-3">
+                          {user?.totpEnforced && (
+                            <p className="text-xs font-medium text-amber-900 dark:text-amber-100/90 rounded-md border border-amber-200/80 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-3 py-2">
+                              A Super Admin requires two-factor authentication for your administrator
+                              account. Enable it below to sign in.
+                            </p>
+                          )}
                           {!totpDraftSecret ? (
                             <Button
                               type="button"

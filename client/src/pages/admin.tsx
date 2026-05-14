@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   ArrowDown,
   ArrowLeft,
@@ -419,14 +420,11 @@ export default function AdminPanel({
         .map((u) => Number(u.studentBatch)),
     ),
   ).sort((a, b) => a - b);
-  const selectedBatch =
-    studentBatchFilter === "all"
-      ? null
-      : Number.parseInt(studentBatchFilter, 10);
   const normalizedUsersFilter = usersFilter.trim().toLowerCase();
   const filteredApprovedUsers = approvedUsers.filter((u) => {
-    if (selectedBatch != null) {
-      if (u.designation !== "student" || u.studentBatch !== selectedBatch) return false;
+    if (studentBatchFilter !== "all") {
+      const batchNum = Number.parseInt(studentBatchFilter, 10);
+      if (u.designation !== "student" || u.studentBatch !== batchNum) return false;
     }
     if (!normalizedUsersFilter) return true;
     return (
@@ -495,23 +493,6 @@ export default function AdminPanel({
       toast({ title: "User removed" });
     },
   });
-  const deleteBatchMutation = useMutation({
-    mutationFn: async (batch: number) => {
-      const res = await apiRequest("DELETE", `/api/admin/users/batch/${batch}`);
-      return res.json();
-    },
-    onSuccess: (result: { message?: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
-      toast({ title: result?.message || "Batch deleted" });
-    },
-    onError: (err: unknown) => {
-      toast({
-        title: err instanceof Error ? err.message : "Failed to delete batch",
-        variant: "destructive",
-      });
-    },
-  });
-
   const bulkDeleteUsersMutation = useMutation({
     mutationFn: async (ids: number[]) => {
       const res = await apiRequest("POST", "/api/admin/users/bulk-delete", { ids });
@@ -548,6 +529,24 @@ export default function AdminPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       toast({ title: "Role updated" });
+    },
+  });
+
+  const totpEnforcementMutation = useMutation({
+    mutationFn: async ({ id, enforced }: { id: number; enforced: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/admin/users/${id}/totp-enforcement`, {
+        enforced,
+      });
+      return res.json() as Promise<AdminUser>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({ title: "Two-factor requirement updated" });
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof ApiError ? err.serverMessage || err.message : "Update failed";
+      toast({ title: msg, variant: "destructive" });
     },
   });
 
@@ -1145,25 +1144,32 @@ export default function AdminPanel({
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                type="button"
-                size="sm"
-                variant={usersMultiSelectMode ? "secondary" : "outline"}
-                className="h-9 text-xs shrink-0"
-                onClick={() => {
-                  if (usersMultiSelectMode) {
-                    setUsersMultiSelectMode(false);
-                    setSelectedUserIds(new Set());
-                  } else {
-                    setUsersMultiSelectMode(true);
-                  }
-                }}
-                data-testid="button-users-multi-select-mode"
-              >
-                {usersMultiSelectMode ? "Done selecting" : "Select multiple"}
-              </Button>
-              {usersMultiSelectMode && (
+              {!usersMultiSelectMode ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-9 text-xs shrink-0"
+                  onClick={() => setUsersMultiSelectMode(true)}
+                  data-testid="button-users-multi-select-mode"
+                >
+                  Select multiple
+                </Button>
+              ) : (
                 <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-9 text-xs shrink-0"
+                    onClick={() => {
+                      setUsersMultiSelectMode(false);
+                      setSelectedUserIds(new Set());
+                    }}
+                    data-testid="button-users-multi-select-cancel"
+                  >
+                    Cancel
+                  </Button>
                   <Button
                     type="button"
                     size="sm"
@@ -1175,18 +1181,7 @@ export default function AdminPanel({
                     }
                     data-testid="button-select-visible-users"
                   >
-                    Select all listed
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-9 text-xs"
-                    disabled={selectedUserIds.size === 0}
-                    onClick={() => setSelectedUserIds(new Set())}
-                    data-testid="button-clear-user-selection"
-                  >
-                    Clear selection
+                    Select all
                   </Button>
                   <Button
                     type="button"
@@ -1204,27 +1199,12 @@ export default function AdminPanel({
                     }}
                     data-testid="button-bulk-delete-users"
                   >
-                    Delete selected ({selectedUserIds.size})
+                    {selectedUserIds.size === 0
+                      ? "Delete"
+                      : `Delete (${selectedUserIds.size})`}
                   </Button>
                 </>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-9 text-xs text-red-600 border-red-200 hover:bg-red-50"
-                disabled={selectedBatch == null || deleteBatchMutation.isPending}
-                onClick={() => {
-                  if (selectedBatch == null) return;
-                  const ok = window.confirm(
-                    `Delete all student accounts in ${selectedBatch}th batch? This cannot be undone.`,
-                  );
-                  if (!ok) return;
-                  deleteBatchMutation.mutate(selectedBatch);
-                }}
-                data-testid="button-delete-student-batch"
-              >
-                Delete selected batch
-              </Button>
             </div>
             <Button
               size="sm"
@@ -1238,13 +1218,6 @@ export default function AdminPanel({
               Download CSV
             </Button>
           </div>
-          {usersMultiSelectMode && (
-            <p className="text-xs text-muted-foreground">
-              Tick the users to delete, or use &quot;Select all listed&quot; for everyone on this screen.
-              Search and batch filters still apply.
-            </p>
-          )}
-
           {filteredApprovedUsers.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
               {normalizedUsersFilter ? "No users match your search." : "No users found."}
@@ -1366,6 +1339,29 @@ export default function AdminPanel({
                           </Select>
                         ) : (
                           roleBadge(u.role)
+                        )}
+
+                        {isSuperAdmin && u.role === "admin" && (
+                          <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                            <Label
+                              htmlFor={`totp-enforce-${u.id}`}
+                              className="text-xs text-muted-foreground whitespace-nowrap cursor-pointer"
+                            >
+                              Require 2FA
+                            </Label>
+                            <Switch
+                              id={`totp-enforce-${u.id}`}
+                              checked={Boolean(u.totpEnforced)}
+                              disabled={
+                                totpEnforcementMutation.isPending ||
+                                (!u.totpEnforced && !u.totpEnabled)
+                              }
+                              onCheckedChange={(enforced) => {
+                                totpEnforcementMutation.mutate({ id: u.id, enforced });
+                              }}
+                              data-testid={`switch-totp-enforced-${u.id}`}
+                            />
+                          </div>
                         )}
 
                         {(currentUser?.role === "superadmin" ||

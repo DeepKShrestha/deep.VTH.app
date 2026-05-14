@@ -59,6 +59,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     lockedUntil: null,
     totpSecret: null,
     totpEnabled: false,
+    totpEnforced: false,
     profilePhotoPath: null,
     ...overrides,
   };

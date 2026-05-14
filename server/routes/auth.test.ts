@@ -118,6 +118,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     lockedUntil: null,
     totpSecret: null,
     totpEnabled: false,
+    totpEnforced: false,
     profilePhotoPath: null,
     ...overrides,
   };
@@ -193,6 +194,35 @@ describe("auth routes", () => {
     expect(payload.user.passwordHash).toBeUndefined();
     expect((payload.user as { totpSecret?: string }).totpSecret).toBeUndefined();
     expect(typeof payload.token).toBe("string");
+  });
+
+  it("login rejects admin when 2FA is required but not configured", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+    vi.spyOn(bcrypt, "compare").mockImplementation(async () => true);
+
+    const user = makeUser({
+      id: 9,
+      role: "admin",
+      totpEnforced: true,
+      totpEnabled: false,
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(user);
+
+    const req = {
+      body: {
+        usernameOrEmail: "admin",
+        password: "admin123",
+      },
+    } as Request;
+    const res = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    const body = (res.json as any).mock.calls[0][0];
+    expect(String(body.message)).toContain("Two-factor authentication is required");
   });
 
   it("login accepts email with extra spaces and different case", async () => {
