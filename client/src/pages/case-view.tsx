@@ -13,9 +13,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Printer, Trash2, Sparkles } from "lucide-react";
+import { ArrowLeft, Clock, FileDown, Printer, Trash2, Sparkles } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
-import { useAuth } from "@/lib/auth";
+import { useAuth, getAuthToken } from "@/lib/auth";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -271,6 +271,39 @@ export default function CaseView() {
     requestedScope ?? (isHospitalCase ? "hospital" : "ast");
   const scopedBackHref =
     effectiveScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
+
+  const handleDownloadPdf = async () => {
+    if (!caseData) return;
+    const token = getAuthToken();
+    if (!token) {
+      toast({ title: "Not signed in", variant: "destructive" });
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/cases/${caseData.id}/pdf?scope=${encodeURIComponent(effectiveScope)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        toast({
+          title: errText || "Could not generate PDF",
+          variant: "destructive",
+        });
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${caseData.caseNumber}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "PDF download failed", variant: "destructive" });
+    }
+  };
+
   const customFieldEntries = useMemo(() => {
     if (!caseData?.customFields) return [] as CustomEntry[];
     try {
@@ -330,6 +363,66 @@ export default function CaseView() {
     queryFn: async () => {
       const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
       const res = await apiRequest("GET", `/api/cases/${params.id}/attachments${scopeQuery}`);
+      return res.json();
+    },
+    enabled: Boolean(caseData?.id),
+  });
+
+  /**
+   * Edit history for this case. The backend reads `case_change_logs` filtered
+   * by case_id, which now includes 'updated:<changedFields>' rows because
+   * PATCH /api/cases/:id writes a log entry on every successful patch.
+   */
+  type CaseHistoryEntry = {
+    id: number;
+    action: string;
+    actorUserId: number;
+    actorRole: string;
+    actorName: string;
+    actorUsername: string;
+    createdAt: string;
+  };
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const { data: caseHistory = [], isFetching: historyFetching } = useQuery<
+    CaseHistoryEntry[]
+  >({
+    queryKey: ["/api/cases", params.id, "history", requestedScope ?? "all"],
+    queryFn: async () => {
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      const res = await apiRequest(
+        "GET",
+        `/api/cases/${params.id}/history${scopeQuery}`,
+      );
+      return res.json();
+    },
+    enabled: Boolean(caseData?.id) && historyOpen,
+  });
+
+  /**
+   * Patient history — other cases that look like they belong to the same
+   * owner (matched on phone OR name+address). The server already scope-filters
+   * to what the current user is allowed to view.
+   */
+  type PatientHistoryEntry = {
+    id: number;
+    caseNumber: string;
+    caseScope: "ast" | "hospital";
+    date: string;
+    ownerName: string;
+    ownerPhone: string;
+    species: string;
+    breed: string;
+    animalName: string | null;
+    createdAt: string;
+  };
+  const { data: patientHistory = [] } = useQuery<PatientHistoryEntry[]>({
+    queryKey: ["/api/cases", params.id, "patient-history", requestedScope ?? "all"],
+    queryFn: async () => {
+      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
+      const res = await apiRequest(
+        "GET",
+        `/api/cases/${params.id}/patient-history${scopeQuery}`,
+      );
       return res.json();
     },
     enabled: Boolean(caseData?.id),
@@ -439,6 +532,31 @@ export default function CaseView() {
               </Button>
             </Link>
 
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              data-testid="button-download-pdf"
+              onClick={() => void handleDownloadPdf()}
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              Download PDF
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 w-full sm:w-auto"
+              data-testid="button-history"
+              onClick={() => setHistoryOpen((v) => !v)}
+              aria-expanded={historyOpen}
+              aria-controls="case-history-panel"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              {historyOpen ? "Hide history" : "View history"}
+            </Button>
+
             {isAdmin && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -487,6 +605,66 @@ export default function CaseView() {
         </Card>
       )}
 
+      {/* Per-case edit history (collapsible) */}
+      {historyOpen && (
+        <Card id="case-history-panel">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="w-4 h-4" /> Edit history
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Records every create / update / delete on this case. Updates list
+              the fields that changed.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {historyFetching ? (
+              <p className="text-sm text-muted-foreground py-3 text-center">
+                Loading…
+              </p>
+            ) : caseHistory.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-3 text-center">
+                No history recorded for this case yet.
+              </p>
+            ) : (
+              <ol className="space-y-2 text-sm">
+                {caseHistory.map((entry) => {
+                  const isUpdate = entry.action.startsWith("updated");
+                  const changedFields = isUpdate
+                    ? entry.action.replace(/^updated:?/, "").split(",").filter(Boolean)
+                    : [];
+                  return (
+                    <li
+                      key={entry.id}
+                      className="flex flex-col gap-0.5 rounded border p-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {isUpdate ? "updated" : entry.action}
+                        </Badge>
+                        <span className="text-xs">
+                          {entry.actorName || `User ${entry.actorUserId}`}
+                          {entry.actorUsername ? ` (@${entry.actorUsername})` : ""}{" "}
+                          · {entry.actorRole}
+                        </span>
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      {changedFields.length > 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          Changed: {changedFields.join(", ")}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Owner Information */}
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Owner Information</CardTitle></CardHeader>
@@ -505,6 +683,41 @@ export default function CaseView() {
               <dd>{caseData.ownerAddress}</dd>
             </div>
           </dl>
+          {patientHistory.length > 0 && (
+            <details className="mt-4 rounded border bg-muted/30 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium select-none">
+                {patientHistory.length} other case
+                {patientHistory.length === 1 ? "" : "s"} for this owner
+              </summary>
+              <ul className="mt-2 space-y-1 text-xs">
+                {patientHistory.map((entry) => (
+                  <li key={entry.id} className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] uppercase"
+                    >
+                      {entry.caseScope}
+                    </Badge>
+                    <Link
+                      href={
+                        entry.caseScope === "hospital"
+                          ? `/new-case/cases/${entry.id}?scope=hospital`
+                          : `/ast-report/cases/${entry.id}?scope=ast`
+                      }
+                      className="font-mono text-primary hover:underline"
+                    >
+                      {entry.caseNumber}
+                    </Link>
+                    <span className="text-muted-foreground">
+                      {entry.date} · {entry.species}
+                      {entry.breed ? ` / ${entry.breed}` : ""}
+                      {entry.animalName ? ` · "${entry.animalName}"` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </CardContent>
       </Card>
 

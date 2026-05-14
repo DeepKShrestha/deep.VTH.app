@@ -6,13 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { sql } from "drizzle-orm";
 import { DB_PROVIDER } from "../db";
-import { dbAll } from "../db-query";
+import { dbAll, dbRun } from "../db-query";
 import { getSiteBackupDir } from "../services/backup-paths";
 import { getBackupSettings, updateBackupSettings } from "../services/backup-settings";
 import { isS3Configured } from "../services/backup-remote";
 import { listLocalBackupFiles, runSiteBackup } from "../services/backup-service";
 import { restoreSiteFromZip } from "../services/restore-service";
 import { requireAuth, requireRole } from "./context";
+import type { AuthenticatedRequest } from "./types";
 
 const restoreUpload = multer({
   storage: multer.diskStorage({
@@ -136,18 +137,63 @@ export function registerBackupAdminRoutes(app: Express) {
     restoreUpload.single("archive"),
     async (req, res) => {
       const file = req.file;
+      const currentUser = (req as AuthenticatedRequest).currentUser;
       if (!file?.path) {
         return res.status(400).json({ message: "Zip archive is required (field name: archive)" });
       }
       const confirmPhrase = String(req.body?.confirmPhrase ?? "").trim();
+      const filename = file.originalname || "backup.zip";
+      const sizeBytes = file.size ?? 0;
       try {
         const buf = await fsp.readFile(file.path);
         await fsp.unlink(file.path).catch(() => {});
         const result = await restoreSiteFromZip({ zipBuffer: buf, confirmPhrase });
+        // Audit log: site restore is the single most destructive admin op
+        // (wipes & replaces every table). Always record who did it, when,
+        // and what archive was used — even if the request fails.
+        await dbRun(
+          sql`INSERT INTO admin_action_logs
+              (actor_user_id, actor_role, action_type, target_type, target_id, details_json, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"site_restore"},
+                ${"site"},
+                ${null},
+                ${JSON.stringify({
+                  filename,
+                  sizeBytes,
+                  status: "success",
+                  result,
+                })},
+                ${new Date().toISOString()}
+              )`,
+        ).catch(() => {
+          // Don't fail the response if logging fails — the destructive
+          // operation already succeeded.
+        });
         return res.json(result);
       } catch (e: unknown) {
         await fsp.unlink(file.path).catch(() => {});
         const msg = e instanceof Error ? e.message : String(e);
+        await dbRun(
+          sql`INSERT INTO admin_action_logs
+              (actor_user_id, actor_role, action_type, target_type, target_id, details_json, created_at)
+              VALUES (
+                ${currentUser.id},
+                ${currentUser.role},
+                ${"site_restore"},
+                ${"site"},
+                ${null},
+                ${JSON.stringify({
+                  filename,
+                  sizeBytes,
+                  status: "failure",
+                  error: msg,
+                })},
+                ${new Date().toISOString()}
+              )`,
+        ).catch(() => {});
         return res.status(400).json({ message: msg });
       }
     },

@@ -8,25 +8,15 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { sql } from "drizzle-orm";
 import crypto from "crypto";
-import { Pool } from "pg";
 import { dbGet } from "./db-query";
+import { getPgPool, closePgPool } from "./pg-pool";
 import { scheduleTempCaseAttachmentCleanup } from "./temp-attachment-cleanup";
 import { scheduleSiteBackupJobs } from "./backup-scheduler";
+import { assertProductionAttachmentSigningConfigured } from "./services/attachment-signing";
 
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
-let pgPool: Pool | null = null;
-function getPgPool(): Pool {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error("DATABASE_URL is required when DB_PROVIDER=postgres");
-  }
-  if (!pgPool) {
-    pgPool = new Pool({ connectionString: url });
-  }
-  return pgPool;
-}
 
 declare module "http" {
   interface IncomingMessage {
@@ -74,6 +64,38 @@ if (process.env.NODE_ENV === "production") {
     }),
   );
 }
+/**
+ * Stricter limiter on credential-touching endpoints. Mounted BEFORE the
+ * blanket /api limiter so the stricter window wins. The audit flagged the
+ * previous single 1000 req / 15 min bucket as too permissive against
+ * password-guessing — a single attacker IP could burn ~66/minute against
+ * /api/auth/login without tripping anything.
+ *
+ * Bucketing is per-IP. We use `skipSuccessfulRequests: true` on login/reset
+ * so a legitimate user typing the wrong password once isn't locked out
+ * after the first success.
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: {
+    message:
+      "Too many credential attempts. Please wait 15 minutes and try again.",
+  },
+});
+
+app.use(
+  [
+    "/api/auth/login",
+    "/api/auth/signup",
+    "/api/auth/password-reset-requests",
+  ],
+  authLimiter,
+);
+
 app.use(
   "/api",
   rateLimit({
@@ -169,6 +191,17 @@ app.get("/api/ready", async (_req, res) => {
 });
 
 (async () => {
+  process.on("unhandledRejection", (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    logJson({
+      type: "unhandled_rejection",
+      message,
+      stack,
+      hint: "A Promise was rejected without .catch(); the process may exit depending on Node settings. Check server logs above.",
+    });
+  });
+
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEFAULT_ADMIN === "true") {
     logJson({
       type: "startup_warning",
@@ -176,6 +209,16 @@ app.get("/api/ready", async (_req, res) => {
         "ALLOW_DEFAULT_ADMIN=true in production. This should be disabled after initial bootstrap.",
     });
   }
+
+  if (process.env.NODE_ENV === "production" && process.env.LOG_RESPONSE_BODIES === "true") {
+    logJson({
+      type: "startup_warning",
+      message:
+        "LOG_RESPONSE_BODIES=true in production may log sensitive API payloads (PHI). Disable unless strictly required.",
+    });
+  }
+
+  assertProductionAttachmentSigningConfigured();
 
   await registerRoutes(httpServer, app);
 
@@ -246,13 +289,25 @@ app.get("/api/ready", async (_req, res) => {
 
   const shutdown = (signal: string) => {
     logJson({ type: "shutdown_signal", signal });
-    server.close((err?: Error) => {
+    server.close(async (err?: Error) => {
       if (err) {
         logJson({
           type: "shutdown_error",
           signal,
           message: err.message,
         });
+      }
+      try {
+        await closePgPool();
+      } catch (poolErr) {
+        logJson({
+          type: "shutdown_pg_pool_error",
+          signal,
+          message:
+            poolErr instanceof Error ? poolErr.message : String(poolErr),
+        });
+      }
+      if (err) {
         process.exit(1);
       }
       logJson({ type: "shutdown_complete", signal });

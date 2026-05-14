@@ -12,8 +12,10 @@ import {
 import {
   getHospitalToggleDefaults,
   setHospitalToggleDefaults,
+  hydrateToggleDefaultsFromServer,
   type HospitalToggleDefaults,
 } from "@/lib/module-toggle-defaults";
+import { getAuthToken } from "@/lib/auth";
 
 export default function HospitalSettingsPage() {
   const { canManageAstAdmin } = useAuth();
@@ -24,7 +26,44 @@ export default function HospitalSettingsPage() {
   );
 
   useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/users/me/preferences", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const p = (await res.json()) as {
+          astToggleDefaults: Record<string, unknown> | null;
+          hospitalToggleDefaults: Record<string, unknown> | null;
+        };
+        hydrateToggleDefaultsFromServer({
+          astToggleDefaults: p.astToggleDefaults,
+          hospitalToggleDefaults: p.hospitalToggleDefaults,
+        });
+        setToggleDefaults(getHospitalToggleDefaults());
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     setHospitalToggleDefaults(toggleDefaults);
+    const token = getAuthToken();
+    if (!token) return;
+    const tmr = window.setTimeout(() => {
+      void fetch("/api/users/me/preferences", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ hospitalToggleDefaults: toggleDefaults }),
+      }).catch(() => {});
+    }, 700);
+    return () => window.clearTimeout(tmr);
   }, [toggleDefaults]);
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -184,7 +223,7 @@ export default function HospitalSettingsPage() {
                   Manage medications, administration routes, frequency options, and duration/day options.
                 </p>
                 <Link href="/new-case/settings/treatment" className="mt-auto">
-                  <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white">
+                  <Button className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white">
                     Open Treatment Settings
                   </Button>
                 </Link>

@@ -1,6 +1,6 @@
 import type { Case, InsertCase } from "@shared/schema";
-import { sql } from "drizzle-orm";
-import { dbAll, dbGet, dbRun } from "./db-query";
+import { sql, type SQL } from "drizzle-orm";
+import { dbAll, dbGet, dbInsertReturningId, dbRun } from "./db-query";
 import NepaliDateImport from "nepali-date-converter";
 
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
@@ -86,16 +86,64 @@ const CASE_SELECT = sql`SELECT id, case_number, bill_number, daily_number, month
 
 type CaseScope = "ast" | "hospital";
 
+/** When `role` is `student`, queries are restricted to rows that user registered. */
+export type CaseViewerAccess = { role: string; userId: number };
+
 function getScopePrefix(scope: CaseScope): string {
   return scope === "hospital" ? "CASE" : "AST";
 }
 
+function viewerRowSql(viewer?: CaseViewerAccess): SQL {
+  if (!viewer || viewer.role !== "student") return sql`1=1`;
+  return sql`registered_by = ${viewer.userId}`;
+}
+
+export type CaseListFilters = {
+  q?: string;
+  species?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
+function buildCaseListWhere(scope: CaseScope | undefined, filters: CaseListFilters): SQL {
+  const parts: SQL[] = [];
+  if (scope) {
+    parts.push(sql`case_number LIKE ${`${getScopePrefix(scope)}-%`}`);
+  }
+  const q = filters.q?.trim();
+  if (q) {
+    const needle = `%${q.replace(/%/g, "").replace(/_/g, "").slice(0, 120)}%`;
+    const digits = q.replace(/\D/g, "").slice(0, 20);
+    if (digits.length > 0) {
+      parts.push(
+        sql`(LOWER(case_number) LIKE LOWER(${needle}) OR LOWER(owner_name) LIKE LOWER(${needle}) OR LOWER(species) LIKE LOWER(${needle}) OR LOWER(breed) LIKE LOWER(${needle}) OR LOWER(COALESCE(bill_number,'')) LIKE LOWER(${needle}) OR owner_phone LIKE ${`%${digits}%`})`,
+      );
+    } else {
+      parts.push(
+        sql`(LOWER(case_number) LIKE LOWER(${needle}) OR LOWER(owner_name) LIKE LOWER(${needle}) OR LOWER(species) LIKE LOWER(${needle}) OR LOWER(breed) LIKE LOWER(${needle}) OR LOWER(COALESCE(bill_number,'')) LIKE LOWER(${needle}))`,
+      );
+    }
+  }
+  const sp = filters.species?.trim();
+  if (sp) {
+    parts.push(sql`species = ${sp}`);
+  }
+  if (filters.dateFrom?.trim()) {
+    parts.push(sql`date >= ${filters.dateFrom.trim()}`);
+  }
+  if (filters.dateTo?.trim()) {
+    parts.push(sql`date <= ${filters.dateTo.trim()}`);
+  }
+  return parts.length ? sql.join(parts, sql` AND `) : sql`1=1`;
+}
+
 export const caseRepo = {
-  async getCases(scope?: CaseScope): Promise<Case[]> {
+  async getCases(scope?: CaseScope, viewer?: CaseViewerAccess): Promise<Case[]> {
+    const v = viewerRowSql(viewer);
     const rows = await dbAll<CaseRow>(
       scope
-        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} ORDER BY created_at DESC`
-        : sql`${CASE_SELECT} ORDER BY created_at DESC`,
+        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} AND ${v} ORDER BY created_at DESC`
+        : sql`${CASE_SELECT} WHERE ${v} ORDER BY created_at DESC`,
     );
     return rows.map(toCase);
   },
@@ -104,16 +152,18 @@ export const caseRepo = {
     limit: number,
     offset: number,
     scope?: CaseScope,
+    viewer?: CaseViewerAccess,
   ): Promise<{ items: Case[]; total: number }> {
+    const v = viewerRowSql(viewer);
     const rows = await dbAll<CaseRow>(
       scope
-        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`
-        : sql`${CASE_SELECT} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+        ? sql`${CASE_SELECT} WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} AND ${v} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`
+        : sql`${CASE_SELECT} WHERE ${v} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
     );
     const totalRow = await dbGet<{ count: number | string }>(
       scope
-        ? sql`SELECT COUNT(*) as count FROM cases WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`}`
-        : sql`SELECT COUNT(*) as count FROM cases`,
+        ? sql`SELECT COUNT(*) as count FROM cases WHERE case_number LIKE ${`${getScopePrefix(scope)}-%`} AND ${v}`
+        : sql`SELECT COUNT(*) as count FROM cases WHERE ${v}`,
     );
     return {
       items: rows.map(toCase),
@@ -121,11 +171,33 @@ export const caseRepo = {
     };
   },
 
-  async getCase(id: number, scope?: CaseScope): Promise<Case | undefined> {
+  async getCasesFilteredPage(
+    limit: number,
+    offset: number,
+    scope: CaseScope | undefined,
+    filters: CaseListFilters,
+    viewer?: CaseViewerAccess,
+  ): Promise<{ items: Case[]; total: number }> {
+    const baseWhere = buildCaseListWhere(scope, filters);
+    const where = sql.join([baseWhere, viewerRowSql(viewer)], sql` AND `);
+    const rows = await dbAll<CaseRow>(
+      sql`${CASE_SELECT} WHERE ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+    );
+    const totalRow = await dbGet<{ count: number | string }>(
+      sql`SELECT COUNT(*) as count FROM cases WHERE ${where}`,
+    );
+    return {
+      items: rows.map(toCase),
+      total: Number(totalRow?.count ?? 0),
+    };
+  },
+
+  async getCase(id: number, scope?: CaseScope, viewer?: CaseViewerAccess): Promise<Case | undefined> {
+    const v = viewerRowSql(viewer);
     const row = await dbGet<CaseRow>(
       scope
-        ? sql`${CASE_SELECT} WHERE id = ${id} AND case_number LIKE ${`${getScopePrefix(scope)}-%`}`
-        : sql`${CASE_SELECT} WHERE id = ${id}`,
+        ? sql`${CASE_SELECT} WHERE id = ${id} AND case_number LIKE ${`${getScopePrefix(scope)}-%`} AND ${v}`
+        : sql`${CASE_SELECT} WHERE id = ${id} AND ${v}`,
     );
     return row ? toCase(row) : undefined;
   },
@@ -134,7 +206,7 @@ export const caseRepo = {
     data: InsertCase &
       Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>,
   ): Promise<Case> {
-    await dbRun(
+    const newId = await dbInsertReturningId(
       sql`INSERT INTO cases
           (case_number, bill_number, daily_number, monthly_number, yearly_number, date, date_ad, owner_name, owner_address, owner_phone, species, breed, animal_name, age, sex, sample_type, sample_date, sample_date_ad, culture_result, ast_results, remarks, registered_by, created_at, last_updated_by, last_updated_by_name, updated_at, custom_fields, treatment_details, veterinarian_id, veterinarian_name, veterinarian_nvc, veterinarian_department)
           VALUES (
@@ -172,7 +244,7 @@ export const caseRepo = {
             ${data.veterinarianDepartment ?? null}
           )`,
     );
-    const created = await dbGet<CaseRow>(sql`${CASE_SELECT} ORDER BY id DESC LIMIT 1`);
+    const created = await dbGet<CaseRow>(sql`${CASE_SELECT} WHERE id = ${newId}`);
     if (!created) throw new Error("Failed to create case");
     return toCase(created);
   },
@@ -182,8 +254,9 @@ export const caseRepo = {
     patch: Partial<InsertCase> &
       Partial<Pick<Case, "lastUpdatedBy" | "lastUpdatedByName" | "updatedAt">>,
     scope?: CaseScope,
+    viewer?: CaseViewerAccess,
   ): Promise<Case | undefined> {
-    const existing = await this.getCase(id, scope);
+    const existing = await this.getCase(id, scope, viewer);
     if (!existing) return undefined;
     const next = { ...existing, ...patch };
     await dbRun(
@@ -221,7 +294,7 @@ export const caseRepo = {
               veterinarian_department = ${next.veterinarianDepartment ?? null}
           WHERE id = ${id}`,
     );
-    return this.getCase(id, scope);
+    return this.getCase(id, scope, viewer);
   },
 
   async deleteCase(id: number, scope?: CaseScope): Promise<void> {
@@ -245,10 +318,12 @@ export const caseRepo = {
     scope: CaseScope,
     dateFrom?: string,
     dateTo?: string,
+    viewer?: CaseViewerAccess,
   ): Promise<Case[]> {
     const scopePrefix = `${getScopePrefix(scope)}-`;
+    const v = viewerRowSql(viewer);
     let rows = await dbAll<CaseRow>(
-      sql`${CASE_SELECT} WHERE case_number LIKE ${`${scopePrefix}%`} ORDER BY created_at DESC`,
+      sql`${CASE_SELECT} WHERE case_number LIKE ${`${scopePrefix}%`} AND ${v} ORDER BY created_at DESC`,
     );
     if (dateFrom) rows = rows.filter((c) => c.date >= dateFrom);
     if (dateTo) rows = rows.filter((c) => c.date <= dateTo);

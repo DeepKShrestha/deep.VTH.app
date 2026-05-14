@@ -1,25 +1,41 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Breakpoint } from "@shared/schema";
+import {
+  parseAstResultsCsv,
+  PENDING_AST_CSV_IMPORT_KEY,
+  type PendingAstCsvImportPayload,
+} from "@/lib/ast-csv-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Plus, Pencil, Trash2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Plus, Pencil, Trash2, RotateCcw, Upload } from "lucide-react";
 
 export default function BreakpointsPage() {
   const { toast } = useToast();
-  const { data: breakpointsData, isLoading } = useQuery<Breakpoint[]>({ queryKey: ["/api/breakpoints"] });
+  const [, setLocation] = useLocation();
+  const { data: breakpointsData } = useQuery<Breakpoint[]>({ queryKey: ["/api/breakpoints"] });
+
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [csvImportText, setCsvImportText] = useState("");
+  const [csvImportMode, setCsvImportMode] = useState<"replace" | "append">("replace");
+  const [csvImportReport, setCsvImportReport] = useState<{
+    parsed: number;
+    matched: number;
+    unmatched: string[];
+  } | null>(null);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editingBp, setEditingBp] = useState<Breakpoint | null>(null);
@@ -104,6 +120,46 @@ export default function BreakpointsPage() {
     presetMutation.mutate({ id: bp.id, isPreset: !bp.isPreset });
   };
 
+  const stageCsvForRegisterCase = () => {
+    const bps = breakpointsData ?? [];
+    const result = parseAstResultsCsv(csvImportText, bps);
+    setCsvImportReport({
+      parsed: result.parsed,
+      matched: result.matched,
+      unmatched: result.unmatched,
+    });
+    if (result.rows.length === 0) {
+      toast({
+        title: "No AST rows to import",
+        description: "Add a header row and at least one data row with antibiotic or symbol.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const payload: PendingAstCsvImportPayload = {
+      version: 1,
+      mode: csvImportMode,
+      rows: result.rows,
+      parsed: result.parsed,
+      matched: result.matched,
+      unmatched: result.unmatched,
+    };
+    try {
+      sessionStorage.setItem(PENDING_AST_CSV_IMPORT_KEY, JSON.stringify(payload));
+    } catch {
+      toast({
+        title: "Could not save import",
+        description: "Your browser may block storage for this site.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setCsvImportOpen(false);
+    setCsvImportText("");
+    setCsvImportReport(null);
+    setLocation("/register");
+  };
+
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
@@ -116,6 +172,20 @@ export default function BreakpointsPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => {
+              setCsvImportReport(null);
+              setCsvImportOpen(true);
+            }}
+            data-testid="button-import-ast-csv"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            Import from CSV
+          </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5"><RotateCcw className="w-3.5 h-3.5" />Reset Defaults</Button>
@@ -264,6 +334,98 @@ export default function BreakpointsPage() {
               {saveMutation.isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={csvImportOpen}
+        onOpenChange={(open) => {
+          setCsvImportOpen(open);
+          if (!open) {
+            setCsvImportReport(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Import AST results from CSV</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground text-xs">
+              Paste lab export data here. Rows are matched to this breakpoint list, then you can open{" "}
+              <strong>Register case</strong> to review and save. Header row required. Columns (any order):{" "}
+              <code className="rounded bg-muted px-1 py-0.5">antibiotic</code> or{" "}
+              <code className="rounded bg-muted px-1 py-0.5">drug</code>,{" "}
+              <code className="rounded bg-muted px-1 py-0.5">symbol</code> or{" "}
+              <code className="rounded bg-muted px-1 py-0.5">code</code>,{" "}
+              <code className="rounded bg-muted px-1 py-0.5">disc_content</code>,{" "}
+              <code className="rounded bg-muted px-1 py-0.5">zone_mm</code>.
+            </p>
+            <Textarea
+              value={csvImportText}
+              onChange={(e) => setCsvImportText(e.target.value)}
+              rows={10}
+              placeholder={`antibiotic,symbol,disc_content,zone_mm\nAmikacin,AK,30 µg,22\nCiprofloxacin,CIP,5 µg,28`}
+              className="font-mono text-xs"
+              data-testid="textarea-ast-csv"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium">When opening Register case:</span>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  checked={csvImportMode === "replace"}
+                  onChange={() => setCsvImportMode("replace")}
+                />
+                Replace AST rows on the form
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  checked={csvImportMode === "append"}
+                  onChange={() => setCsvImportMode("append")}
+                />
+                Append to existing AST rows
+              </label>
+            </div>
+            {csvImportReport && (
+              <div className="rounded border bg-muted/30 p-2 text-xs">
+                <div>
+                  Parsed {csvImportReport.parsed} row
+                  {csvImportReport.parsed === 1 ? "" : "s"} — matched{" "}
+                  {csvImportReport.matched} against the breakpoint catalog.
+                </div>
+                {csvImportReport.unmatched.length > 0 && (
+                  <div className="mt-1 text-amber-700 dark:text-amber-300">
+                    Unmatched (imported as free-text rows): {csvImportReport.unmatched.join(", ")}
+                  </div>
+                )}
+              </div>
+            )}
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCsvImportText("");
+                  setCsvImportReport(null);
+                  setCsvImportOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={stageCsvForRegisterCase}
+                disabled={!csvImportText.trim()}
+                data-testid="button-ast-csv-import-go"
+              >
+                Import and open Register case
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

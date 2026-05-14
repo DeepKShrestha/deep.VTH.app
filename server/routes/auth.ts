@@ -1,5 +1,9 @@
-import type { Express } from "express";
-import { insertUserSchema } from "@shared/schema";
+import type { Express, NextFunction, Request, Response } from "express";
+import fs from "node:fs";
+import path from "node:path";
+import multer from "multer";
+import { insertUserSchema, validateStrongPassword } from "@shared/schema";
+import type { User } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import {
   generateToken,
@@ -12,10 +16,91 @@ import {
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { authSessionRepo } from "../auth-session-repo";
+import {
+  isUserLocked,
+  clearLoginFailures,
+  recordLoginFailure,
+  createPendingTwoFactorToken,
+  consumePendingTwoFactorToken,
+  verifyTotpToken,
+  generateTotpSecret,
+  buildTotpAuthUrl,
+  saveTotpSecret,
+  LOCKOUT_MAX_ATTEMPTS,
+} from "../login-security";
+import { getUserPreferences, upsertUserPreferences } from "../user-preferences-store";
+import { verifyProfilePhotoSignature } from "../services/attachment-signing";
+import {
+  replaceProfilePhotoForUser,
+  resolveProfilePhotoAbsolutePath,
+  removeProfilePhotoFilesForUser,
+  profilePhotoMimeError,
+} from "../services/profile-photo-store";
+import { toClientSafeUser } from "../user-public";
+
+function publicAuthUser(user: User) {
+  return toClientSafeUser(user);
+}
+
+const signupPhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const err = profilePhotoMimeError(file.mimetype);
+    if (err) {
+      cb(new Error(err));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const profilePhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const err = profilePhotoMimeError(file.mimetype);
+    if (err) {
+      cb(new Error(err));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+function signupMultipartMaybe(req: Request, res: Response, next: NextFunction) {
+  const ct = String(req.headers?.["content-type"] ?? "").toLowerCase();
+  if (!ct.includes("multipart/form-data")) {
+    return next();
+  }
+  signupPhotoUpload.single("profilePhoto")(req, res, (err: unknown) => {
+    if (err) {
+      const message =
+        err instanceof Error ? err.message : "Invalid profile photo upload.";
+      res.status(400).json({ message });
+      return;
+    }
+    next();
+  });
+}
+
+/**
+ * bcrypt cost factor. `bcryptjs` is JS-only and notably slower than native
+ * bcrypt, so we keep 10 for the hot path (~60ms on a modest server) while
+ * still being well above the per-2016 NIST baseline.
+ */
+const BCRYPT_COST = 10;
 
 export function registerAuthRoutes(app: Express) {
-  app.post("/api/auth/signup", async (req, res) => {
-    const parsed = insertUserSchema.safeParse(req.body);
+  app.post("/api/auth/signup", signupMultipartMaybe, async (req, res) => {
+    const rawBody = { ...(req.body as Record<string, unknown>) };
+    if (typeof rawBody.studentBatch === "string" && rawBody.studentBatch.trim() !== "") {
+      rawBody.studentBatch = Number(rawBody.studentBatch);
+    } else if (rawBody.studentBatch === "") {
+      delete rawBody.studentBatch;
+    }
+
+    const parsed = insertUserSchema.safeParse(rawBody);
     if (!parsed.success) {
       return res
         .status(400)
@@ -26,6 +111,11 @@ export function registerAuthRoutes(app: Express) {
     const studentBatch =
       userData.designation === "student" ? userData.studentBatch ?? null : null;
 
+    const passwordError = validateStrongPassword(password);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
+
     if (await authSessionRepo.getUserByUsername(userData.username)) {
       return res.status(409).json({ message: "Username already taken" });
     }
@@ -33,7 +123,7 @@ export function registerAuthRoutes(app: Express) {
       return res.status(409).json({ message: "Email already registered" });
     }
 
-    const passwordHash = bcrypt.hashSync(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
     let role: string;
     if (userData.designation === "student") {
       role = "student";
@@ -43,7 +133,8 @@ export function registerAuthRoutes(app: Express) {
       role = "staff";
     }
 
-    const user = await authSessionRepo.createUser({
+    const file = (req as Request & { file?: { buffer: Buffer; mimetype: string } }).file;
+    let user = await authSessionRepo.createUser({
       ...userData,
       studentBatch,
       passwordHash,
@@ -51,10 +142,23 @@ export function registerAuthRoutes(app: Express) {
       approved: false,
     });
 
-    const { passwordHash: _pwd, ...safeUser } = user;
+    if (file?.buffer) {
+      try {
+        const filename = await replaceProfilePhotoForUser(
+          user.id,
+          file.buffer,
+          file.mimetype,
+        );
+        user =
+          (await authSessionRepo.updateUser(user.id, { profilePhotoPath: filename })) ?? user;
+      } catch {
+        // Account exists; optional identification photo is best-effort.
+      }
+    }
+
     res.status(201).json({
       message: "Account created. Waiting for admin approval.",
-      user: safeUser,
+      user: publicAuthUser(user),
     });
   });
 
@@ -73,17 +177,28 @@ export function registerAuthRoutes(app: Express) {
     let user = await authSessionRepo.getUserByUsername(identifier);
     if (!user) user = await authSessionRepo.getUserByEmail(identifier);
     if (!user) {
-      const normalized = identifier.toLowerCase();
-      user = (await authSessionRepo.getUsers()).find(
-        (u) =>
-          u.username.toLowerCase() === normalized || u.email.toLowerCase() === normalized,
-      );
-    }
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
-
-    if (!bcrypt.compareSync(password, user.passwordHash)) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
+
+    if (isUserLocked(user.lockedUntil)) {
+      return res.status(403).json({
+        message:
+          "This account is temporarily locked after too many failed sign-in attempts. Please try again later.",
+      });
+    }
+
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+      const fails = await recordLoginFailure(user.id);
+      if (fails >= LOCKOUT_MAX_ATTEMPTS) {
+        return res.status(403).json({
+          message:
+            "Too many failed attempts. This account is now locked for 15 minutes. You can retry after that window or contact an administrator.",
+        });
+      }
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    await clearLoginFailures(user.id);
 
     if (!user.approved) {
       return res
@@ -91,20 +206,183 @@ export function registerAuthRoutes(app: Express) {
         .json({ message: "Your account is pending admin approval" });
     }
 
+    if (
+      (user.role === "admin" || user.role === "superadmin") &&
+      user.totpEnabled
+    ) {
+      const pendingToken = await createPendingTwoFactorToken(user.id);
+      return res.json({
+        requiresTwoFactor: true,
+        pendingToken,
+      });
+    }
+
     const token = generateToken();
     await sessions.set(token, user.id);
 
-    const { passwordHash: _pwd, ...safeUser } = user;
+    const base = publicAuthUser(user);
     res.json({
       token,
       user: {
-        ...safeUser,
+        ...base,
         dashboardVisible: await isDashboardVisibleForRole(user.role),
         astDashboardVisible: await isDashboardVisibleForRole(user.role),
         vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
+  });
+
+  app.post("/api/auth/login/2fa", async (req, res) => {
+    const { pendingToken, code } = req.body as {
+      pendingToken?: string;
+      code?: string;
+    };
+    if (!pendingToken?.trim() || !code?.trim()) {
+      return res.status(400).json({
+        message: "Verification code and pending session are required",
+      });
+    }
+    const userId = await consumePendingTwoFactorToken(pendingToken.trim());
+    if (!userId) {
+      return res.status(401).json({
+        message: "Invalid or expired two-factor session. Please sign in again.",
+      });
+    }
+    const user = await authSessionRepo.getUserById(userId);
+    if (!user?.totpEnabled || !user.totpSecret) {
+      return res.status(401).json({
+        message: "Two-factor authentication is not active for this account.",
+      });
+    }
+    if (!verifyTotpToken(user.totpSecret, code)) {
+      await recordLoginFailure(userId);
+      return res.status(401).json({ message: "Invalid verification code" });
+    }
+    await clearLoginFailures(userId);
+    if (!user.approved) {
+      return res
+        .status(403)
+        .json({ message: "Your account is pending admin approval" });
+    }
+    const token = generateToken();
+    await sessions.set(token, user.id);
+    const base = publicAuthUser(user);
+    res.json({
+      token,
+      user: {
+        ...base,
+        dashboardVisible: await isDashboardVisibleForRole(user.role),
+        astDashboardVisible: await isDashboardVisibleForRole(user.role),
+        vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
+        capabilities: resolveCapabilitiesForRole(user.role),
+      },
+    });
+  });
+
+  app.get("/api/auth/2fa/setup", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const user = await authSessionRepo.getUserById(currentUser.id);
+    if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+    if (user.totpEnabled) {
+      return res.status(400).json({
+        message:
+          "Two-factor authentication is already enabled. Disable it before generating a new secret.",
+      });
+    }
+    const secret = generateTotpSecret();
+    const otpauthUrl = buildTotpAuthUrl({
+      secret,
+      issuer: "VTH",
+      accountName: user.username,
+    });
+    return res.json({ secret, otpauthUrl });
+  });
+
+  app.post("/api/auth/2fa/enable", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const { secret, code } = req.body as { secret?: string; code?: string };
+    if (!secret?.trim() || !code?.trim()) {
+      return res.status(400).json({ message: "Secret and verification code are required" });
+    }
+    if (!verifyTotpToken(secret.trim(), code.trim())) {
+      return res.status(400).json({
+        message: "The code does not match this authenticator secret",
+      });
+    }
+    await saveTotpSecret(currentUser.id, secret.trim(), true);
+    const user = await authSessionRepo.getUserById(currentUser.id);
+    return res.json({ success: true, user: user ? publicAuthUser(user) : undefined });
+  });
+
+  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const { password, code } = req.body as { password?: string; code?: string };
+    const user = await authSessionRepo.getUserById(currentUser.id);
+    if (!user?.totpEnabled) {
+      return res.status(400).json({ message: "Two-factor authentication is not enabled" });
+    }
+    const hasPassword = typeof password === "string" && password.length > 0;
+    const hasCode = typeof code === "string" && code.trim().length > 0;
+    if (hasPassword) {
+      if (!(await bcrypt.compare(password, user.passwordHash))) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+    } else if (hasCode && user.totpSecret && verifyTotpToken(user.totpSecret, code)) {
+      // verified via TOTP
+    } else {
+      return res.status(400).json({
+        message:
+          "Provide your current account password or a valid authenticator code to disable 2FA",
+      });
+    }
+    await saveTotpSecret(currentUser.id, null, false);
+    const next = await authSessionRepo.getUserById(currentUser.id);
+    return res.json({ success: true, user: next ? publicAuthUser(next) : undefined });
+  });
+
+  app.get("/api/users/me/preferences", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const prefs = await getUserPreferences(currentUser.id);
+    return res.json(prefs);
+  });
+
+  app.put("/api/users/me/preferences", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const body = req.body as Record<string, unknown>;
+    const patch: Parameters<typeof upsertUserPreferences>[1] = {};
+    if ("astToggleDefaults" in body) {
+      const v = body.astToggleDefaults;
+      patch.astToggleDefaults =
+        v == null
+          ? null
+          : typeof v === "object" && !Array.isArray(v)
+            ? (v as Record<string, unknown>)
+            : null;
+    }
+    if ("hospitalToggleDefaults" in body) {
+      const v = body.hospitalToggleDefaults;
+      patch.hospitalToggleDefaults =
+        v == null
+          ? null
+          : typeof v === "object" && !Array.isArray(v)
+            ? (v as Record<string, unknown>)
+            : null;
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ message: MESSAGES.NO_CHANGES_PROVIDED });
+    }
+    const prefs = await upsertUserPreferences(currentUser.id, patch);
+    return res.json(prefs);
   });
 
   app.post("/api/auth/logout", async (req, res) => {
@@ -131,9 +409,9 @@ export function registerAuthRoutes(app: Express) {
     if (!userId) return res.status(401).json({ message: "Session expired" });
     const user = await authSessionRepo.getUserById(userId);
     if (!user) return res.status(401).json({ message: "User not found" });
-    const { passwordHash: _pwd, ...safeUser } = user;
+    const base = publicAuthUser(user);
     res.json({
-      ...safeUser,
+      ...base,
       dashboardVisible: await isDashboardVisibleForRole(user.role),
       astDashboardVisible: await isDashboardVisibleForRole(user.role),
       vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
@@ -214,15 +492,14 @@ export function registerAuthRoutes(app: Express) {
           .status(400)
           .json({ message: "Current and new password are required" });
       }
-      if (!bcrypt.compareSync(currentPassword, user.passwordHash)) {
+      if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
         return res.status(400).json({ message: "Current password is incorrect" });
       }
-      if (newPassword.length < 6) {
-        return res
-          .status(400)
-          .json({ message: "New password must be at least 6 characters" });
+      const passwordError = validateStrongPassword(newPassword);
+      if (passwordError) {
+        return res.status(400).json({ message: passwordError });
       }
-      updates.passwordHash = bcrypt.hashSync(newPassword, 10);
+      updates.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     }
 
     if (Object.keys(updates).length === 0) {
@@ -234,8 +511,105 @@ export function registerAuthRoutes(app: Express) {
       return res.status(500).json({ message: "Failed to update user" });
     }
 
-    const { passwordHash: _pwd, ...safeUser } = updated;
-    return res.json({ success: true, user: safeUser });
+    return res.json({ success: true, user: publicAuthUser(updated) });
+  });
+
+  app.post(
+    "/api/users/me/profile-photo",
+    requireAuth,
+    profilePhotoUpload.single("profilePhoto"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const file = (req as Request & { file?: { buffer: Buffer; mimetype: string } }).file;
+      if (!file?.buffer) {
+        return res.status(400).json({
+          message: "No image file provided (form field name: profilePhoto).",
+        });
+      }
+      try {
+        const filename = await replaceProfilePhotoForUser(
+          currentUser.id,
+          file.buffer,
+          file.mimetype,
+        );
+        const updated = await authSessionRepo.updateUser(currentUser.id, {
+          profilePhotoPath: filename,
+        });
+        if (!updated) {
+          return res.status(500).json({ message: "Failed to save profile photo" });
+        }
+        return res.json({ success: true, user: publicAuthUser(updated) });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Upload failed";
+        return res.status(400).json({ message });
+      }
+    },
+  );
+
+  app.delete("/api/users/me/profile-photo", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const existing = await authSessionRepo.getUserById(currentUser.id);
+    if (!existing) {
+      return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+    }
+    await removeProfilePhotoFilesForUser(currentUser.id);
+    const updated = await authSessionRepo.updateUser(currentUser.id, {
+      profilePhotoPath: null,
+    });
+    if (!updated) {
+      return res.status(500).json({ message: "Failed to clear profile photo" });
+    }
+    return res.json({ success: true, user: publicAuthUser(updated) });
+  });
+
+  app.get("/api/users/:userId/profile-photo", async (req, res) => {
+    const userId = Number(req.params.userId);
+    if (!Number.isInteger(userId) || userId < 1) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+
+    const t = typeof req.query.t === "string" ? req.query.t : "";
+    const sig = typeof req.query.sig === "string" ? req.query.sig : "";
+    const sigOk = verifyProfilePhotoSignature(userId, t, sig);
+
+    let allowed = sigOk;
+    if (!allowed) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        const sessionUserId = await sessions.get(token);
+        if (sessionUserId != null) {
+          const viewer = await authSessionRepo.getUserById(sessionUserId);
+          const target = await authSessionRepo.getUserById(userId);
+          if (viewer && target?.profilePhotoPath) {
+            if (
+              viewer.id === userId ||
+              viewer.role === "admin" ||
+              viewer.role === "superadmin"
+            ) {
+              allowed = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (!allowed) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const user = await authSessionRepo.getUserById(userId);
+    const abs = resolveProfilePhotoAbsolutePath(user?.profilePhotoPath ?? null);
+    if (!abs || !fs.existsSync(abs)) {
+      return res.status(404).end();
+    }
+
+    const ext = path.extname(abs).toLowerCase();
+    const contentType =
+      ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.sendFile(abs);
   });
 
   app.post("/api/auth/password-reset-requests", async (req, res) => {
@@ -250,23 +624,13 @@ export function registerAuthRoutes(app: Express) {
         .status(400)
         .json({ message: "Username/email and new password are required" });
     }
-    if (newPassword.length < 6) {
-      return res
-        .status(400)
-        .json({ message: "New password must be at least 6 characters" });
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
     }
 
     let user = await authSessionRepo.getUserByUsername(identifier);
     if (!user) user = await authSessionRepo.getUserByEmail(identifier);
-    if (!user) {
-      const normalized = identifier.toLowerCase();
-      user = (await authSessionRepo.getUsers())
-        .find(
-          (u) =>
-            u.username.toLowerCase() === normalized ||
-            u.email.toLowerCase() === normalized,
-        );
-    }
     if (!user) {
       // Avoid disclosing account existence
       return res.json({
@@ -275,7 +639,7 @@ export function registerAuthRoutes(app: Express) {
       });
     }
 
-    const hash = bcrypt.hashSync(newPassword, 10);
+    const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
     await authSessionRepo.createPasswordResetRequest({
       userId: user.id,
       requestedByRole: user.role,

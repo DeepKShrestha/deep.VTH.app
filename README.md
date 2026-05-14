@@ -9,12 +9,99 @@ This README is a practical handover for the next developer to maintain and exten
 
 ---
 
+## Maintainer guide (read this first)
+
+### Stronger process than a one-time “cleanup”
+
+A single cleanup PR helps today, but **entropy returns** without automation. After handoff, the highest‑leverage additions are:
+
+| Practice | Why |
+|----------|-----|
+| **CI runs** `npm run verify` **and a Knip “orphan files” job** (see `.github/workflows/ci.yml`) | Same gates locally and on PRs; Knip catches unreachable source files. |
+| **Optional: full `knip`** (`npm run knip`, includes deps/unused exports) | Stricter cleanup; tune config before failing CI on it. |
+| **`docs/ADR/`** (short Architecture Decision Records) | When you change auth, DB, or permissions, one file per decision beats long Slack threads. |
+| **`CONTRIBUTING.md`** | PR checklist, how to run migrations, and “who approves production config”. |
+
+This README stays the **map of the whole system**; split only when a section becomes huge (e.g. move long SQL notes to `docs/`). **Anyone doing a production deploy** should follow **`docs/PRODUCTION-DEPLOYMENT.md`** (required env vars, order of operations, smoke tests). Operational runbooks: **`docs/OPERATIONS.md`**. Release notes: **`docs/RELEASE.md`**.
+
+### Table of contents
+
+| # | Topic |
+|---|--------|
+| [1](#1-quick-start) | Quick start |
+| [2](#2-stack-and-runtime) | Stack and runtime |
+| [3](#3-project-layout) | Project layout |
+| [4](#4-module-boundaries-critical) | Module boundaries (hospital vs AST) |
+| [5](#5-routing-map-frontend) | Frontend routes |
+| [6](#6-permissions-and-roles) | Permissions and roles |
+| [7](#7-form-system-where-to-edit-what) | Form system |
+| [8](#8-built-in-field-sync-rule-important) | Built-in field sync |
+| [9](#9-authentication-and-sessions) | Auth and sessions |
+| [10](#10-profile-page-notes) | Profile / security |
+| [11](#11-database-tables-you-will-touch-most) | Main DB tables |
+| [12](#12-operational-commands) | Commands and ops |
+| [12a](#12a-production-deployment-summary) | Production deployment (summary) |
+| [12b](#12b-continuous-integration) | Continuous integration |
+| [13](#13-api-surface-high-level) | API surface |
+| [14](#14-safe-change-workflow) | Safe change workflow |
+| [15](#15-common-gotchas) | Gotchas |
+| [16](#16-environment-variables) | Environment variables |
+| [17](#17-handover-checklist-for-next-developer) | Handover checklist |
+| [18](#18-page---api---db-map-quick-navigation) | Page → API → DB map |
+| [19](#19-role-capability-matrix) | Capability matrix |
+| [20](#20-built-in-field-registry-hospital-focused) | Built-in fields |
+| [21](#21-change-recipes-safe-playbooks) | Change recipes |
+| [22](#22-troubleshooting-runbook) | Troubleshooting |
+| [23](#23-recent-hardening-changes-important) | Recent hardening |
+| [24](#24-production-deployment-deployer-handbook) | Production deployment (deployer handbook) |
+
+### Request flow (mental model)
+
+```mermaid
+flowchart TB
+  subgraph client [Browser]
+    UI[React + Vite + Wouter]
+    Q[TanStack Query]
+  end
+  subgraph server [Node]
+    E[Express 5]
+    M[Auth middleware / capabilities]
+    R[Routes: auth, admin, cases, backup, ...]
+    D[(SQLite or Postgres)]
+  end
+  UI --> Q
+  Q -->|"JSON /api/*"| E
+  E --> M
+  M --> R
+  R --> D
+```
+
+### Feature index (where to change what)
+
+| Area | What users do | Primary UI | Primary API / server |
+|------|----------------|------------|----------------------|
+| Login / signup | Sign in, register | `client/src/pages/login.tsx`, `signup.tsx` | `server/routes/auth.ts` |
+| Home / navigation | Choose VTH vs AST | `welcome.tsx`, `new-case-home.tsx`, `ast-report-home.tsx` | — |
+| Hospital case | Register, list, view, print | `register-case.tsx` (mode=hospital), `case-list.tsx`, `case-view.tsx`, `print-report.tsx` | `server/routes/cases.ts`, `server/case-repo.ts` |
+| AST case | Register, list, view, export | same pages, `export-data.tsx` | `server/routes/cases.ts`, AST paths |
+| Hospital form builder | Edit sections/questions | `hospital-form-editor.tsx` | `server/routes/admin.ts` (form-definition) |
+| AST form builder | Edit AST form | `ast-form-editor.tsx`, `admin.tsx` (form-only) | `server/routes/admin.ts` |
+| Treatment catalogs | Meds, routes, frequencies, dose units, **durations** | `hospital-treatment-*.tsx`, `treatment-master-data-manager.tsx` | `server/routes/admin.ts` (CRUD + logs) |
+| AMR dashboard | Stats | `dashboard.tsx` | Case/export APIs |
+| VTH dashboard | Hospital stats | `hospital-dashboard.tsx` | Cases |
+| Admin | Users, downloads, backup, audit | `admin.tsx`, `admin-site-backup-panel.tsx` | `server/routes/admin.ts`, `backup-admin.ts` |
+| Profile | Account, 2FA, prefs, photo | `profile.tsx` | `auth.ts`, prefs stores |
+| Breakpoints | AST antibiotic grid | `breakpoints.tsx` | `server/routes/breakpoints.ts` |
+
+---
+
 ## 1) Quick Start
 
 **Prerequisites**
 
-- **Node.js 20.x** and npm (matches `.github/workflows/ci.yml` and the repo’s TypeScript tooling).
-- On Windows, use a normal shell (PowerShell or cmd); native addons such as `better-sqlite3` may need `npm rebuild better-sqlite3` after Node upgrades (see §22).
+- **Node.js** 22.x or 24.x and npm. The supported range is in `package.json` `engines`; `.nvmrc` pins **22** for local/CI alignment (`.npmrc` sets `engine-strict=true`, so `npm install` refuses unsupported Node versions).
+  - If you use `nvm` / `nvm-windows` / `fnm` / `volta` / `asdf`, run `nvm use` (or equivalent) in this repo to pick up `.nvmrc`.
+- On Windows, use a normal shell (PowerShell or cmd). Native addons such as `better-sqlite3` are checked by `script/ensure-sqlite-binary.cjs` after every `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (the dev script uses `script/dev-server.cjs` so the check and `tsx` always run under the same `node.exe`). Manual fix: stop other Node processes if rebuild hits “file in use”, then `npm rebuild better-sqlite3` (see §22).
 
 **First clone**
 
@@ -63,7 +150,8 @@ Recommended before any merge:
 - `client/` - frontend app
 - `server/` - backend/API
 - `shared/schema.ts` - shared DB/type model
-- `docs/` - release and operations notes
+- `shared/capabilities.ts` - role → capability matrix (imported by `server/routes/context.ts` and `client/src/lib/auth.tsx`)
+- `docs/` — release, operations, and **production deploy** checklists (`docs/RELEASE.md`, `docs/OPERATIONS.md`, **`docs/PRODUCTION-DEPLOYMENT.md`**)
 - `migrations/`, `migrations-pg/` - migration history
 
 ### Backend core
@@ -72,7 +160,7 @@ Recommended before any merge:
 - `server/routes/auth.ts` - login/signup/me/logout/profile/password-reset requests
 - `server/routes/admin.ts` - admin APIs, form-definition APIs, users, downloads, resets
 - `server/routes/cases.ts` - case APIs, form-definition read, export/download paths
-- `server/routes/context.ts` - auth middleware + capabilities + permission guards
+- `server/routes/context.ts` - auth middleware; re-exports capabilities from `shared/capabilities.ts`; permission guards
 - `server/auth-session-repo.ts` - auth/session data access abstraction
 
 ### Frontend core
@@ -82,7 +170,8 @@ Recommended before any merge:
 - `client/src/pages/new-case-home.tsx` - VTH module home
 - `client/src/pages/ast-report-home.tsx` - AST module home
 - `client/src/pages/ast-settings.tsx` - AST settings page
-- `client/src/pages/hospital-form-editor.tsx` - VTH form editor
+- `client/src/pages/hospital-treatment-settings.tsx` - treatment master hub (links to medications, routes, frequencies, dose units, durations)
+- `client/src/pages/hospital-treatment-medications.tsx` / `hospital-treatment-routes.tsx` / `hospital-treatment-frequencies.tsx` / `hospital-treatment-dose-units.tsx` / `hospital-treatment-durations.tsx` - catalog CRUD (shared `TreatmentMasterDataManager`)
 - `client/src/pages/ast-form-editor.tsx` + `client/src/pages/admin.tsx` (`form-only` mode) - AST form editor
 - `client/src/pages/register-case.tsx` - registration form for both scopes (hospital/ast)
 - `client/src/pages/case-list.tsx` / `client/src/pages/case-view.tsx` - history + detail
@@ -124,6 +213,10 @@ Main routes:
 - `/new-case/cases` - hospital case history
 - `/new-case/cases/:id` - hospital case detail (strict namespace)
 - `/new-case/print/:id` - hospital print preview (strict namespace)
+- `/new-case/settings` - VTH module settings
+- `/new-case/settings/treatment` - treatment master hub (catalogs)
+- `/new-case/settings/treatment/medications` | `routes` | `frequencies` | `dose-units` | `durations` - individual catalogs
+- `/new-case/settings/veterinarians` - veterinarian directory
 - `/ast-report` - AST home
 - `/ast-report/settings` - AST settings
 - `/ast-report/form-editor` - AST form editor (admin only)
@@ -134,6 +227,10 @@ Main routes:
 - `/breakpoints` - breakpoints admin
 - `/admin` and `/admin/downloads` - admin panel
 - `/profile` - account/profile page
+- `/dashboard` - AMR statistical dashboard (AST)
+- `/new-case/dashboard` - VTH hospital dashboard
+- `/export` - AST data export / download requests
+- `/new-case/export` - same flows scoped from VTH home
 
 Legacy compatibility redirects:
 - `/cases` -> `/ast-report/cases`
@@ -144,12 +241,10 @@ Legacy compatibility redirects:
 
 ## 6) Permissions and Roles
 
+**Canonical capability definitions:** `shared/capabilities.ts` (`PermissionCapability`, `resolveCapabilitiesForRole`, `hasCapability`). The API imports and re-exports these from `server/routes/context.ts`; the client imports the same module in `client/src/lib/auth.tsx` for UI gating (so server and client stay aligned).
+
 Role model:
 - `superadmin`, `admin`, `staff`, `intern`, `student`, `pending`
-
-Capability resolution is in:
-- `server/routes/context.ts` (`resolveCapabilitiesForRole`)
-- mirrored fallback logic in `client/src/lib/auth.tsx`
 
 Main capabilities:
 - `hospital.case.create`
@@ -160,9 +255,9 @@ Main capabilities:
 - `ast.admin`
 
 When changing permission behavior:
-1. update backend capability mapping first
-2. update frontend fallback mapping second
-3. validate route guards in `App.tsx`
+1. update **`shared/capabilities.ts`** first (single source of truth)
+2. adjust route guards / `requireAnyCapability` usage in `server/routes/*.ts` if you add or rename capabilities
+3. validate route guards in `App.tsx` and any page-level checks
 4. test student/intern/staff/admin flows
 
 ---
@@ -211,13 +306,11 @@ Failure to update all layers causes "shows in register but not in editor" type m
 ## 9) Authentication and Sessions
 
 Frontend token persistence:
-- token stored in `localStorage` (with sessionStorage compatibility read)
-- implemented in `client/src/lib/auth.tsx`
+- **API bearer token** is kept in **`sessionStorage`** (same-tab reload survives; closing the tab ends the session). A small in-memory cache avoids races during HMR. Other prefs (e.g. inactivity timeout, confirm-before-logout) use `localStorage` — see `client/src/lib/auth.tsx`.
 
 Backend sessions:
 - table: `sessions`
-- startup currently clears all sessions in `server/routes.ts`
-  - users re-login after server restart (expected behavior)
+- On startup, after ensuring the `sessions` table exists, **all session rows are deleted** (`server/routes.ts`) for **both SQLite and Postgres** — everyone must log in again after every server restart (intentional tradeoff).
 
 New endpoint:
 - `POST /api/auth/logout-all-sessions` (current user only)
@@ -291,6 +384,7 @@ Postgres checks:
 - `npm run smoke:pg:auth`
 
 Production process:
+- **Deployer checklist (env, order of operations, smoke tests):** `docs/PRODUCTION-DEPLOYMENT.md`
 - `npm run build` then `npm run start` (or `npm run start:sqlite` for SQLite-only prod)
 - Pre-release checklist: `docs/RELEASE.md` and `docs/OPERATIONS.md`
 
@@ -300,6 +394,8 @@ Site backup / restore (SQLite smoke, optional):
 ---
 
 ## 12a) Production deployment (summary)
+
+**Full checklist for the person deploying:** **`docs/PRODUCTION-DEPLOYMENT.md`** (required variables such as `ATTACHMENT_SIGNING_SECRET`, database choice, build commands, post‑deploy checks, rollback pointer).
 
 The app is designed to run as a **single Node process** behind a reverse proxy (nginx, Caddy, or a PaaS edge) that terminates **TLS**. The server sets `trust proxy` for correct client IP behavior behind one proxy hop.
 
@@ -327,7 +423,7 @@ The app is designed to run as a **single Node process** behind a reverse proxy (
 ## 12b) Continuous integration
 
 - Workflow: `.github/workflows/ci.yml`
-- On push to `main`/`master` and on pull requests: `npm ci`, then `npm run test`, `npm run check`, `npm run build` (align local work with `npm run verify`).
+- On push to `main`/`master` and on pull requests: `npm ci`, then **`npm run verify`** (test + typecheck + build), plus a **`knip`** job (`npm run knip:files`) to catch orphan source files. Align local work with `npm run verify` before you push.
 
 ---
 
@@ -404,6 +500,8 @@ Variables used across the server, backup/restore, and scripts. **`.env.example` 
 - `HIDDEN_SUPERADMIN_EMAIL`
 - `HIDDEN_SUPERADMIN_PASSWORD`
 - `LOG_RESPONSE_BODIES`
+- **`ATTACHMENT_SIGNING_SECRET`** — **required in production** (≥32 characters); HMAC for signed case‑attachment and profile‑photo URLs. Server exits on startup if unset when `NODE_ENV=production`.
+- **`ATTACHMENT_SIGNING_TTL_MS`** — optional; signed URL lifetime in ms (60 000–86 400 000; default 30 minutes)
 - `CASE_ATTACHMENTS_DIR` — absolute path for case attachment files (defaults under `./uploads/case-attachments`)
 - `BACKUP_LOCAL_DIR` — absolute path for site backup zip output (defaults under `./backups/site`)
 - `PG_BIN` — optional directory containing `pg_dump` / `psql` for Postgres site backup/restore
@@ -415,6 +513,7 @@ Variables used across the server, backup/restore, and scripts. **`.env.example` 
 - `TEMP_ATTACHMENTS_MAX_AGE_HOURS`, `TEMP_ATTACHMENTS_CLEANUP_INTERVAL_MS` — tune scheduled cleanup of temporary case attachments (`server/temp-attachment-cleanup.ts`)
 
 Production guidance:
+- set **`ATTACHMENT_SIGNING_SECRET`** before first production boot (see `docs/PRODUCTION-DEPLOYMENT.md`)
 - disable `ALLOW_DEFAULT_ADMIN` after bootstrap
 - keep hidden superadmin credentials strong if enabled
 - keep `LOG_RESPONSE_BODIES=false` unless actively debugging
@@ -429,7 +528,8 @@ Before taking over:
 2. Visit both modules and both form editors.
 3. Confirm scope separation by adding a section in one editor only.
 4. Run `npm run verify`.
-5. Read:
+5. Read **`docs/PRODUCTION-DEPLOYMENT.md`** if you will deploy to production (or hand off to someone who will).
+6. Read:
    - `client/src/App.tsx`
    - `client/src/pages/register-case.tsx`
    - `client/src/pages/hospital-form-editor.tsx`
@@ -482,7 +582,9 @@ Use this when you need to find "where this screen gets data" fast.
 
 ## 19) Role Capability Matrix
 
-Current effective capability model (see `server/routes/context.ts`):
+The capability list is defined once in **`shared/capabilities.ts`** and imported by **`server/routes/context.ts`** (API authorization) and **`client/src/lib/auth.tsx`** (UI gating). Change that shared module and keep server routes aligned with any new capability names.
+
+Current effective capability model:
 
 - `superadmin`
   - `hospital.case.create`, `hospital.case.view`, `ast.case.create`, `ast.case.view`, `ast.download`, `ast.admin`
@@ -494,13 +596,12 @@ Current effective capability model (see `server/routes/context.ts`):
   - `hospital.case.create`, `hospital.case.view`, `ast.case.create`, `ast.case.view`, `ast.download`
 - `student`
   - `hospital.case.create`, `hospital.case.view`, `ast.case.view`
+  - **Data scope:** students only see **cases they registered** (`registered_by`) in list, detail, exports, dashboard aggregates, and patient‑history matches—unless you change that policy in code.
   - note: download path for students is handled by request-approval logic in `canDownload`
 - `pending`
   - no case-view/create capabilities (blocked from AST/Hospital case flows)
 
-When changing these, keep server + client fallback logic in sync:
-- server: `server/routes/context.ts`
-- client fallback: `client/src/lib/auth.tsx`
+When changing these, update **`shared/capabilities.ts`**; the server re‑exports helpers from there via `server/routes/context.ts`, and the client imports the same module in `client/src/lib/auth.tsx`.
 
 ---
 
@@ -550,11 +651,10 @@ Canonical touchpoints:
 5. Run `npm run verify`
 
 ### C) Add a new role/capability
-1. Add capability type in server and client auth typings
-2. Update resolver in `server/routes/context.ts`
-3. Update fallback in `client/src/lib/auth.tsx`
-4. Apply route/UI guards in `App.tsx` and page-level checks
-5. Validate by logging in with each affected role
+1. Extend the union and resolver in **`shared/capabilities.ts`**
+2. Re-export / imports flow automatically through `server/routes/context.ts` and `client/src/lib/auth.tsx` (adjust if you add new imports)
+3. Apply route/UI guards in `App.tsx` and page-level checks
+4. Validate by logging in with each affected role
 
 ### D) Add a new admin action
 1. Add backend endpoint in `server/routes/admin.ts`
@@ -573,10 +673,13 @@ Canonical touchpoints:
 - Fix first syntax/type error; many UI errors are cascading
 
 ### `better-sqlite3` issues on Windows
-- Stop running node processes
-- Rebuild native module:
-  - `npm rebuild better-sqlite3`
-- Then restart dev server
+- `script/ensure-sqlite-binary.cjs` runs after `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (via `script/dev-server.cjs`, which uses the same Node binary for the check and for `tsx`). It tries `require("better-sqlite3")` and runs `npm rebuild better-sqlite3` only when the error clearly indicates an ABI mismatch (generic `ERR_DLOPEN_FAILED` alone is not treated as ABI—on Windows it often means the DLL is locked). You should rarely need to fix this by hand.
+- If you launched the server some other way (e.g. `node dist/index.cjs` after a Node major upgrade) and see the ABI error, `server/db.ts` now wraps it with a single actionable line pointing back here.
+- Manual recovery if the preflight ever fails:
+  - Stop running node processes
+  - `npm rebuild better-sqlite3` (requires Python + a C++ toolchain on Windows; install Visual Studio Build Tools if missing)
+  - Restart dev server
+- Root cause for new contributors: `better-sqlite3` is a native module pinned to a Node ABI (`NODE_MODULE_VERSION`). Changing Node major versions (20 ↔ 22 ↔ 24) without reinstalling breaks the binary. The repo pins Node via `.nvmrc` + `engines` to keep everyone on the same ABI.
 
 ### Form appears in registration but not editor
 - Missing sync in hospital/AST editor fallback or built-in recognition
@@ -658,4 +761,18 @@ These changes were applied to prevent cross-module leakage and privilege issues:
   - `server/routes/cases.module-scope.e2e.test.ts`
   - `server/routes/frontend-route-contract.test.ts`
   - `server/routes/admin.notifications.test.ts` (notification lifecycle)
+
+- **Production signing and deployer docs**
+  - **`ATTACHMENT_SIGNING_SECRET`** is **mandatory** when running the production bundle (`NODE_ENV=production`); the process exits on startup if it is missing or too short. Optional **`ATTACHMENT_SIGNING_TTL_MS`** controls signed image URL lifetime (default 30 minutes).
+  - **`docs/PRODUCTION-DEPLOYMENT.md`** lists everything a deployer must configure and verify (for handoff to non‑authors).
+
+---
+
+## 24) Production deployment (deployer handbook)
+
+If you are **shipping to production** or handing off to operations, use the dedicated checklist (not this section alone):
+
+- **`docs/PRODUCTION-DEPLOYMENT.md`** — required environment variables (`ATTACHMENT_SIGNING_SECRET`, `NODE_ENV`, `PORT`, database), recommended security settings, build/run order, TLS/reverse proxy notes, smoke tests, rollback pointer, and CI expectations.
+
+The short summary in **§12a** and the variable list in **§16** point here for detail.
 

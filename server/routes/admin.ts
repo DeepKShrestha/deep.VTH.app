@@ -13,6 +13,7 @@ import {
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { authSessionRepo } from "../auth-session-repo";
+import { toClientSafeUser } from "../user-public";
 import {
   doseUnitRepo,
   durationRepo,
@@ -2040,8 +2041,8 @@ export function registerAdminRoutes(app: Express) {
       const visibleUsers = users.filter(
         (u) => !isHiddenSuperadminUser(u),
       );
-      const safeUsers = visibleUsers.map(({ passwordHash, ...u }) => ({
-        ...u,
+      const safeUsers = visibleUsers.map((u) => ({
+        ...toClientSafeUser(u),
         activeNow: activeSessionUserIds.has(u.id),
       }));
       if (!pagination.shouldPaginate) {
@@ -2071,7 +2072,7 @@ export function registerAdminRoutes(app: Express) {
       const pending = (await authSessionRepo.getUsers()).filter(
         (u) => !u.approved && !isHiddenSuperadminUser(u),
       );
-      const safeUsers = pending.map(({ passwordHash, ...u }) => u);
+      const safeUsers = pending.map((u) => toClientSafeUser(u));
       if (!pagination.shouldPaginate) {
         return res.json(safeUsers);
       }
@@ -2119,8 +2120,7 @@ export function registerAdminRoutes(app: Express) {
         targetId: user.id,
         details: { assignedRole: parsedRole },
       });
-      const { passwordHash, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(toClientSafeUser(user));
     },
   );
 
@@ -2160,6 +2160,80 @@ export function registerAdminRoutes(app: Express) {
       return res.json({
         message: `Deleted ${ids.length} student account${ids.length > 1 ? "s" : ""} from batch ${batch}`,
         deletedCount: ids.length,
+      });
+    },
+  );
+
+  app.post(
+    "/api/admin/users/bulk-delete",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const raw = (req.body as { ids?: unknown })?.ids;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        return res.status(400).json({ message: "Provide a non-empty ids array" });
+      }
+      const idSet = new Set<number>();
+      for (const v of raw) {
+        const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
+        if (Number.isInteger(n) && n > 0) idSet.add(n);
+      }
+      const uniqueIds = Array.from(idSet).slice(0, 200);
+      const skipped: { id: number; reason: string }[] = [];
+      const toDelete: number[] = [];
+
+      for (const id of uniqueIds) {
+        const targetUser = await authSessionRepo.getUserById(id);
+        if (!targetUser) {
+          skipped.push({ id, reason: "not_found" });
+          continue;
+        }
+        if (isHiddenSuperadminUser(targetUser)) {
+          skipped.push({ id, reason: "protected" });
+          continue;
+        }
+        if (targetUser.id === currentUser.id) {
+          skipped.push({ id, reason: "self" });
+          continue;
+        }
+        if (isAdminRole(targetUser.role) && currentUser.role !== "superadmin") {
+          skipped.push({ id, reason: "admin_protected" });
+          continue;
+        }
+        toDelete.push(id);
+      }
+
+      if (toDelete.length === 0) {
+        return res.json({
+          message: "No matching accounts could be deleted.",
+          deletedCount: 0,
+          deletedUserIds: [] as number[],
+          skipped,
+        });
+      }
+
+      await dbRun(
+        sql`DELETE FROM users WHERE id IN (${sql.join(
+          toDelete.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.bulk.delete",
+        targetType: "user",
+        targetId: null,
+        details: { deletedCount: toDelete.length, deletedUserIds: toDelete, skipped },
+      });
+
+      return res.json({
+        message: `Removed ${toDelete.length} account${toDelete.length > 1 ? "s" : ""}.`,
+        deletedCount: toDelete.length,
+        deletedUserIds: toDelete,
+        skipped,
       });
     },
   );
@@ -2226,8 +2300,7 @@ export function registerAdminRoutes(app: Express) {
         targetId: user.id,
         details: { fromRole: targetUser.role, toRole: role },
       });
-      const { passwordHash, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(toClientSafeUser(user));
     },
   );
 
@@ -2281,8 +2354,7 @@ export function registerAdminRoutes(app: Express) {
       if (!updated)
         return res.status(500).json({ message: "Failed to update user" });
 
-      const { passwordHash, ...safeUser } = updated;
-      res.json(safeUser);
+      res.json(toClientSafeUser(updated));
     },
   );
 
@@ -2501,4 +2573,100 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  /**
+   * Admin action log viewer endpoint.
+   *
+   * Surfaces the existing `admin_action_logs` table — which we already write
+   * to for approve/reject/role-change/password-reset/site-restore actions —
+   * so superadmins can audit *who did what when* through the UI instead of
+   * via raw SQL.
+   *
+   * Pagination is a simple `limit + before` cursor (newest-first):
+   *   GET /api/admin/action-logs?limit=50           -> newest 50
+   *   GET /api/admin/action-logs?limit=50&before=N  -> next 50 older than id N
+   *
+   * Filters: ?actor=<userId>, ?actionType=<exact match>, ?targetType=<...>.
+   */
+  app.get(
+    "/api/admin/action-logs/action-types",
+    requireAuth,
+    requireRole("superadmin"),
+    async (_req, res) => {
+      const rows = await dbAll<{ action_type: string }>(
+        sql`SELECT DISTINCT action_type FROM admin_action_logs ORDER BY action_type ASC`,
+      );
+      res.json(rows.map((r) => r.action_type));
+    },
+  );
+
+  app.get(
+    "/api/admin/action-logs",
+    requireAuth,
+    requireRole("superadmin"),
+    async (req, res) => {
+      const rawLimit = Number.parseInt(String(req.query.limit ?? "100"), 10);
+      const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 100));
+      const beforeRaw = Number.parseInt(String(req.query.before ?? ""), 10);
+      const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : null;
+      const actorRaw = Number.parseInt(String(req.query.actor ?? ""), 10);
+      const actor = Number.isFinite(actorRaw) && actorRaw > 0 ? actorRaw : null;
+      const actionType = String(req.query.actionType ?? "").trim();
+      const targetType = String(req.query.targetType ?? "").trim();
+
+      type LogRow = {
+        id: number;
+        actor_user_id: number;
+        actor_role: string;
+        action_type: string;
+        target_type: string;
+        target_id: string | null;
+        details_json: string | null;
+        created_at: string;
+      };
+
+      const rows = await dbAll<LogRow>(
+        sql`SELECT id, actor_user_id, actor_role, action_type, target_type, target_id, details_json, created_at
+            FROM admin_action_logs
+            WHERE 1=1
+              AND (${before} IS NULL OR id < ${before})
+              AND (${actor} IS NULL OR actor_user_id = ${actor})
+              AND (${actionType} = '' OR action_type = ${actionType})
+              AND (${targetType} = '' OR target_type = ${targetType})
+            ORDER BY id DESC
+            LIMIT ${limit}`,
+      );
+
+      const actorIds = Array.from(
+        new Set(rows.map((r) => r.actor_user_id).filter((v): v is number => Number.isFinite(v))),
+      );
+      const actorMap = new Map<number, { fullName: string; username: string }>();
+      for (const id of actorIds) {
+        const u = await authSessionRepo.getUserById(id);
+        if (u) actorMap.set(id, { fullName: u.fullName, username: u.username });
+      }
+
+      res.json(
+        rows.map((row) => ({
+          id: row.id,
+          actorUserId: row.actor_user_id,
+          actorRole: row.actor_role,
+          actorName: actorMap.get(row.actor_user_id)?.fullName ?? null,
+          actorUsername: actorMap.get(row.actor_user_id)?.username ?? null,
+          actionType: row.action_type,
+          targetType: row.target_type,
+          targetId: row.target_id,
+          details: row.details_json ? safeParseJson(row.details_json) : null,
+          createdAt: row.created_at,
+        })),
+      );
+    },
+  );
+}
+
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }

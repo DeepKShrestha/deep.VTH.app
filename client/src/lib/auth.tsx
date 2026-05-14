@@ -8,6 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import type { SafeUser } from "@shared/schema";
+import type { PermissionCapability } from "@shared/capabilities";
+import { resolveCapabilitiesForRole } from "@shared/capabilities";
+import { hydrateToggleDefaultsFromServer } from "@/lib/module-toggle-defaults";
 
 export type InactivityTimeoutOption =
   | "1m"
@@ -17,35 +20,12 @@ export type InactivityTimeoutOption =
   | "30m"
   | "never";
 export type ConfirmLogoutPreference = "always" | "never";
-type PermissionCapability =
-  | "hospital.case.create"
-  | "hospital.case.view"
-  | "ast.case.create"
-  | "ast.case.view"
-  | "ast.download"
-  | "ast.admin";
 type AuthUser = SafeUser & {
   dashboardVisible?: boolean;
   astDashboardVisible?: boolean;
   vthDashboardVisible?: boolean;
   capabilities?: PermissionCapability[];
 };
-
-function resolveCapabilitiesFromRole(role?: string): PermissionCapability[] {
-  const isAdmin = role === "superadmin" || role === "admin";
-  const base: PermissionCapability[] = ["hospital.case.view", "ast.case.view"];
-  if (role === "student" || role === "intern" || role === "staff" || isAdmin) {
-    base.push("hospital.case.create");
-  }
-  if (role === "intern" || role === "staff" || isAdmin) {
-    base.push("ast.case.create");
-    base.push("ast.download");
-  }
-  if (isAdmin) {
-    base.push("ast.admin");
-  }
-  return base;
-}
 
 export const INACTIVITY_TIMEOUT_LABELS: Record<InactivityTimeoutOption, string> = {
   "1m": "1 minute",
@@ -56,6 +36,30 @@ export const INACTIVITY_TIMEOUT_LABELS: Record<InactivityTimeoutOption, string> 
   never: "Never",
 };
 
+export type LoginOutcome =
+  | { kind: "ok"; message: string }
+  | { kind: "error"; message: string }
+  | { kind: "two_factor"; pendingToken: string };
+
+async function syncPreferencesFromServer(token: string) {
+  try {
+    const prefRes = await fetch("/api/users/me/preferences", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!prefRes.ok) return;
+    const prefs = (await prefRes.json()) as {
+      astToggleDefaults: Record<string, unknown> | null;
+      hospitalToggleDefaults: Record<string, unknown> | null;
+    };
+    hydrateToggleDefaultsFromServer({
+      astToggleDefaults: prefs.astToggleDefaults,
+      hospitalToggleDefaults: prefs.hospitalToggleDefaults,
+    });
+  } catch {
+    /* ignore offline errors */
+  }
+}
+
 interface AuthContextType {
   user: SafeUser | null;
   token: string | null;
@@ -64,9 +68,10 @@ interface AuthContextType {
   setInactivityTimeout: (value: InactivityTimeoutOption) => void;
   confirmBeforeLogout: ConfirmLogoutPreference;
   setConfirmBeforeLogout: (value: ConfirmLogoutPreference) => void;
-  login: (
-    usernameOrEmail: string,
-    password: string
+  login: (usernameOrEmail: string, password: string) => Promise<LoginOutcome>;
+  completeTwoFactor: (
+    pendingToken: string,
+    code: string,
   ) => Promise<{ success: boolean; message: string }>;
   signup: (data: SignupData) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
@@ -97,6 +102,7 @@ interface SignupData {
   studentBatch?: number | null;
   username: string;
   password: string;
+  profilePhotoFile?: File | null;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -186,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const safeUser = (await res.json()) as AuthUser;
         setAuth(token, safeUser);
+        await syncPreferencesFromServer(token);
       } catch {
         setAuth(null, null);
       } finally {
@@ -200,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token, setAuth]);
 
   const login = useCallback(
-    async (usernameOrEmail: string, password: string) => {
+    async (usernameOrEmail: string, password: string): Promise<LoginOutcome> => {
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
@@ -209,28 +216,88 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         const data = await res.json();
         if (!res.ok) {
-          return {
-            success: false,
-            message: data.message || "Login failed",
-          };
+          return { kind: "error", message: data.message || "Login failed" };
+        }
+        if (data.requiresTwoFactor && data.pendingToken) {
+          return { kind: "two_factor", pendingToken: data.pendingToken };
+        }
+        if (!data.token || !data.user) {
+          return { kind: "error", message: "Login failed" };
         }
         setAuth(data.token, data.user);
         localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
+        await syncPreferencesFromServer(data.token);
+        return { kind: "ok", message: "Login successful" };
+      } catch {
+        return { kind: "error", message: "Network error" };
+      }
+    },
+    [setAuth],
+  );
+
+  const completeTwoFactor = useCallback(
+    async (pendingToken: string, code: string) => {
+      try {
+        const res = await fetch("/api/auth/login/2fa", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pendingToken, code }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return { success: false, message: data.message || "Verification failed" };
+        }
+        if (!data.token || !data.user) {
+          return { success: false, message: "Verification failed" };
+        }
+        setAuth(data.token, data.user);
+        localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
+        await syncPreferencesFromServer(data.token);
         return { success: true, message: "Login successful" };
       } catch {
         return { success: false, message: "Network error" };
       }
     },
-    [setAuth]
+    [setAuth],
   );
 
   const signup = useCallback(async (data: SignupData) => {
     try {
-      const res = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      const hasPhoto = data.profilePhotoFile instanceof File;
+      let res: Response;
+      if (hasPhoto) {
+        const fd = new FormData();
+        fd.append("fullName", data.fullName);
+        fd.append("address", data.address);
+        fd.append("phone", data.phone);
+        fd.append("email", data.email);
+        fd.append("designation", data.designation);
+        fd.append("username", data.username);
+        fd.append("password", data.password);
+        if (data.designation === "student" && data.studentBatch != null) {
+          fd.append("studentBatch", String(data.studentBatch));
+        }
+        fd.append("profilePhoto", data.profilePhotoFile!);
+        res = await fetch("/api/auth/signup", {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fullName: data.fullName,
+            address: data.address,
+            phone: data.phone,
+            email: data.email,
+            designation: data.designation,
+            studentBatch: data.studentBatch,
+            username: data.username,
+            password: data.password,
+          }),
+        });
+      }
       const result = await res.json();
       if (!res.ok) {
         return {
@@ -268,7 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isIntern = user?.role === "intern";
   const isStudent = user?.role === "student";
   const capabilities = new Set(
-    (user?.capabilities?.length ? user.capabilities : resolveCapabilitiesFromRole(user?.role)),
+    (user?.capabilities?.length ? user.capabilities : resolveCapabilitiesForRole(user?.role ?? "")),
   );
   const canRegisterHospitalCase = capabilities.has("hospital.case.create");
   const canViewHospitalCases = capabilities.has("hospital.case.view");
@@ -355,6 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     confirmBeforeLogout,
     setConfirmBeforeLogout,
     login,
+    completeTwoFactor,
     signup,
     logout,
     updateCurrentUser,

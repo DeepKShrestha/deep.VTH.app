@@ -11,7 +11,7 @@ import { Microscope, LogIn, Eye, EyeOff } from "lucide-react";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, completeTwoFactor } = useAuth();
   const { toast } = useToast();
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,6 +22,9 @@ export default function LoginPage() {
   const [forgotNewPassword, setForgotNewPassword] = useState("");
   const [forgotReason, setForgotReason] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
+  const [twoFactorPendingToken, setTwoFactorPendingToken] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
+  const [twoFactorLoading, setTwoFactorLoading] = useState(false);
 
   useEffect(() => {
     const wasInactiveLogout = sessionStorage.getItem(INACTIVITY_LOGOUT_FLAG_KEY);
@@ -40,6 +43,25 @@ export default function LoginPage() {
     setLoading(true);
     const result = await login(usernameOrEmail, password);
     setLoading(false);
+    if (result.kind === "two_factor") {
+      setTwoFactorPendingToken(result.pendingToken);
+      setTotpCode("");
+      return;
+    }
+    if (result.kind === "error") {
+      toast({ title: result.message, variant: "destructive" });
+    }
+  };
+
+  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!twoFactorPendingToken || totpCode.replace(/\s/g, "").length < 6) {
+      toast({ title: "Enter the 6-digit code", variant: "destructive" });
+      return;
+    }
+    setTwoFactorLoading(true);
+    const result = await completeTwoFactor(twoFactorPendingToken, totpCode.replace(/\s/g, ""));
+    setTwoFactorLoading(false);
     if (!result.success) {
       toast({ title: result.message, variant: "destructive" });
     }
@@ -94,6 +116,42 @@ export default function LoginPage() {
 
           <Card>
             <CardContent className="pt-6">
+              {twoFactorPendingToken ? (
+                <form onSubmit={handleTwoFactorSubmit} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="totp">Authenticator code</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Enter the 6-digit code from your authenticator app.
+                    </p>
+                    <Input
+                      id="totp"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={8}
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value.replace(/[^\d\s]/g, ""))}
+                      placeholder="000000"
+                      data-testid="input-login-totp"
+                      autoFocus
+                    />
+                  </div>
+                  <Button type="submit" className="w-full gap-2" disabled={twoFactorLoading}>
+                    {twoFactorLoading ? "Signing in…" : "Verify and sign in"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full"
+                    onClick={() => {
+                      setTwoFactorPendingToken(null);
+                      setTotpCode("");
+                    }}
+                  >
+                    Back
+                  </Button>
+                </form>
+              ) : (
+                <>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="usernameOrEmail">Username or Email</Label>
@@ -140,7 +198,7 @@ export default function LoginPage() {
                   data-testid="button-login"
                 >
                   <LogIn className="w-4 h-4" />
-                  {loading ? "Signing in..." : "Sign In"}
+                  {loading ? "Signing in…" : "Sign In"}
                 </Button>
                 <Button
                   type="button"
@@ -189,6 +247,8 @@ export default function LoginPage() {
                     {forgotLoading ? "Submitting..." : "Submit Reset Request"}
                   </Button>
                 </form>
+              )}
+                </>
               )}
             </CardContent>
           </Card>

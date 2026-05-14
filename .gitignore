@@ -9,5 +9,6 @@ vite.config.ts.*
 *.db-wal
 .env
 .env.local
+.attachment-signing-secret
 uploads/
 backups/

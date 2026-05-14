@@ -49,11 +49,17 @@ function makeUser(overrides: Partial<User> = {}): User {
     phone: "9800000000",
     email: "admin@example.com",
     designation: "veterinarian",
+    studentBatch: null,
     username: "admin",
     passwordHash: "hash",
     role: "admin",
     approved: true,
     createdAt: "2026-04-27T00:00:00.000Z",
+    failedLoginAttempts: 0,
+    lockedUntil: null,
+    totpSecret: null,
+    totpEnabled: false,
+    profilePhotoPath: null,
     ...overrides,
   };
 }

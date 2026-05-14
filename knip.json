@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["server/index.ts", "drizzle.config.pg.ts"],
+  "project": [
+    "client/**/*.{ts,tsx}",
+    "server/**/*.ts",
+    "shared/**/*.ts",
+    "script/**/*.{ts,cjs}"
+  ],
+  "ignore": [
+    "script/dump-custom-fields.cjs",
+    "script/normalize-case-counters.cjs",
+    "script/smoke-backup-restore.ts"
+  ]
+}

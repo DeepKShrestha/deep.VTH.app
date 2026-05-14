@@ -6,6 +6,11 @@ export function getCaseAttachmentUploadDir(): string {
   return raw ? path.resolve(raw) : path.resolve(process.cwd(), "uploads", "case-attachments");
 }
 
+export function getProfilePhotoUploadDir(): string {
+  const raw = process.env.PROFILE_PHOTO_DIR?.trim();
+  return raw ? path.resolve(raw) : path.resolve(process.cwd(), "uploads", "profile-photos");
+}
+
 export function getSiteBackupDir(): string {
   const raw = process.env.BACKUP_LOCAL_DIR?.trim();
   return raw ? path.resolve(raw) : path.resolve(process.cwd(), "backups", "site");

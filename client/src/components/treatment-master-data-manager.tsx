@@ -20,6 +20,7 @@ const PUBLIC_ENDPOINT_BY_ADMIN_LIST: Record<string, string> = {
   "/api/admin/routes-of-administration": "/api/routes-of-administration",
   "/api/admin/frequencies": "/api/frequencies",
   "/api/admin/dose-units": "/api/dose-units",
+  "/api/admin/durations": "/api/durations",
 };
 
 export function TreatmentMasterDataManager({

@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getAuthToken } from "@/lib/auth";
+import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,7 @@ import {
   ArrowLeft,
   Download,
   FileText,
+  FileSpreadsheet,
   Clock,
   CheckCircle,
   XCircle,
@@ -70,13 +72,15 @@ export default function HospitalExportDataPage() {
     },
   });
 
-  const handleDownload = () => {
+  const handleDownload = (kind: "csv" | "xlsx") => {
     const params = new URLSearchParams();
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
+    if (kind === "xlsx") params.set("output", "xlsx");
 
     const token = getAuthToken();
     const url = `${API_BASE}/api/export/hospital-cases?${params.toString()}`;
+    const fallback = kind === "xlsx" ? "hospital-export.xlsx" : "hospital-cases.csv";
 
     fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -85,17 +89,24 @@ export default function HospitalExportDataPage() {
         if (!res.ok) {
           throw new Error("Download failed");
         }
-        return res.blob();
+        const disposition = res.headers.get("Content-Disposition");
+        const downloadName = filenameFromContentDisposition(disposition, fallback);
+        const rowCount = res.headers.get("X-Export-Row-Count");
+        return res.blob().then((blob) => ({ blob, downloadName, rowCount }));
       })
-      .then((blob) => {
+      .then(({ blob, downloadName, rowCount }) => {
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = "hospital-cases.csv";
+        a.download = downloadName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
-        toast({ title: "CSV download started" });
+        const n = rowCount ? Number.parseInt(rowCount, 10) : NaN;
+        toast({
+          title: kind === "xlsx" ? "Excel download started" : "CSV download started",
+          description: Number.isFinite(n) ? `${n} row${n === 1 ? "" : "s"}` : undefined,
+        });
         queryClient.invalidateQueries({
           queryKey: ["/api/download-requests/mine"],
         });
@@ -164,18 +175,29 @@ export default function HospitalExportDataPage() {
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Download</CardTitle>
             <p className="text-xs text-muted-foreground">
-              CSV is compatible with Excel, Google Sheets, and most statistical software.
+              One row per case: stable <code className="text-[10px]">snake_case</code> core columns,
+              then extra columns named like the registration form. CSV is UTF-8 with BOM; Excel adds
+              a frozen header row and filters. Nested values stay as JSON in the cell.
             </p>
           </CardHeader>
           <CardContent>
             <div className="flex flex-col sm:flex-row gap-3">
               <Button
-                onClick={handleDownload}
+                onClick={() => handleDownload("csv")}
                 className="gap-2 w-full sm:flex-1"
                 data-testid="button-download-csv"
               >
                 <FileText className="w-4 h-4" />
                 Download CSV
+              </Button>
+              <Button
+                onClick={() => handleDownload("xlsx")}
+                variant="secondary"
+                className="gap-2 w-full sm:flex-1"
+                data-testid="button-download-xlsx"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Download Excel
               </Button>
             </div>
           </CardContent>

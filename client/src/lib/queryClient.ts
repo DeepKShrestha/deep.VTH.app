@@ -3,16 +3,48 @@ import { getAuthToken } from "@/lib/auth";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
+/** Thrown when an API response has status >= 400. Prefer `serverMessage` for user-facing text. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly bodyText: string;
+  readonly serverMessage?: string;
+
+  constructor(
+    status: number,
+    bodyText: string,
+    opts?: { serverMessage?: string; url?: string },
+  ) {
+    const trimmed = opts?.serverMessage?.trim();
+    const msg = trimmed || `${status}: ${(bodyText || "").slice(0, 280)}`;
+    super(msg);
+    this.name = "ApiError";
+    this.status = status;
+    this.bodyText = bodyText;
+    this.serverMessage = trimmed;
+  }
+}
+
 function getAuthHeaders(): Record<string, string> {
   const token = getAuthToken();
   if (token) return { Authorization: `Bearer ${token}` };
   return {};
 }
 
+function parseServerMessageJson(text: string): string | undefined {
+  try {
+    const j = JSON.parse(text) as { message?: unknown };
+    if (typeof j?.message === "string" && j.message.trim()) return j.message.trim();
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    const serverMessage = parseServerMessageJson(text);
+    throw new ApiError(res.status, text, { serverMessage });
   }
 }
 
@@ -81,7 +113,8 @@ export function postFormDataWithProgress<T>(
       const text = xhr.responseText ?? "";
       const start = text.trimStart();
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(`${xhr.status}: ${text || xhr.statusText}`));
+        const serverMessage = parseServerMessageJson(text);
+        reject(new ApiError(xhr.status, text, { serverMessage }));
         return;
       }
       if (start.startsWith("<!") || start.toLowerCase().startsWith("<html")) {

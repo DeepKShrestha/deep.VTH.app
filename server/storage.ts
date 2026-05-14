@@ -10,7 +10,6 @@ import {
   type Breakpoint,
   type InsertBreakpoint,
   type DownloadRequest,
-  type SafeUser,
   type PasswordResetRequest,
 } from "@shared/schema";
 import { db } from "./db";
@@ -23,14 +22,21 @@ function getNepaliDateClass() {
   return NepaliDateClass;
 }
 
-function toSafeUser(user: User): SafeUser {
-  const { passwordHash, ...safe } = user;
-  return safe;
-}
-
 interface IStorage {
   // Users
-  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; studentBatch?: number | null; username: string; passwordHash: string; role: string; approved: boolean }): User;
+  createUser(data: {
+    fullName: string;
+    address: string;
+    phone: string;
+    email: string;
+    designation: string;
+    studentBatch?: number | null;
+    username: string;
+    passwordHash: string;
+    role: string;
+    approved: boolean;
+    profilePhotoPath?: string | null;
+  }): User;
   getUserByUsername(username: string): User | undefined;
   getUserByEmail(email: string): User | undefined;
   getUserById(id: number): User | undefined;
@@ -86,10 +92,26 @@ interface IStorage {
 
 class DatabaseStorage implements IStorage {
   // ---- Users ----
-  createUser(data: { fullName: string; address: string; phone: string; email: string; designation: string; studentBatch?: number | null; username: string; passwordHash: string; role: string; approved: boolean }): User {
+  createUser(data: {
+    fullName: string;
+    address: string;
+    phone: string;
+    email: string;
+    designation: string;
+    studentBatch?: number | null;
+    username: string;
+    passwordHash: string;
+    role: string;
+    approved: boolean;
+    profilePhotoPath?: string | null;
+  }): User {
     return db
       .insert(users)
-      .values({ ...data, createdAt: new Date().toISOString() })
+      .values({
+        ...data,
+        profilePhotoPath: data.profilePhotoPath ?? null,
+        createdAt: new Date().toISOString(),
+      })
       .returning()
       .get();
   }
@@ -97,13 +119,23 @@ class DatabaseStorage implements IStorage {
   getUserByUsername(username: string): User | undefined {
     const normalized = username.trim().toLowerCase();
     if (!normalized) return undefined;
-    return this.getUsers().find((user) => user.username.toLowerCase() === normalized);
+    return db
+      .select()
+      .from(users)
+      .where(sql`LOWER(${users.username}) = ${normalized}`)
+      .limit(1)
+      .get();
   }
 
   getUserByEmail(email: string): User | undefined {
     const normalized = email.trim().toLowerCase();
     if (!normalized) return undefined;
-    return this.getUsers().find((user) => user.email.toLowerCase() === normalized);
+    return db
+      .select()
+      .from(users)
+      .where(sql`LOWER(${users.email}) = ${normalized}`)
+      .limit(1)
+      .get();
   }
 
   getUserById(id: number): User | undefined {

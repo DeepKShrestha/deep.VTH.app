@@ -117,7 +117,7 @@ describe("cases route scope + permission hardening", () => {
 
     await handler(req, res);
 
-    expect(caseRepo.getCases).toHaveBeenCalledWith("hospital");
+    expect(caseRepo.getCases).toHaveBeenCalledWith("hospital", undefined);
     expect(res.json).toHaveBeenCalledWith([]);
   });
 
@@ -132,7 +132,7 @@ describe("cases route scope + permission hardening", () => {
 
     await handler(req, res);
 
-    expect(caseRepo.getCase).toHaveBeenCalledWith(1, "ast");
+    expect(caseRepo.getCase).toHaveBeenCalledWith(1, "ast", undefined);
   });
 
   it("denies PATCH /api/cases/:id when role lacks edit capability for requested scope", async () => {
@@ -197,6 +197,7 @@ describe("cases route scope + permission hardening", () => {
       1,
       expect.objectContaining({ ownerName: "Updated Owner" }),
       "hospital",
+      undefined,
     );
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, caseNumber: "CASE-2083-001" }),

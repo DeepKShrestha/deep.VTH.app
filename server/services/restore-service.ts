@@ -10,7 +10,7 @@ import {
   suspendSqliteForExternalDiskReplace,
   resumeSqliteAfterExternalDiskReplace,
 } from "../db";
-import { getCaseAttachmentUploadDir } from "./backup-paths";
+import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir } from "./backup-paths";
 
 export const RESTORE_CONFIRM_PHRASE = "RESTORE_SITE_DATA";
 
@@ -106,6 +106,14 @@ export async function restoreSiteFromZip(params: {
       await fsp.rm(uploadDir, { recursive: true, force: true }).catch(() => {});
       await fsp.mkdir(uploadDir, { recursive: true });
       await fsp.cp(filesDir, uploadDir, { recursive: true });
+    }
+
+    const profileExtractDir = path.join(tmpRoot, "profile-photos");
+    const profileDest = getProfilePhotoUploadDir();
+    if (fs.existsSync(profileExtractDir)) {
+      await fsp.rm(profileDest, { recursive: true, force: true }).catch(() => {});
+      await fsp.mkdir(profileDest, { recursive: true });
+      await fsp.cp(profileExtractDir, profileDest, { recursive: true });
     }
 
     return {

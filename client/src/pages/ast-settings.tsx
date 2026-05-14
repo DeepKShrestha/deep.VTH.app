@@ -12,8 +12,10 @@ import {
 import {
   getAstToggleDefaults,
   setAstToggleDefaults,
+  hydrateToggleDefaultsFromServer,
   type AstToggleDefaults,
 } from "@/lib/module-toggle-defaults";
+import { getAuthToken } from "@/lib/auth";
 
 export default function AstSettingsPage() {
   const { canManageAstAdmin } = useAuth();
@@ -24,7 +26,44 @@ export default function AstSettingsPage() {
   );
 
   useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return;
+    void (async () => {
+      try {
+        const res = await fetch("/api/users/me/preferences", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const p = (await res.json()) as {
+          astToggleDefaults: Record<string, unknown> | null;
+          hospitalToggleDefaults: Record<string, unknown> | null;
+        };
+        hydrateToggleDefaultsFromServer({
+          astToggleDefaults: p.astToggleDefaults,
+          hospitalToggleDefaults: p.hospitalToggleDefaults,
+        });
+        setToggleDefaults(getAstToggleDefaults());
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     setAstToggleDefaults(toggleDefaults);
+    const token = getAuthToken();
+    if (!token) return;
+    const tmr = window.setTimeout(() => {
+      void fetch("/api/users/me/preferences", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ astToggleDefaults: toggleDefaults }),
+      }).catch(() => {});
+    }, 700);
+    return () => window.clearTimeout(tmr);
   }, [toggleDefaults]);
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {

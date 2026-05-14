@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getAuthToken } from "@/lib/auth";
+import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,7 @@ import {
   ArrowLeft,
   Download,
   FileText,
+  FileSpreadsheet,
   Clock,
   CheckCircle,
   XCircle,
@@ -34,6 +36,7 @@ export default function ExportDataPage() {
   const [dateTo, setDateTo] = useState(today.bs);
   const [dateToAd, setDateToAd] = useState(today.ad);
   const [reason, setReason] = useState("");
+  const [longAstCsv, setLongAstCsv] = useState(false);
 
   const { data: myRequests = [] } = useQuery<DownloadRequest[]>({
     queryKey: ["/api/download-requests/mine"],
@@ -70,45 +73,54 @@ export default function ExportDataPage() {
     },
   });
 
-  const handleDownload = () => {
-  const params = new URLSearchParams();
-  if (dateFrom) params.set("dateFrom", dateFrom);
-  if (dateTo) params.set("dateTo", dateTo);
+  const handleDownload = (kind: "csv" | "xlsx") => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    if (longAstCsv) params.set("format", "long");
+    if (kind === "xlsx") params.set("output", "xlsx");
 
-  const token = getAuthToken();
-  const url = `${API_BASE}/api/export/cases?${params.toString()}`;
+    const token = getAuthToken();
+    const url = `${API_BASE}/api/export/cases?${params.toString()}`;
+    const fallback = kind === "xlsx" ? "ast-export.xlsx" : "ast-cases.csv";
 
-  fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error("Download failed");
-      }
-      return res.blob();
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-    .then((blob) => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "ast-cases.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      toast({ title: "CSV download started" });
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error("Download failed");
+        }
+        const disposition = res.headers.get("Content-Disposition");
+        const downloadName = filenameFromContentDisposition(disposition, fallback);
+        const rowCount = res.headers.get("X-Export-Row-Count");
+        return res.blob().then((blob) => ({ blob, downloadName, rowCount }));
+      })
+      .then(({ blob, downloadName, rowCount }) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = downloadName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        const n = rowCount ? Number.parseInt(rowCount, 10) : NaN;
+        toast({
+          title: kind === "xlsx" ? "Excel download started" : "CSV download started",
+          description: Number.isFinite(n) ? `${n} row${n === 1 ? "" : "s"}` : undefined,
+        });
 
-      // NEW: refresh "My Download Requests"
-      queryClient.invalidateQueries({
-        queryKey: ["/api/download-requests/mine"],
+        queryClient.invalidateQueries({
+          queryKey: ["/api/download-requests/mine"],
+        });
+      })
+      .catch(() => {
+        toast({
+          title: "Download failed. You may not have permission.",
+          variant: "destructive",
+        });
       });
-    })
-    .catch(() => {
-      toast({
-        title: "Download failed. You may not have permission.",
-        variant: "destructive",
-      });
-    });
-};
+  };
 
   const showDownloadButtons = !isStudent || hasApprovedRequest;
 
@@ -170,19 +182,40 @@ export default function ExportDataPage() {
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Download</CardTitle>
             <p className="text-xs text-muted-foreground">
-              CSV is compatible with Excel, Google Sheets, and most statistical
-              software.
+              Same columns for CSV or Excel: wide table (one row per case) with stable{" "}
+              <code className="text-[10px]">snake_case</code> fields and{" "}
+              <code className="text-[10px]">ast_result_slot_01</code>... slots. CSV is UTF-8 with
+              BOM; Excel has a frozen header row and filters. Use long layout for one row per
+              antibiotic (stats tools).
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={longAstCsv}
+                onChange={(e) => setLongAstCsv(e.target.checked)}
+                className="rounded border-input"
+              />
+              Long layout (one row per antibiotic; applies to CSV and Excel)
+            </label>
             <div className="flex flex-col sm:flex-row gap-3">
               <Button
-                onClick={handleDownload}
+                onClick={() => handleDownload("csv")}
                 className="gap-2 w-full sm:flex-1"
                 data-testid="button-download-csv"
               >
                 <FileText className="w-4 h-4" />
                 Download CSV
+              </Button>
+              <Button
+                onClick={() => handleDownload("xlsx")}
+                variant="secondary"
+                className="gap-2 w-full sm:flex-1"
+                data-testid="button-download-xlsx"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Download Excel
               </Button>
             </div>
           </CardContent>

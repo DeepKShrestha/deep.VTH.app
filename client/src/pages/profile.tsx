@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
-import { useAuth } from "../lib/auth";
-import { apiRequest } from "../lib/queryClient";
+import { useAuth, getAuthToken } from "../lib/auth";
+import { apiRequest, apiRequestForm } from "../lib/queryClient";
 import { useToast } from "../hooks/use-toast";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -40,13 +40,16 @@ import {
   Lock,
   ShieldAlert,
   User as UserIcon,
+  Copy,
 } from "lucide-react";
+import QRCode from "react-qr-code";
 import {
   type ConfirmLogoutPreference,
   INACTIVITY_TIMEOUT_LABELS,
   type InactivityTimeoutOption,
 } from "../lib/auth";
 import { Eye, EyeOff } from "lucide-react";
+import { PASSWORD_MIN_LENGTH } from "@shared/schema";
 
 const LAST_PROFILE_UPDATE_AT_KEY = "profile_last_update_at";
 const LAST_PASSWORD_CHANGE_AT_KEY = "profile_last_password_change_at";
@@ -96,6 +99,13 @@ export default function ProfilePage() {
   const [resetReason, setResetReason] = useState("");
   const [isResetSubmitting, setIsResetSubmitting] = useState(false);
   const [isLogoutAllSubmitting, setIsLogoutAllSubmitting] = useState(false);
+  const [totpDraftSecret, setTotpDraftSecret] = useState<string | null>(null);
+  const [totpDraftUrl, setTotpDraftUrl] = useState<string | null>(null);
+  const [totpEnableCode, setTotpEnableCode] = useState("");
+  const [totpDisablePassword, setTotpDisablePassword] = useState("");
+  const [totpBusy, setTotpBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [lastProfileUpdateAt, setLastProfileUpdateAt] = useState<string | null>(
     localStorage.getItem(LAST_PROFILE_UPDATE_AT_KEY),
   );
@@ -159,8 +169,8 @@ export default function ProfilePage() {
   }
 
   const passwordLengthError =
-    newPassword.length > 0 && newPassword.length < 6
-      ? "Password must be at least 6 characters"
+    newPassword.length > 0 && newPassword.length < PASSWORD_MIN_LENGTH
+      ? `Password must be at least ${PASSWORD_MIN_LENGTH} characters`
       : "";
   const passwordMismatchError =
     confirmPassword.length > 0 && newPassword !== confirmPassword
@@ -191,6 +201,64 @@ export default function ProfilePage() {
     isPasswordChangeRequested ||
     passwordSectionHasError;
 
+  async function handleProfilePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      setPhotoBusy(true);
+      const fd = new FormData();
+      fd.append("profilePhoto", file);
+      const res = await apiRequestForm("POST", "/api/users/me/profile-photo", fd);
+      const body = (await res.json()) as { user?: unknown; message?: string };
+      if (body?.user && typeof body.user === "object") {
+        updateCurrentUser(body.user as Parameters<typeof updateCurrentUser>[0]);
+        setSaveState("saved");
+        toast({ title: "Identification photo updated" });
+      } else {
+        toast({
+          title: body?.message || "Failed to upload photo",
+          variant: "destructive",
+        });
+      }
+    } catch (err: unknown) {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to upload photo",
+        variant: "destructive",
+      });
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function handleProfilePhotoRemove() {
+    try {
+      setPhotoBusy(true);
+      const token = getAuthToken();
+      const res = await fetch("/api/users/me/profile-photo", {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(text || res.statusText);
+      }
+      const body = JSON.parse(text) as { user?: unknown };
+      if (body?.user && typeof body.user === "object") {
+        updateCurrentUser(body.user as Parameters<typeof updateCurrentUser>[0]);
+        setSaveState("saved");
+        toast({ title: "Identification photo removed" });
+      }
+    } catch (err: unknown) {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to remove photo",
+        variant: "destructive",
+      });
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -217,9 +285,9 @@ export default function ProfilePage() {
         });
         return;
       }
-      if (newPassword.length < 6) {
+      if (newPassword.length < PASSWORD_MIN_LENGTH) {
         toast({
-          title: "New password must be at least 6 characters",
+          title: `New password must be at least ${PASSWORD_MIN_LENGTH} characters`,
           variant: "destructive",
         });
         return;
@@ -301,7 +369,11 @@ export default function ProfilePage() {
   }
 
   async function handleRequestPasswordReset() {
-    if (!newPassword || newPassword.length < 6 || newPassword !== confirmPassword) {
+    if (
+      !newPassword ||
+      newPassword.length < PASSWORD_MIN_LENGTH ||
+      newPassword !== confirmPassword
+    ) {
       toast({
         title: "Enter and confirm a valid new password first",
         variant: "destructive",
@@ -387,8 +459,18 @@ export default function ProfilePage() {
       <Card>
         <CardContent className="pt-5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-              {initials || "U"}
+            <div className="relative h-14 w-14 shrink-0 rounded-full overflow-hidden border border-border bg-muted">
+              {user.profilePhotoUrl ? (
+                <img
+                  src={user.profilePhotoUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="h-full w-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
+                  {initials || "U"}
+                </div>
+              )}
             </div>
             <div className="space-y-1">
               <p className="text-base font-semibold">{fullName || user.username}</p>
@@ -416,6 +498,41 @@ export default function ProfilePage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <input
+                ref={profilePhotoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleProfilePhotoChange}
+              />
+              <div className="space-y-1.5">
+                <Label>Identification photo</Label>
+                <p className="text-xs text-muted-foreground">
+                  Optional. JPEG, PNG, or WebP, up to 2 MB. Shown on your profile and helps admins verify pending accounts.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={photoBusy}
+                    onClick={() => profilePhotoInputRef.current?.click()}
+                  >
+                    {photoBusy ? "Working…" : user.profilePhotoUrl ? "Change photo" : "Upload photo"}
+                  </Button>
+                  {user.profilePhotoUrl ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={photoBusy}
+                      onClick={() => void handleProfilePhotoRemove()}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="fullName">
                   Full Name <span className="text-destructive">*</span>
@@ -675,6 +792,220 @@ export default function ProfilePage() {
                     </AlertDialog>
                   </AccordionContent>
                 </AccordionItem>
+                {(isAdmin || isSuperAdmin) && (
+                  <AccordionItem value="twofactor">
+                    <AccordionTrigger className="text-sm py-2">
+                      Two-factor authentication (TOTP)
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3 pt-2 text-sm">
+                      <p className="text-xs text-muted-foreground">
+                        Adds a second step at login using a time-based code from an authenticator app.
+                      </p>
+                      {user?.totpEnabled ? (
+                        <div className="space-y-3">
+                          <p className="text-xs font-medium text-emerald-700">Two-factor is enabled.</p>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="totpDisablePw">Account password (to turn off 2FA)</Label>
+                            <Input
+                              id="totpDisablePw"
+                              type="password"
+                              value={totpDisablePassword}
+                              onChange={(e) => setTotpDisablePassword(e.target.value)}
+                              placeholder="Current password"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={totpBusy}
+                            onClick={async () => {
+                              const token = getAuthToken();
+                              if (!token) return;
+                              setTotpBusy(true);
+                              try {
+                                const res = await fetch("/api/auth/2fa/disable", {
+                                  method: "POST",
+                                  headers: {
+                                    Authorization: `Bearer ${token}`,
+                                    "Content-Type": "application/json",
+                                  },
+                                  body: JSON.stringify({ password: totpDisablePassword }),
+                                });
+                                const body = await res.json().catch(() => ({}));
+                                if (!res.ok) {
+                                  toast({
+                                    title: (body as { message?: string }).message || "Could not disable 2FA",
+                                    variant: "destructive",
+                                  });
+                                  return;
+                                }
+                                if ((body as { user?: typeof user }).user) {
+                                  updateCurrentUser((body as { user: typeof user }).user);
+                                }
+                                setTotpDisablePassword("");
+                                setTotpDraftSecret(null);
+                                setTotpDraftUrl(null);
+                                toast({ title: "Two-factor authentication disabled" });
+                              } finally {
+                                setTotpBusy(false);
+                              }
+                            }}
+                          >
+                            Disable 2FA
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {!totpDraftSecret ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              disabled={totpBusy}
+                              onClick={async () => {
+                                const token = getAuthToken();
+                                if (!token) return;
+                                setTotpBusy(true);
+                                try {
+                                  const res = await fetch("/api/auth/2fa/setup", {
+                                    headers: { Authorization: `Bearer ${token}` },
+                                  });
+                                  const body = await res.json().catch(() => ({}));
+                                  if (!res.ok) {
+                                    toast({
+                                      title: (body as { message?: string }).message || "Could not start setup",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  setTotpDraftSecret((body as { secret?: string }).secret ?? null);
+                                  setTotpDraftUrl((body as { otpauthUrl?: string }).otpauthUrl ?? null);
+                                } finally {
+                                  setTotpBusy(false);
+                                }
+                              }}
+                            >
+                              Generate setup key
+                            </Button>
+                          ) : (
+                            <>
+                              {totpDraftUrl ? (
+                                <div className="flex flex-col items-center gap-2 py-1">
+                                  <p className="text-xs text-muted-foreground text-center max-w-sm">
+                                    Scan this QR code with your authenticator app. It adds this account
+                                    without typing the secret.
+                                  </p>
+                                  <div
+                                    className="rounded-lg border bg-white p-3 shadow-sm dark:border-border"
+                                    data-testid="totp-setup-qr-wrap"
+                                  >
+                                    <QRCode
+                                      value={totpDraftUrl}
+                                      size={192}
+                                      level="M"
+                                      title="Authenticator setup QR"
+                                      bgColor="#ffffff"
+                                      fgColor="#000000"
+                                    />
+                                  </div>
+                                </div>
+                              ) : null}
+                              <div className="space-y-1">
+                                <Label>Secret (base32) — if you cannot scan</Label>
+                                <div className="flex gap-2">
+                                  <Input readOnly value={totpDraftSecret} className="font-mono text-xs" />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(totpDraftSecret);
+                                      toast({ title: "Copied" });
+                                    }}
+                                  >
+                                    <Copy className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <Label>Setup link (otpauth) — manual entry</Label>
+                                <div className="flex gap-2">
+                                  <Input readOnly value={totpDraftUrl ?? ""} className="text-xs font-mono" />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="outline"
+                                    disabled={!totpDraftUrl}
+                                    onClick={() => {
+                                      if (!totpDraftUrl) return;
+                                      void navigator.clipboard.writeText(totpDraftUrl);
+                                      toast({ title: "Setup link copied" });
+                                    }}
+                                  >
+                                    <Copy className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="totpEnableCode">6-digit code from app</Label>
+                                <Input
+                                  id="totpEnableCode"
+                                  inputMode="numeric"
+                                  value={totpEnableCode}
+                                  onChange={(e) =>
+                                    setTotpEnableCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                                  }
+                                  placeholder="000000"
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                disabled={totpBusy || totpEnableCode.length !== 6}
+                                onClick={async () => {
+                                  const token = getAuthToken();
+                                  if (!token || !totpDraftSecret) return;
+                                  setTotpBusy(true);
+                                  try {
+                                    const res = await fetch("/api/auth/2fa/enable", {
+                                      method: "POST",
+                                      headers: {
+                                        Authorization: `Bearer ${token}`,
+                                        "Content-Type": "application/json",
+                                      },
+                                      body: JSON.stringify({
+                                        secret: totpDraftSecret,
+                                        code: totpEnableCode,
+                                      }),
+                                    });
+                                    const body = await res.json().catch(() => ({}));
+                                    if (!res.ok) {
+                                      toast({
+                                        title: (body as { message?: string }).message || "Invalid code",
+                                        variant: "destructive",
+                                      });
+                                      return;
+                                    }
+                                    if ((body as { user?: typeof user }).user) {
+                                      updateCurrentUser((body as { user: typeof user }).user);
+                                    }
+                                    setTotpDraftSecret(null);
+                                    setTotpDraftUrl(null);
+                                    setTotpEnableCode("");
+                                    toast({ title: "Two-factor authentication enabled" });
+                                  } finally {
+                                    setTotpBusy(false);
+                                  }
+                                }}
+                              >
+                                Confirm and enable
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
               </Accordion>
 
               <div className="pt-2 border-t space-y-2">

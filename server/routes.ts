@@ -14,6 +14,7 @@ import { dbGet, dbRun } from "./db-query";
 import { authSessionRepo } from "./auth-session-repo";
 import { domainRepo } from "./domain-repo";
 import { runPendingMigrations } from "./migration-runner";
+import { pruneExpiredPendingTwoFactor } from "./login-security";
 
 export async function registerRoutes(_httpServer: Server, app: Express) {
   if (DB_PROVIDER === "sqlite") {
@@ -35,7 +36,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
   )`);
     // Force fresh auth after every server restart.
     await dbRun(sql`DELETE FROM sessions`);
@@ -362,6 +364,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       await dbRun(sql`ALTER TABLE users ADD COLUMN student_batch INTEGER`);
     }
     try {
+      await dbRun(sql`SELECT profile_photo_path FROM users LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE users ADD COLUMN profile_photo_path TEXT`);
+    }
+    try {
       await dbRun(sql`SELECT yearly_number FROM cases LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE cases ADD COLUMN yearly_number INTEGER`);
@@ -419,13 +426,15 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'pending',
       approved BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      profile_photo_path TEXT
     )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL,
       created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
     )`);
     await dbRun(sql`DELETE FROM sessions`);
     await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
@@ -668,6 +677,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`UPDATE frequencies SET short_code = name WHERE COALESCE(short_code, '') = ''`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS yearly_number INTEGER`);
     await dbRun(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS student_batch INTEGER`);
+    await dbRun(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_path TEXT`);
     await dbRun(
       sql`CREATE INDEX IF NOT EXISTS case_change_logs_created_at_idx ON case_change_logs(created_at)`,
     );
@@ -696,6 +706,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   }
 
   await runPendingMigrations();
+  await pruneExpiredPendingTwoFactor();
 
   const existingBps = await domainRepo.getBreakpoints();
   if (existingBps.length === 0) {

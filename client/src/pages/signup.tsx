@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Microscope, UserPlus, CheckCircle, Eye, EyeOff } from "lucide-react";
+import { PASSWORD_MIN_LENGTH } from "@shared/schema";
 
 const DESIGNATIONS = [
   { value: "veterinarian", label: "Veterinarian" },
@@ -39,6 +40,33 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
+  const [photoInputKey, setPhotoInputKey] = useState(0);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const photoObjectUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (profilePhotoFile) {
+      if (photoObjectUrlRef.current) {
+        URL.revokeObjectURL(photoObjectUrlRef.current);
+      }
+      const url = URL.createObjectURL(profilePhotoFile);
+      photoObjectUrlRef.current = url;
+      setPhotoPreviewUrl(url);
+    } else {
+      if (photoObjectUrlRef.current) {
+        URL.revokeObjectURL(photoObjectUrlRef.current);
+        photoObjectUrlRef.current = null;
+      }
+      setPhotoPreviewUrl(null);
+    }
+    return () => {
+      if (photoObjectUrlRef.current) {
+        URL.revokeObjectURL(photoObjectUrlRef.current);
+        photoObjectUrlRef.current = null;
+      }
+    };
+  }, [profilePhotoFile]);
 
   const passwordStrength = (() => {
     if (!password) return { label: "Not set", score: 0, color: "bg-muted" };
@@ -59,8 +87,11 @@ export default function SignupPage() {
       toast({ title: "Please fill in all required fields", variant: "destructive" });
       return;
     }
-    if (password.length < 6) {
-      toast({ title: "Password must be at least 6 characters", variant: "destructive" });
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      toast({
+        title: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+        variant: "destructive",
+      });
       return;
     }
     if (password !== confirmPassword) {
@@ -97,6 +128,7 @@ export default function SignupPage() {
       studentBatch: designation === "student" ? normalizedBatch : null,
       username,
       password,
+      profilePhotoFile,
     });
     setLoading(false);
 
@@ -183,7 +215,7 @@ export default function SignupPage() {
                   <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Choose a username" data-testid="input-signup-username" />
                 </div>
                 {designation === "student" && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 sm:col-span-2">
                     <Label htmlFor="studentBatch">Batch <span className="text-destructive">*</span></Label>
                     <div className="flex items-center gap-2">
                       <Input
@@ -206,7 +238,7 @@ export default function SignupPage() {
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min 6 characters"
+                      placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                       data-testid="input-signup-password"
                     />
                     <Button
@@ -252,6 +284,44 @@ export default function SignupPage() {
                       {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </Button>
                   </div>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="profilePhoto">Identification photo (optional)</Label>
+                  <Input
+                    key={photoInputKey}
+                    id="profilePhoto"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="cursor-pointer"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      setProfilePhotoFile(f);
+                    }}
+                    data-testid="input-signup-profile-photo"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    JPEG, PNG, or WebP, up to 2 MB. Helps administrators confirm your identity when approving new accounts.
+                  </p>
+                  {photoPreviewUrl && (
+                    <div className="flex items-center gap-3 pt-1">
+                      <img
+                        src={photoPreviewUrl}
+                        alt="Preview"
+                        className="h-16 w-16 rounded-md object-cover border border-border"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setProfilePhotoFile(null);
+                          setPhotoInputKey((k) => k + 1);
+                        }}
+                      >
+                        Clear photo
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 

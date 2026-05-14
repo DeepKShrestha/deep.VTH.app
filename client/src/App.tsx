@@ -18,6 +18,7 @@ import HospitalTreatmentMedicationsPage from "@/pages/hospital-treatment-medicat
 import HospitalTreatmentRoutesPage from "@/pages/hospital-treatment-routes";
 import HospitalTreatmentFrequenciesPage from "@/pages/hospital-treatment-frequencies";
 import HospitalTreatmentDoseUnitsPage from "@/pages/hospital-treatment-dose-units";
+import HospitalTreatmentDurationsPage from "@/pages/hospital-treatment-durations";
 import HospitalVeterinariansPage from "@/pages/hospital-veterinarians";
 import RegisterCase from "@/pages/register-case";
 import CaseList from "@/pages/case-list";
@@ -31,7 +32,7 @@ import DashboardPage from "@/pages/dashboard";
 import HospitalDashboardPage from "@/pages/hospital-dashboard";
 import NotFound from "@/pages/not-found";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
-import ProfilePage from "./pages/profile";
+import ProfilePage from "@/pages/profile";
 
 function ProtectedRoutes() {
   const {
@@ -97,6 +98,9 @@ function ProtectedRoutes() {
           </Route>
           <Route path="/new-case/settings/treatment/dose-units">
             {canManageAstAdmin ? <HospitalTreatmentDoseUnitsPage /> : <Redirect to="/new-case/settings/treatment" />}
+          </Route>
+          <Route path="/new-case/settings/treatment/durations">
+            {canManageAstAdmin ? <HospitalTreatmentDurationsPage /> : <Redirect to="/new-case/settings/treatment" />}
           </Route>
           <Route path="/new-case/settings/veterinarians">
             {canManageAstAdmin ? <HospitalVeterinariansPage /> : <Redirect to="/new-case/settings" />}

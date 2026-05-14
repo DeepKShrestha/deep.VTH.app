@@ -1,11 +1,14 @@
-import { Pool } from "pg";
 import type { PasswordResetRequest, User } from "@shared/schema";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { dbAll, dbRun } from "./db-query";
+import { getPgPool } from "./pg-pool";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+
+/** Sessions with no API activity for this long count as offline in admin presence. */
+const ACTIVE_PRESENCE_MAX_IDLE_MS = 3 * 60 * 1000;
 
 type Provider = "sqlite" | "postgres";
 
@@ -13,20 +16,6 @@ function getProvider(): Provider {
   return (process.env.DB_PROVIDER || "sqlite").toLowerCase() === "postgres"
     ? "postgres"
     : "sqlite";
-}
-
-let pgPool: Pool | null = null;
-function getPgPool(): Pool {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is required when DB_PROVIDER=postgres for auth/session operations",
-    );
-  }
-  if (!pgPool) {
-    pgPool = new Pool({ connectionString: url });
-  }
-  return pgPool;
 }
 
 function mapPgUser(row: Record<string, unknown>): User {
@@ -43,6 +32,15 @@ function mapPgUser(row: Record<string, unknown>): User {
     role: String(row.role),
     approved: Boolean(row.approved),
     createdAt: String(row.created_at),
+    failedLoginAttempts:
+      row.failed_login_attempts == null ? 0 : Number(row.failed_login_attempts),
+    lockedUntil: row.locked_until == null ? null : String(row.locked_until),
+    totpSecret: row.totp_secret == null ? null : String(row.totp_secret),
+    totpEnabled: Boolean(row.totp_enabled),
+    profilePhotoPath:
+      row.profile_photo_path == null || row.profile_photo_path === ""
+        ? null
+        : String(row.profile_photo_path),
   };
 }
 
@@ -73,11 +71,12 @@ export const authSessionRepo = {
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
     await getPgPool().query(
-      `INSERT INTO sessions (token, user_id, created_at, expires_at)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO sessions (token, user_id, created_at, expires_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $3)
        ON CONFLICT(token) DO UPDATE SET
          user_id = excluded.user_id,
-         expires_at = excluded.expires_at`,
+         expires_at = excluded.expires_at,
+         last_seen_at = excluded.last_seen_at`,
       [token, userId, createdAt, expiresAt],
     );
   },
@@ -97,6 +96,11 @@ export const authSessionRepo = {
       await this.deleteSession(token);
       return undefined;
     }
+    const seen = new Date().toISOString();
+    await getPgPool().query(
+      `UPDATE sessions SET last_seen_at = $1 WHERE token = $2 AND expires_at > NOW()`,
+      [seen, token],
+    );
     return Number(row.user_id);
   },
 
@@ -125,16 +129,24 @@ export const authSessionRepo = {
   },
 
   async getActiveSessionUserIds(): Promise<number[]> {
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.now() - ACTIVE_PRESENCE_MAX_IDLE_MS).toISOString();
     if (getProvider() === "sqlite") {
       const rows = await dbAll<{ user_id: number }>(
         sql`SELECT DISTINCT user_id
             FROM sessions
-            WHERE expires_at > ${new Date().toISOString()}`,
+            WHERE expires_at > ${nowIso}
+              AND last_seen_at IS NOT NULL
+              AND last_seen_at > ${cutoffIso}`,
       );
       return rows.map((row) => Number(row.user_id));
     }
     const result = await getPgPool().query<{ user_id: number }>(
-      "SELECT DISTINCT user_id FROM sessions WHERE expires_at > NOW()",
+      `SELECT DISTINCT user_id FROM sessions
+       WHERE expires_at > NOW()
+         AND last_seen_at IS NOT NULL
+         AND last_seen_at > $1`,
+      [cutoffIso],
     );
     return result.rows.map((row) => Number(row.user_id));
   },
@@ -195,6 +207,7 @@ export const authSessionRepo = {
     passwordHash: string;
     role: string;
     approved: boolean;
+    profilePhotoPath?: string | null;
   }): Promise<User> {
     if (getProvider() === "sqlite") {
       return storage.createUser(data);
@@ -203,8 +216,8 @@ export const authSessionRepo = {
     const createdAt = new Date().toISOString();
     const result = await getPgPool().query(
       `INSERT INTO users
-      (full_name, address, phone, email, designation, student_batch, username, password_hash, role, approved, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      (full_name, address, phone, email, designation, student_batch, username, password_hash, role, approved, created_at, profile_photo_path)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         data.fullName,
@@ -218,6 +231,7 @@ export const authSessionRepo = {
         data.role,
         data.approved,
         createdAt,
+        data.profilePhotoPath ?? null,
       ],
     );
     return mapPgUser(result.rows[0] as Record<string, unknown>);
@@ -246,6 +260,12 @@ export const authSessionRepo = {
     if (data.passwordHash !== undefined) set("password_hash", data.passwordHash);
     if (data.role !== undefined) set("role", data.role);
     if (data.approved !== undefined) set("approved", data.approved);
+    if (data.failedLoginAttempts !== undefined)
+      set("failed_login_attempts", data.failedLoginAttempts);
+    if (data.lockedUntil !== undefined) set("locked_until", data.lockedUntil);
+    if (data.totpSecret !== undefined) set("totp_secret", data.totpSecret);
+    if (data.totpEnabled !== undefined) set("totp_enabled", data.totpEnabled);
+    if (data.profilePhotoPath !== undefined) set("profile_photo_path", data.profilePhotoPath);
 
     if (updates.length === 0) {
       return this.getUserById(id);
@@ -290,13 +310,15 @@ export const authSessionRepo = {
 const sessionsSqlite = {
   async set(token: string, userId: number): Promise<void> {
     const now = new Date();
+    const nowIso = now.toISOString();
     const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
     await dbRun(
-      sql`INSERT INTO sessions (token, user_id, created_at, expires_at)
-        VALUES (${token}, ${userId}, ${now.toISOString()}, ${expiresAt})
+      sql`INSERT INTO sessions (token, user_id, created_at, expires_at, last_seen_at)
+        VALUES (${token}, ${userId}, ${nowIso}, ${expiresAt}, ${nowIso})
         ON CONFLICT(token) DO UPDATE SET
           user_id = excluded.user_id,
-          expires_at = excluded.expires_at`,
+          expires_at = excluded.expires_at,
+          last_seen_at = excluded.last_seen_at`,
     );
   },
   get(token: string): number | undefined {
@@ -307,6 +329,13 @@ const sessionsSqlite = {
     if (Date.now() > new Date(row.expires_at).getTime()) {
       void this.delete(token);
       return undefined;
+    }
+    try {
+      db.run(
+        sql`UPDATE sessions SET last_seen_at = ${new Date().toISOString()} WHERE token = ${token}`,
+      );
+    } catch {
+      // Pre-migration DB without last_seen_at — presence falls back until migrations run.
     }
     return row.user_id;
   },

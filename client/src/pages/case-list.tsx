@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Case } from "@shared/schema";
@@ -32,6 +32,14 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+type CasesPageResponse = {
+  items: Case[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
 export default function CaseList({
   backHref = "/",
   scope,
@@ -39,7 +47,6 @@ export default function CaseList({
   backHref?: string;
   scope?: "ast" | "hospital";
 }) {
-  const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showCaseLogs, setShowCaseLogs] = useState(false);
   const [caseLogsFilter, setCaseLogsFilter] = useState("");
@@ -47,14 +54,60 @@ export default function CaseList({
   const { toast } = useToast();
   const isHospitalHistory = scope ? scope === "hospital" : backHref === "/new-case";
   const caseScope = isHospitalHistory ? "hospital" : "ast";
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [speciesFilter, setSpeciesFilter] = useState("");
+  const [debouncedSpecies, setDebouncedSpecies] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
-  const { data: cases, isLoading } = useQuery<Case[]>({
-    queryKey: ["/api/cases", caseScope],
+  useEffect(() => {
+    const tmr = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => window.clearTimeout(tmr);
+  }, [search]);
+
+  useEffect(() => {
+    const tmr = window.setTimeout(() => setDebouncedSpecies(speciesFilter.trim()), 350);
+    return () => window.clearTimeout(tmr);
+  }, [speciesFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, debouncedSpecies, caseScope]);
+
+  const listQueryKey = useMemo(
+    () => ["/api/cases", caseScope, debouncedSearch, debouncedSpecies, page, pageSize] as const,
+    [caseScope, debouncedSearch, debouncedSpecies, page],
+  );
+
+  const { data: casesPayload, isLoading } = useQuery({
+    queryKey: listQueryKey,
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/cases?scope=${caseScope}`);
-      return res.json();
+      const params = new URLSearchParams();
+      params.set("scope", caseScope);
+      params.set("paginated", "true");
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      if (debouncedSpecies) params.set("species", debouncedSpecies);
+      const res = await apiRequest("GET", `/api/cases?${params.toString()}`);
+      const body = (await res.json()) as CasesPageResponse | Case[];
+      if (Array.isArray(body)) {
+        return {
+          items: body,
+          page: 1,
+          pageSize: body.length,
+          total: body.length,
+          totalPages: 1,
+        } satisfies CasesPageResponse;
+      }
+      return body as CasesPageResponse;
     },
   });
+
+  const filtered = casesPayload?.items ?? [];
+  const total = casesPayload?.total ?? 0;
+  const totalPages = Math.max(1, casesPayload?.totalPages ?? 1);
 
   const deleteCaseMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -67,23 +120,6 @@ export default function CaseList({
     },
   });
 
-  const scopedCases = (cases || []).filter((c) => {
-    const isHospitalCase = String(c.caseNumber || "")
-      .toUpperCase()
-      .startsWith("CASE-");
-    return isHospitalHistory ? isHospitalCase : !isHospitalCase;
-  });
-  const filtered = scopedCases.filter((c) => {
-    const q = search.toLowerCase();
-    return (
-      c.caseNumber.toLowerCase().includes(q) ||
-      c.ownerName.toLowerCase().includes(q) ||
-      c.species.toLowerCase().includes(q) ||
-      c.breed.toLowerCase().includes(q) ||
-      (c.ownerPhone && c.ownerPhone.includes(q)) ||
-      (c.billNumber && c.billNumber.toLowerCase().includes(q))
-    );
-  });
   const caseLogScope: "hospital" | "ast" = isHospitalHistory ? "hospital" : "ast";
   const caseDetailBasePath =
     caseScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
@@ -141,14 +177,16 @@ export default function CaseList({
             Previous Cases
           </h1>
         </div>
-        {canCreateFromThisList && (
-          <Link href={createCaseHref} className="w-full sm:w-auto">
-            <Button size="sm" className="gap-1.5" data-testid="button-new-case">
-              <ClipboardPlus className="w-3.5 h-3.5" />
-              New Case
-            </Button>
-          </Link>
-        )}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          {canCreateFromThisList && (
+            <Link href={createCaseHref} className="w-full sm:w-auto">
+              <Button size="sm" className="gap-1.5" data-testid="button-new-case">
+                <ClipboardPlus className="w-3.5 h-3.5" />
+                New Case
+              </Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       {isAdmin && (
@@ -234,6 +272,20 @@ export default function CaseList({
           data-testid="input-search"
         />
       </div>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Input
+          type="text"
+          placeholder="Species (exact match, e.g. Canine)"
+          value={speciesFilter}
+          onChange={(e) => setSpeciesFilter(e.target.value)}
+          className="h-9 text-sm sm:max-w-xs"
+          data-testid="input-species-filter"
+        />
+        <p className="text-xs text-muted-foreground self-center">
+          {total} case{total === 1 ? "" : "s"}
+          {debouncedSearch || debouncedSpecies ? " (filtered)" : ""}
+        </p>
+      </div>
 
             {/* Cases */}
       {isLoading ? (
@@ -255,15 +307,15 @@ export default function CaseList({
           </div>
           <div className="space-y-1">
             <p className="font-medium text-sm">
-              {search ? "No matching cases" : "No cases yet"}
+              {debouncedSearch || debouncedSpecies ? "No matching cases" : "No cases yet"}
             </p>
             <p className="text-sm text-muted-foreground">
-              {search
+              {debouncedSearch || debouncedSpecies
                 ? "Try a different search term."
                 : `Register your first ${emptyStateCaseLabel} to get started.`}
             </p>
           </div>
-          {!search && canCreateFromThisList && (
+          {!debouncedSearch && !debouncedSpecies && canCreateFromThisList && (
             <Link href={createCaseHref}>
               <Button size="sm" className="gap-1.5">
                 <ClipboardPlus className="w-3.5 h-3.5" />
@@ -415,6 +467,31 @@ export default function CaseList({
               );
              })}
           </div>
+          {totalPages > 1 && (
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>

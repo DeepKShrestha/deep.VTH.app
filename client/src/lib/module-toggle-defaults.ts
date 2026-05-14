@@ -36,6 +36,8 @@ const HOSPITAL_DEFAULTS: HospitalToggleDefaults = {
   compactPrintMode: false,
 };
 
+export const TOGGLE_DEFAULTS_HYDRATED_EVENT = "vth:toggle-defaults-hydrated";
+
 function storageKey(scope: ModuleScope): string {
   return `vth:toggle-defaults:${scope}`;
 }
@@ -48,6 +50,47 @@ function safeParse<T>(raw: string | null): Partial<T> | null {
   } catch {
     return null;
   }
+}
+
+function pickAstFromRecord(raw: Record<string, unknown>): Partial<AstToggleDefaults> {
+  const out: Partial<AstToggleDefaults> = {};
+  (Object.keys(AST_DEFAULTS) as (keyof AstToggleDefaults)[]).forEach((k) => {
+    const v = raw[k];
+    if (typeof v === "boolean") out[k] = v;
+  });
+  return out;
+}
+
+function pickHospitalFromRecord(raw: Record<string, unknown>): Partial<HospitalToggleDefaults> {
+  const out: Partial<HospitalToggleDefaults> = {};
+  (Object.keys(HOSPITAL_DEFAULTS) as (keyof HospitalToggleDefaults)[]).forEach((k) => {
+    const v = raw[k];
+    if (typeof v === "boolean") out[k] = v;
+  });
+  return out;
+}
+
+/**
+ * Merge server-stored defaults into localStorage so backups/restores and
+ * multi-device use stay consistent. Dispatches `TOGGLE_DEFAULTS_HYDRATED_EVENT`.
+ */
+export function hydrateToggleDefaultsFromServer(prefs: {
+  astToggleDefaults: Record<string, unknown> | null;
+  hospitalToggleDefaults: Record<string, unknown> | null;
+}) {
+  if (typeof window === "undefined") return;
+  if (prefs.astToggleDefaults) {
+    const merged = { ...AST_DEFAULTS, ...pickAstFromRecord(prefs.astToggleDefaults) };
+    window.localStorage.setItem(storageKey("ast"), JSON.stringify(merged));
+  }
+  if (prefs.hospitalToggleDefaults) {
+    const merged = {
+      ...HOSPITAL_DEFAULTS,
+      ...pickHospitalFromRecord(prefs.hospitalToggleDefaults),
+    };
+    window.localStorage.setItem(storageKey("hospital"), JSON.stringify(merged));
+  }
+  window.dispatchEvent(new Event(TOGGLE_DEFAULTS_HYDRATED_EVENT));
 }
 
 export function getAstToggleDefaults(): AstToggleDefaults {

@@ -1,12 +1,17 @@
-import express, { type Express, type Request, type Response } from "express";
-import { insertCaseSchema } from "@shared/schema";
+import type { Express, Request, Response } from "express";
+import { insertCaseSchema, patchCaseSchema } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
-import { caseRepo } from "../case-repo";
+import { caseRepo, type CaseListFilters, type CaseViewerAccess } from "../case-repo";
 import { authSessionRepo } from "../auth-session-repo";
 import fs from "fs";
 import path from "path";
 import multer from "multer";
+import PDFDocument from "pdfkit";
+import {
+  signAttachmentDownloadUrl,
+  verifyAttachmentSignature,
+} from "../services/attachment-signing";
 import {
   canDownload,
   canDownloadHospital,
@@ -30,11 +35,33 @@ import {
   ensureHospitalVeterinarianDefinition,
   mergeOrphanFormSections,
 } from "../hospital-form-definition";
+import {
+  astLongExportColumnOrder,
+  astWideExportColumnOrder,
+  buildExportCsvFilename,
+  hospitalExportColumnOrder,
+  rowsToCsv,
+  toAstLongExportRows,
+  toAstWideExportRows,
+  toHospitalExportRows,
+} from "./cases-export";
 
 function resolveFormScope(raw: unknown): "ast" | "hospital" {
   return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
 }
-import { rowsToCsv, toExportRows, toHospitalExportRows } from "./cases-export";
+
+/** Students only see cases they registered (`registered_by`); staff/admin unchanged. */
+function caseViewerAccess(user: { id: number; role: string }): CaseViewerAccess | undefined {
+  if (user.role === "student") return { role: "student", userId: user.id };
+  return undefined;
+}
+
+function parseExportOutput(raw: unknown): "csv" | "xlsx" | null {
+  const s = String(raw ?? "csv").toLowerCase().trim();
+  if (s === "csv" || s === "") return "csv";
+  if (s === "xlsx") return "xlsx";
+  return null;
+}
 
 const CASE_ATTACHMENT_UPLOAD_DIR = (() => {
   const raw = process.env.CASE_ATTACHMENTS_DIR?.trim();
@@ -71,9 +98,20 @@ type CaseAttachmentRow = {
   created_at: string;
 };
 
-function toAttachmentPublicUrl(storagePath: string): string {
-  const relative = path.relative(CASE_ATTACHMENT_UPLOAD_DIR, storagePath).replace(/\\/g, "/");
-  return `/uploads/case-attachments/${relative}`;
+/**
+ * Issue a short-lived signed URL for a case attachment.
+ *
+ * The previous implementation returned `/uploads/case-attachments/<file>`,
+ * which was served by `express.static` with NO authentication — anyone with
+ * the URL (and the URL was guessable / shareable / cached by reverse
+ * proxies) could read patient images. We now return a `/api/case-attachments/:id`
+ * URL signed with an HMAC; only the server can mint these, and they expire.
+ *
+ * Callers (the case-attachment list endpoints) must already have done the
+ * scope/permission check for the parent case before calling this.
+ */
+function toAttachmentPublicUrl(attachmentId: number): string {
+  return signAttachmentDownloadUrl(attachmentId);
 }
 
 type DownloadRequestRow = {
@@ -145,11 +183,104 @@ function userCanEditScope(role: string, scope: "ast" | "hospital"): boolean {
     : hasCapability(role, "ast.case.create");
 }
 
+/**
+ * Compares the user-meaningful fields of two case rows and returns the keys
+ * that actually changed. Used to log a compact summary in case_change_logs
+ * when a case is patched (so we can render a "who changed what" timeline).
+ *
+ * Server-controlled audit/counter fields are intentionally excluded so they
+ * never appear as "changed" in the log.
+ */
+const CASE_PATCH_LOG_FIELD_KEYS = [
+  "billNumber",
+  "date",
+  "dateAd",
+  "ownerName",
+  "ownerAddress",
+  "ownerPhone",
+  "species",
+  "breed",
+  "animalName",
+  "age",
+  "sex",
+  "sampleType",
+  "sampleDate",
+  "sampleDateAd",
+  "cultureResult",
+  "astResults",
+  "remarks",
+  "customFields",
+  "treatmentDetails",
+  "veterinarianId",
+  "veterinarianName",
+  "veterinarianNvc",
+  "veterinarianDepartment",
+] as const;
+
+function computeChangedCaseFieldKeys(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string[] {
+  const changed: string[] = [];
+  for (const key of CASE_PATCH_LOG_FIELD_KEYS) {
+    const a = before[key];
+    const b = after[key];
+    if (a === b) continue;
+    if (a == null && b == null) continue;
+    if (typeof a === "string" && typeof b === "string" && a === b) continue;
+    changed.push(key);
+  }
+  return changed;
+}
+
 export function registerCaseAndDownloadRoutes(app: Express) {
   if (!fs.existsSync(CASE_ATTACHMENT_UPLOAD_DIR)) {
     fs.mkdirSync(CASE_ATTACHMENT_UPLOAD_DIR, { recursive: true });
   }
-  app.use("/uploads/case-attachments", express.static(CASE_ATTACHMENT_UPLOAD_DIR));
+  // The previous `app.use("/uploads/case-attachments", express.static(...))`
+  // is gone on purpose. Case attachments now require a signed URL — see the
+  // `GET /api/case-attachments/:id` handler below and `signAttachmentDownloadUrl`.
+
+  app.get("/api/case-attachments/:id", async (req, res) => {
+    const raw = req.params.id;
+    const id = Number.parseInt(Array.isArray(raw) ? String(raw[0]) : String(raw), 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid attachment id" });
+    }
+    const tParam = String(req.query.t ?? "");
+    const sigParam = String(req.query.sig ?? "");
+    if (!verifyAttachmentSignature(id, tParam, sigParam)) {
+      return res
+        .status(403)
+        .json({ message: "Attachment link is invalid or expired" });
+    }
+    const row = await dbGet<{
+      id: number;
+      mime_type: string;
+      file_name: string;
+      storage_path: string;
+    }>(
+      sql`SELECT id, mime_type, file_name, storage_path
+          FROM case_attachments
+          WHERE id = ${id}`,
+    );
+    if (!row) {
+      return res.status(404).json({ message: "Attachment not found" });
+    }
+    const resolved = path.resolve(row.storage_path);
+    if (!resolved.startsWith(CASE_ATTACHMENT_UPLOAD_DIR)) {
+      // Defence in depth: refuse to serve files outside the configured upload dir.
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    if (!fs.existsSync(resolved)) {
+      return res.status(404).json({ message: "Attachment file missing on disk" });
+    }
+    res.setHeader("Content-Type", row.mime_type || "application/octet-stream");
+    // Signed URLs are time-bounded; allow short browser cache so re-renders
+    // don't refetch the same image dozens of times within one page session.
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.sendFile(resolved);
+  });
 
   const attachmentUpload = multer({
     storage: multer.diskStorage({
@@ -280,7 +411,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return y;
     };
 
-    const allCases = await caseRepo.getCases(dashboardScope);
+    const allCases = await caseRepo.getCases(dashboardScope, caseViewerAccess(currentUser));
     const speciesSet = new Set<string>();
     const breedSet = new Set<string>();
     const sexSet = new Set<string>();
@@ -1057,7 +1188,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
             fileName: row.file_name,
             mimeType: row.mime_type,
             fileSize: row.file_size,
-            url: toAttachmentPublicUrl(row.storage_path),
+            url: toAttachmentPublicUrl(row.id),
             createdAt: row.created_at,
           });
         }
@@ -1097,6 +1228,143 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     return res.status(204).end();
   });
 
+  /**
+   * Patient history endpoint — given a case id, return all OTHER cases that
+   * look like they belong to the same owner.
+   *
+   * Matching strategy (v1, heuristic — there is no separate `owners` table
+   * yet, so we de-dupe on the data we have):
+   *   - Same `owner_phone` (normalised: digits only) — strongest signal.
+   *   - Otherwise: same `owner_name` (case-insensitive, trimmed) AND same
+   *     normalised owner_address.
+   *
+   * Returns cases across BOTH scopes (hospital + AST) when the requester can
+   * view both — surgeons checking history want to see lab results from the
+   * same patient and vice versa.
+   */
+  app.get("/api/cases/:id/patient-history", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseId = getIdParam(req);
+    const caseData = await caseRepo.getCase(caseId, scope, caseViewerAccess(currentUser));
+    if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+
+    const phoneDigits = String(caseData.ownerPhone || "").replace(/\D/g, "");
+    const nameNorm = String(caseData.ownerName || "").trim().toLowerCase();
+    const addrNorm = String(caseData.ownerAddress || "").trim().toLowerCase();
+
+    if (!phoneDigits && !nameNorm) {
+      return res.json([]);
+    }
+
+    // We pull a generous candidate window then dedupe in JS. Owner phone is
+    // the only well-indexed signal; doing the fuzzy name/address comparison
+    // in SQL across both providers (LOWER/REPLACE) would balloon the query.
+    type CaseLite = {
+      id: number;
+      case_number: string;
+      date: string;
+      owner_name: string;
+      owner_address: string;
+      owner_phone: string;
+      species: string;
+      breed: string;
+      animal_name: string | null;
+      created_at: string;
+      registered_by: number | null;
+    };
+    const candidates = await dbAll<CaseLite>(
+      sql`SELECT id, case_number, date, owner_name, owner_address, owner_phone,
+                 species, breed, animal_name, created_at, registered_by
+          FROM cases
+          WHERE id != ${caseId}
+          ORDER BY created_at DESC
+          LIMIT 2000`,
+    );
+
+    const matches = candidates.filter((row) => {
+      const rowPhone = String(row.owner_phone || "").replace(/\D/g, "");
+      if (phoneDigits && rowPhone && rowPhone === phoneDigits) return true;
+      const rowName = String(row.owner_name || "").trim().toLowerCase();
+      const rowAddr = String(row.owner_address || "").trim().toLowerCase();
+      return Boolean(nameNorm) && rowName === nameNorm && rowAddr === addrNorm;
+    });
+
+    // Scope-filter by what the user can view — never leak hospital data to
+    // someone with only AST view rights, even though we matched on owner.
+    const filtered = matches.filter((row) => {
+      const rowScope = resolveCaseScopeFromCaseNumber(row.case_number);
+      if (!userCanViewScope(currentUser.role, rowScope)) return false;
+      if (
+        currentUser.role === "student" &&
+        row.registered_by != null &&
+        row.registered_by !== currentUser.id
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    return res.json(
+      filtered.slice(0, 100).map((row) => ({
+        id: row.id,
+        caseNumber: row.case_number,
+        caseScope: resolveCaseScopeFromCaseNumber(row.case_number),
+        date: row.date,
+        ownerName: row.owner_name,
+        ownerAddress: row.owner_address,
+        ownerPhone: row.owner_phone,
+        species: row.species,
+        breed: row.breed,
+        animalName: row.animal_name,
+        createdAt: row.created_at,
+      })),
+    );
+  });
+
+  /**
+   * Per-case edit history viewer endpoint.
+   *
+   * Returns the `case_change_logs` rows for a single case — created, updated
+   * (with which fields), deleted. Any user who can VIEW the case can see its
+   * history (no extra elevation), which matches user expectations: the same
+   * audience that can read the data should be able to see who changed it.
+   */
+  app.get("/api/cases/:id/history", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseId = getIdParam(req);
+    const caseData = await caseRepo.getCase(caseId, scope, caseViewerAccess(currentUser));
+    if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+    const rows = await dbAll<CaseChangeLogRow>(
+      sql`SELECT id, case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at
+          FROM case_change_logs
+          WHERE case_id = ${caseId}
+          ORDER BY id DESC
+          LIMIT 500`,
+    );
+    return res.json(
+      rows.map((row) => ({
+        id: row.id,
+        caseId: row.case_id,
+        caseNumber: row.case_number,
+        caseScope: row.case_scope,
+        action: row.action,
+        actorUserId: row.actor_user_id,
+        actorRole: row.actor_role,
+        actorName: row.actor_name,
+        actorUsername: row.actor_username,
+        createdAt: row.created_at,
+      })),
+    );
+  });
+
   app.get("/api/cases/:id/attachments", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
@@ -1104,7 +1372,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
     const caseId = getIdParam(req);
-    const caseData = await caseRepo.getCase(caseId, scope);
+    const caseData = await caseRepo.getCase(caseId, scope, caseViewerAccess(currentUser));
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
     const rows = await dbAll<CaseAttachmentRow>(
       sql`SELECT id, case_id, section_key, category, file_name, mime_type, file_size, storage_path, created_at
@@ -1121,7 +1389,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         fileName: row.file_name,
         mimeType: row.mime_type,
         fileSize: row.file_size,
-        url: toAttachmentPublicUrl(row.storage_path),
+        url: toAttachmentPublicUrl(row.id),
         createdAt: row.created_at,
       })),
     );
@@ -1134,10 +1402,26 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
     const pagination = getPaginationParams(req);
-    if (!pagination.shouldPaginate) {
-      return res.json(await caseRepo.getCases(scope));
+    const listFilters: CaseListFilters = {
+      q: String(req.query.q ?? "").trim() || undefined,
+      species: String(req.query.species ?? "").trim() || undefined,
+      dateFrom: String(req.query.dateFrom ?? "").trim() || undefined,
+      dateTo: String(req.query.dateTo ?? "").trim() || undefined,
+    };
+    const hasFilters = Boolean(
+      listFilters.q || listFilters.species || listFilters.dateFrom || listFilters.dateTo,
+    );
+
+    const viewer = caseViewerAccess(currentUser);
+    if (!pagination.shouldPaginate && !hasFilters) {
+      return res.json(await caseRepo.getCases(scope, viewer));
     }
-    const pageData = await caseRepo.getCasesPage(pagination.pageSize, pagination.offset, scope);
+
+    const limit = pagination.pageSize;
+    const offset = pagination.offset;
+    const pageData = hasFilters
+      ? await caseRepo.getCasesFilteredPage(limit, offset, scope, listFilters, viewer)
+      : await caseRepo.getCasesPage(limit, offset, scope, viewer);
     return res.json({
       items: pageData.items,
       page: pagination.page,
@@ -1153,9 +1437,124 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     if (!userCanViewScope(currentUser.role, scope)) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
-    const caseData = await caseRepo.getCase(getIdParam(req), scope);
+    const caseData = await caseRepo.getCase(getIdParam(req), scope, caseViewerAccess(currentUser));
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
     res.json(caseData);
+  });
+
+  app.get("/api/cases/:id/pdf", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const caseData = await caseRepo.getCase(getIdParam(req), scope, caseViewerAccess(currentUser));
+    if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+
+    const safeName = String(caseData.caseNumber || "case").replace(/[^\w.-]+/g, "_");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 48, size: "LETTER" });
+    doc.on("error", (err) => {
+      console.error({ type: "case_pdf_error", err: String(err) });
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Failed to generate PDF" });
+      } else {
+        res.end();
+      }
+    });
+    doc.pipe(res);
+
+    doc.fontSize(18).text(`Case report — ${caseData.caseNumber}`, { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor("#444").text(`Generated ${new Date().toISOString()}`);
+    doc.fillColor("#000");
+    doc.moveDown();
+
+    doc.fontSize(12).text("Registration", { underline: true });
+    doc.fontSize(10);
+    doc.text(`Date (BS): ${caseData.date}`);
+    if (caseData.dateAd) doc.text(`Date (AD): ${caseData.dateAd}`);
+    if (caseData.billNumber) doc.text(`Bill #: ${caseData.billNumber}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Owner", { underline: true });
+    doc.fontSize(10);
+    doc.text(`Name: ${caseData.ownerName}`);
+    doc.text(`Address: ${caseData.ownerAddress}`);
+    doc.text(`Phone: ${caseData.ownerPhone}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text("Animal", { underline: true });
+    doc.fontSize(10);
+    doc.text(`Species: ${caseData.species}`);
+    doc.text(`Breed: ${caseData.breed}`);
+    if (caseData.animalName) doc.text(`Name: ${caseData.animalName}`);
+    if (caseData.age) doc.text(`Age: ${caseData.age}`);
+    if (caseData.sex) doc.text(`Sex: ${caseData.sex}`);
+    doc.moveDown();
+
+    if (caseData.sampleType || caseData.cultureResult) {
+      doc.fontSize(12).text("Sample / culture", { underline: true });
+      doc.fontSize(10);
+      if (caseData.sampleType) doc.text(`Sample type: ${caseData.sampleType}`);
+      if (caseData.sampleDate) doc.text(`Sample date (BS): ${caseData.sampleDate}`);
+      if (caseData.cultureResult) doc.text(`Culture: ${caseData.cultureResult}`);
+      doc.moveDown();
+    }
+
+    let astRows: { antibiotic?: string; symbol?: string; zone?: string | number }[] = [];
+    try {
+      const parsed = JSON.parse(caseData.astResults || "[]") as unknown;
+      if (Array.isArray(parsed)) astRows = parsed as typeof astRows;
+    } catch {
+      astRows = [];
+    }
+    if (astRows.length > 0) {
+      doc.addPage();
+      doc.fontSize(12).text("Antibiotic susceptibility (AST)", { underline: true });
+      doc.moveDown(0.3);
+      doc.fontSize(9);
+      const colDrug = 160;
+      const colCode = 80;
+      const colZone = 70;
+      let y = doc.y;
+      doc.text("Antibiotic", 48, y, { width: colDrug });
+      doc.text("Code", 48 + colDrug, y, { width: colCode });
+      doc.text("Zone (mm)", 48 + colDrug + colCode, y, { width: colZone });
+      y = doc.y + 4;
+      doc.moveTo(48, y).lineTo(520, y).stroke();
+      y += 6;
+      for (const row of astRows) {
+        if (y > 720) {
+          doc.addPage();
+          y = 48;
+        }
+        const drug = String(row.antibiotic ?? row.symbol ?? "—");
+        const code = String(row.symbol ?? "—");
+        const zone = row.zone != null ? String(row.zone) : "—";
+        doc.text(drug, 48, y, { width: colDrug });
+        doc.text(code, 48 + colDrug, y, { width: colCode });
+        doc.text(zone, 48 + colDrug + colCode, y, { width: colZone });
+        y += 14;
+      }
+      doc.y = y + 8;
+    }
+
+    if (caseData.remarks) {
+      doc.moveDown();
+      doc.fontSize(12).text("Remarks", { underline: true });
+      doc.fontSize(10).text(caseData.remarks, { width: 520 });
+    }
+
+    if (caseData.treatmentDetails) {
+      doc.moveDown();
+      doc.fontSize(12).text("Treatment", { underline: true });
+      doc.fontSize(10).text(caseData.treatmentDetails, { width: 520 });
+    }
+
+    doc.end();
   });
 
   app.get(
@@ -1334,28 +1733,72 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
     const caseId = getIdParam(req);
-    const existing = await caseRepo.getCase(caseId, scope);
+    const existing = await caseRepo.getCase(caseId, scope, caseViewerAccess(user));
     if (!existing) {
       return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
     }
-    if (typeof req.body?.caseNumber === "string") {
-      const nextScope = resolveCaseScopeFromCaseNumber(req.body.caseNumber);
-      if (nextScope !== scope) {
+    // Defence in depth: `patchCaseSchema` already drops `caseNumber` from
+    // accepted patches, but if the client tried to *change* it we want to
+    // be loud about refusing — silently dropping a caseNumber change could
+    // confuse a caller who thinks they renumbered a case. A no-op
+    // `caseNumber === existing.caseNumber` is allowed because clients
+    // commonly re-send the read value in their PATCH body.
+    if (typeof req.body?.caseNumber === "string" && req.body.caseNumber.trim()) {
+      const submitted = req.body.caseNumber.trim();
+      if (submitted !== existing.caseNumber) {
+        const nextScope = resolveCaseScopeFromCaseNumber(submitted);
+        if (nextScope !== scope) {
+          return res.status(400).json({
+            message: "caseNumber cannot move a case across AST/Hospital scopes",
+          });
+        }
         return res.status(400).json({
-          message: "caseNumber cannot move a case across AST/Hospital scopes",
+          message: "caseNumber cannot be modified via PATCH",
         });
       }
     }
 
-    const updated = await caseRepo.updateCase(caseId, {
-      ...req.body,
-      lastUpdatedBy: user.id,
-      lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
-      updatedAt: now,
-    }, scope);
+    const parsed = patchCaseSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
+    }
+    const patch = parsed.data;
+
+    const updated = await caseRepo.updateCase(
+      caseId,
+      {
+        ...patch,
+        lastUpdatedBy: user.id,
+        lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
+        updatedAt: now,
+      },
+      scope,
+      caseViewerAccess(user),
+    );
 
     if (!updated) {
       return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
+    }
+
+    const changedFieldKeys = computeChangedCaseFieldKeys(existing, updated);
+    if (changedFieldKeys.length > 0) {
+      await dbRun(
+        sql`INSERT INTO case_change_logs
+            (case_id, case_number, case_scope, action, actor_user_id, actor_role, actor_name, actor_username, created_at)
+            VALUES (
+              ${updated.id},
+              ${updated.caseNumber},
+              ${scope},
+              ${`updated:${changedFieldKeys.join(",")}`},
+              ${user.id},
+              ${user.role},
+              ${fullUser?.fullName || `User ${user.id}`},
+              ${fullUser?.username || ""},
+              ${new Date().toISOString()}
+            )`,
+      );
     }
 
     res.json(updated);
@@ -1368,7 +1811,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
-      const existing = await caseRepo.getCase(getIdParam(req), scope);
+      const existing = await caseRepo.getCase(getIdParam(req), scope, caseViewerAccess(currentUser));
       if (!existing) {
         return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
       }
@@ -1408,31 +1851,68 @@ export function registerCaseAndDownloadRoutes(app: Express) {
 }
 
 export function registerExportRoutes(app: Express) {
+  const markDownloadUsedIfNeeded = async (req: Request) => {
+    const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
+    if (!approvedReq) return;
+    await dbRun(
+      sql`UPDATE download_requests
+          SET status = ${"downloaded"},
+              admin_note = ${"Download used"},
+              resolved_at = ${new Date().toISOString()}
+          WHERE id = ${approvedReq.id}`,
+    );
+  };
+
   app.get("/api/export/cases", requireAuth, canDownload, async (req: Request, res: Response) => {
+    const output = parseExportOutput((req.query as { output?: string }).output);
+    if (!output) {
+      return res.status(400).json({ message: "Invalid output (use csv or xlsx)" });
+    }
+
     const { dateFrom, dateTo } = req.query as {
       dateFrom?: string;
       dateTo?: string;
     };
-    const casesData = await caseRepo.getCasesByDateRangeAndScope("ast", dateFrom, dateTo);
-    const rows = toExportRows(casesData);
+    const viewer = caseViewerAccess((req as AuthenticatedRequest).currentUser);
+    const casesData = await caseRepo.getCasesByDateRangeAndScope("ast", dateFrom, dateTo, viewer);
+    const format =
+      typeof (req.query as { format?: string }).format === "string"
+        ? String((req.query as { format?: string }).format).toLowerCase()
+        : "wide";
+    const rows =
+      format === "long" ? toAstLongExportRows(casesData) : toAstWideExportRows(casesData);
+    const columnOrder =
+      format === "long" ? astLongExportColumnOrder() : astWideExportColumnOrder();
 
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", "attachment; filename=ast-cases.csv");
+    const baseName = buildExportCsvFilename({
+      scope: "ast",
+      dateFrom,
+      dateTo,
+      astLayout: format === "long" ? "long" : "wide",
+    }).replace(/\.csv$/i, "");
 
-    const csvContent = rowsToCsv(rows);
+    res.setHeader("X-Export-Row-Count", String(rows.length));
 
-    const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
-
-    if (approvedReq) {
-      await dbRun(
-        sql`UPDATE download_requests
-            SET status = ${"downloaded"},
-                admin_note = ${"Download used"},
-                resolved_at = ${new Date().toISOString()}
-            WHERE id = ${approvedReq.id}`,
+    if (output === "xlsx") {
+      const { rowsToXlsxBuffer } = await import("./cases-export-xlsx");
+      const buf = await rowsToXlsxBuffer(
+        rows,
+        columnOrder,
+        format === "long" ? "AST cases (long)" : "AST cases (wide)",
       );
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
+      await markDownloadUsedIfNeeded(req);
+      return res.send(buf);
     }
 
+    const csvContent = rowsToCsv(rows, columnOrder);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
+    await markDownloadUsedIfNeeded(req);
     return res.send(csvContent);
   });
 
@@ -1441,33 +1921,48 @@ export function registerExportRoutes(app: Express) {
     requireAuth,
     canDownloadHospital,
     async (req: Request, res: Response) => {
+      const output = parseExportOutput((req.query as { output?: string }).output);
+      if (!output) {
+        return res.status(400).json({ message: "Invalid output (use csv or xlsx)" });
+      }
+
       const { dateFrom, dateTo } = req.query as {
         dateFrom?: string;
         dateTo?: string;
       };
+      const viewer = caseViewerAccess((req as AuthenticatedRequest).currentUser);
       const casesData = await caseRepo.getCasesByDateRangeAndScope(
         "hospital",
         dateFrom,
         dateTo,
+        viewer,
       );
       const rows = toHospitalExportRows(casesData);
+      const columnOrder = hospitalExportColumnOrder(rows);
 
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=hospital-cases.csv");
+      const baseName = buildExportCsvFilename({ scope: "hospital", dateFrom, dateTo }).replace(
+        /\.csv$/i,
+        "",
+      );
 
-      const csvContent = rowsToCsv(rows);
-      const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
+      res.setHeader("X-Export-Row-Count", String(rows.length));
 
-      if (approvedReq) {
-        await dbRun(
-          sql`UPDATE download_requests
-              SET status = ${"downloaded"},
-                  admin_note = ${"Download used"},
-                  resolved_at = ${new Date().toISOString()}
-              WHERE id = ${approvedReq.id}`,
+      if (output === "xlsx") {
+        const { rowsToXlsxBuffer } = await import("./cases-export-xlsx");
+        const buf = await rowsToXlsxBuffer(rows, columnOrder, "Hospital cases");
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         );
+        res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
+        await markDownloadUsedIfNeeded(req);
+        return res.send(buf);
       }
 
+      const csvContent = rowsToCsv(rows, columnOrder);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
+      await markDownloadUsedIfNeeded(req);
       return res.send(csvContent);
     },
   );

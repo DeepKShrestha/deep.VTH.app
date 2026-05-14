@@ -1,7 +1,6 @@
 /** Archiver v8 exports `ZipArchive`; `@types/archiver` targets the older factory API. */
 // @ts-expect-error ZipArchive is provided at runtime by archiver@8
 import { ZipArchive } from "archiver";
-import Database from "better-sqlite3";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -9,11 +8,11 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import os from "node:os";
 import { sql } from "drizzle-orm";
-import { DB_PROVIDER, DB_FILE } from "../db";
+import { DB_PROVIDER, backupLiveSqliteToFile } from "../db";
 import { dbRun } from "../db-query";
 import { buildS3ObjectKey, isS3Configured, uploadSiteBackupToS3 } from "./backup-remote";
 import { getBackupSettings } from "./backup-settings";
-import { getCaseAttachmentUploadDir, getSiteBackupDir } from "./backup-paths";
+import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir, getSiteBackupDir } from "./backup-paths";
 
 export type BackupKind = "manual" | "scheduled";
 
@@ -54,15 +53,6 @@ async function runPgDumpSql(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function sqliteBackupFileCopy(destPath: string): Promise<void> {
-  const src = new Database(DB_FILE, { fileMustExist: true });
-  try {
-    await src.backup(destPath);
-  } finally {
-    src.close();
-  }
-}
-
 async function zipSiteBackup(meta: Record<string, unknown>, options: { sqlDump?: string; sqliteTemp?: string }): Promise<string> {
   const backupDir = getSiteBackupDir();
   await fsp.mkdir(backupDir, { recursive: true });
@@ -94,7 +84,15 @@ async function zipSiteBackup(meta: Record<string, unknown>, options: { sqlDump?:
       }
     }
 
-    void archive.finalize();
+    const profileDir = getProfilePhotoUploadDir();
+    if (fs.existsSync(profileDir)) {
+      const profileEntries = fs.readdirSync(profileDir);
+      if (profileEntries.length > 0) {
+        archive.directory(profileDir, "profile-photos");
+      }
+    }
+
+    archive.finalize().catch(reject);
   });
 
   return outPath;
@@ -142,7 +140,7 @@ export async function runSiteBackup(kind: BackupKind): Promise<{
       sqlDump = await runPgDumpSql();
     } else {
       sqliteTemp = path.join(os.tmpdir(), `vth-sqlite-${Date.now()}.db`);
-      await sqliteBackupFileCopy(sqliteTemp);
+      await backupLiveSqliteToFile(sqliteTemp);
     }
 
     const fullPath = await zipSiteBackup(meta, { sqlDump, sqliteTemp });

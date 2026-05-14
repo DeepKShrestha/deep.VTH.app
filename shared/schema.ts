@@ -17,6 +17,15 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("pending"), // superadmin, admin, staff, student, pending
   approved: integer("approved", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
+  /** Incremented on failed password check; cleared on success. */
+  failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
+  /** ISO timestamp: account locked until this instant (null = not locked). */
+  lockedUntil: text("locked_until"),
+  /** Base32 TOTP secret (RFC 6238); never expose to client JSON. */
+  totpSecret: text("totp_secret"),
+  totpEnabled: integer("totp_enabled", { mode: "boolean" }).notNull().default(false),
+  /** Stored filename only (e.g. `12.jpg`) under the profile-photos upload directory. */
+  profilePhotoPath: text("profile_photo_path"),
 });
 
 // ---- Download Requests (for students) ----
@@ -189,6 +198,37 @@ export const veterinarians = sqliteTable("veterinarians", {
 });
 
 
+// ---- Password policy ----
+/**
+ * Minimum length applied at signup, self-service password change, and password
+ * reset flow. Was 6 (NIST 2016 minimum) — raised to 10 because a 10-char
+ * baseline materially raises the cost of any credential-stuffing or
+ * brute-force attempts. Shared between client and server so messages match.
+ */
+export const PASSWORD_MIN_LENGTH = 10;
+
+/**
+ * Validates that a password meets the project's policy:
+ *   - >= PASSWORD_MIN_LENGTH characters
+ *   - Contains at least two of: lowercase, uppercase, digit, symbol
+ *
+ * Returns a human-readable error string when invalid, or `null` when OK.
+ */
+export function validateStrongPassword(password: string): string | null {
+  if (typeof password !== "string" || password.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  }
+  let classes = 0;
+  if (/[a-z]/.test(password)) classes++;
+  if (/[A-Z]/.test(password)) classes++;
+  if (/[0-9]/.test(password)) classes++;
+  if (/[^A-Za-z0-9]/.test(password)) classes++;
+  if (classes < 2) {
+    return "Password must contain at least two of: lowercase, uppercase, digit, symbol";
+  }
+  return null;
+}
+
 // ---- Insert Schemas ----
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -196,8 +236,19 @@ export const insertUserSchema = createInsertSchema(users).omit({
   passwordHash: true,
   role: true,
   approved: true,
+  failedLoginAttempts: true,
+  lockedUntil: true,
+  totpSecret: true,
+  totpEnabled: true,
+  profilePhotoPath: true,
 }).extend({
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
+    .refine((p) => validateStrongPassword(p) === null, {
+      message:
+        "Password must contain at least two of: lowercase, uppercase, digit, symbol",
+    }),
   designation: z.enum(["lab_assistant", "veterinarian", "student", "intern"]),
   studentBatch: z.number().int().min(1).max(99).nullable().optional(),
 }).superRefine((data, ctx) => {
@@ -227,6 +278,44 @@ export const insertCaseSchema = createInsertSchema(cases).omit({
   lastUpdatedByName: true,
   updatedAt: true,
 });
+
+/**
+ * Explicit allowlist of fields a client may patch via PATCH /api/cases/:id.
+ *
+ * `id`, `createdAt`, `registeredBy`, `caseNumber`, `dailyNumber`,
+ * `monthlyNumber`, `yearlyNumber`, and the `lastUpdated*` / `updatedAt`
+ * audit fields are deliberately NOT in this list — they are either
+ * server-controlled or set at registration time and should never be
+ * mutated by a PATCH body. The route handler sets `lastUpdated*` /
+ * `updatedAt` itself.
+ */
+export const patchCaseSchema = insertCaseSchema
+  .pick({
+    billNumber: true,
+    date: true,
+    dateAd: true,
+    ownerName: true,
+    ownerAddress: true,
+    ownerPhone: true,
+    species: true,
+    breed: true,
+    animalName: true,
+    age: true,
+    sex: true,
+    sampleType: true,
+    sampleDate: true,
+    sampleDateAd: true,
+    cultureResult: true,
+    astResults: true,
+    remarks: true,
+    customFields: true,
+    treatmentDetails: true,
+    veterinarianId: true,
+    veterinarianName: true,
+    veterinarianNvc: true,
+    veterinarianDepartment: true,
+  })
+  .partial();
 
 export const insertBreakpointSchema = createInsertSchema(breakpoints).omit({
   id: true,
@@ -291,4 +380,6 @@ export type InsertVeterinarian = z.infer<typeof insertVeterinarianSchema>;
 
 
 // Safe user type (without password hash) for frontend
-export type SafeUser = Omit<User, "passwordHash">;
+export type SafeUser = Omit<User, "passwordHash" | "totpSecret" | "profilePhotoPath"> & {
+  profilePhotoUrl?: string | null;
+};

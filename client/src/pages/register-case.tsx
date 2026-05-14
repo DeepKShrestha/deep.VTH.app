@@ -45,7 +45,18 @@ import {
 import type { Breakpoint, Veterinarian } from "@shared/schema";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd, formatBsDate, formatAdDate } from "@/lib/nepali-date";
-import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
+import {
+  getAstToggleDefaults,
+  getHospitalToggleDefaults,
+  TOGGLE_DEFAULTS_HYDRATED_EVENT,
+} from "@/lib/module-toggle-defaults";
+import {
+  interpretZone as interpretAstZone,
+  PENDING_AST_CSV_IMPORT_KEY,
+  emptyAstRow,
+  type AstCsvImportRow,
+  type PendingAstCsvImportPayload,
+} from "@/lib/ast-csv-import";
 
 const DEFAULT_SPECIES_LIST = [
   "Bovine",
@@ -59,17 +70,6 @@ const DEFAULT_SPECIES_LIST = [
   "Bubaline",
 ] as const;
 
-
-interface AstRow {
-  breakpointId: number | null;
-  antibiotic: string;
-  symbol: string;
-  discContent: string;
-  zoneSize: string;
-  sensitivity: "S" | "I" | "R" | "";
-  autoSensitivity: "S" | "I" | "R" | "";
-  manualOverride: boolean;
-}
 
 type TreatmentMedicationEntry = {
   clientId?: string;
@@ -139,6 +139,7 @@ type AttendingVeterinarianField = {
   nvc: string;
   department: string;
   customMode: boolean;
+  isIntern: boolean;
 };
 
 type FormDefinition = {
@@ -218,6 +219,7 @@ function FilterableField({
   onCustomModeChange,
   onChange,
   onPickOption,
+  onInternSelect,
 }: {
   value: string;
   options: FilterableOption[];
@@ -226,6 +228,7 @@ function FilterableField({
   onCustomModeChange: (next: boolean) => void;
   onChange: (value: string) => void;
   onPickOption?: (option: FilterableOption) => void;
+  onInternSelect?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -296,6 +299,18 @@ function FilterableField({
           >
             Other
           </button>
+          {onInternSelect && (
+            <button
+              type="button"
+              className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                onInternSelect();
+                setOpen(false);
+              }}
+            >
+              Intern
+            </button>
+          )}
           {filtered.map((option) => (
             <button
               key={option.rowKey ?? option.value}
@@ -368,18 +383,6 @@ const DEFAULT_FORM_DEFINITION: FormDefinition = {
     },
   ],
 };
-
-function interpretZone(zone: number, bp: Breakpoint): "S" | "I" | "R" | "" {
-  if (isNaN(zone) || zone <= 0) return "";
-  if (zone >= bp.sensitiveMin) return "S";
-  if (zone <= bp.resistantMax) return "R";
-  if (bp.intermediateLow != null && bp.intermediateHigh != null) {
-    if (zone >= bp.intermediateLow && zone <= bp.intermediateHigh) return "I";
-  }
-  // If no intermediate range but between S and R, call it I
-  if (zone > bp.resistantMax && zone < bp.sensitiveMin) return "I";
-  return "";
-}
 
 function getSensitivityLabel(s: string) {
   switch (s) {
@@ -681,10 +684,16 @@ export default function RegisterCase({
 }: RegisterCaseProps = {}) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const astToggleDefaults = useMemo(() => getAstToggleDefaults(), []);
+  const [toggleDefaultsVersion, setToggleDefaultsVersion] = useState(0);
+  useEffect(() => {
+    const onHydrate = () => setToggleDefaultsVersion((v) => v + 1);
+    window.addEventListener(TOGGLE_DEFAULTS_HYDRATED_EVENT, onHydrate);
+    return () => window.removeEventListener(TOGGLE_DEFAULTS_HYDRATED_EVENT, onHydrate);
+  }, []);
+  const astToggleDefaults = useMemo(() => getAstToggleDefaults(), [toggleDefaultsVersion]);
   const hospitalToggleDefaults = useMemo(
     () => (mode === "hospital" ? getHospitalToggleDefaults() : null),
-    [mode],
+    [mode, toggleDefaultsVersion],
   );
   const defaultQuickRegisterMode =
     mode === "hospital"
@@ -840,9 +849,7 @@ export default function RegisterCase({
     mode === "hospital" ? false : astToggleDefaults.usePresetAntibiotics,
   );
 
-  const [astRows, setAstRows] = useState<AstRow[]>([
-    { breakpointId: null, antibiotic: "", symbol: "", discContent: "", zoneSize: "", sensitivity: "", autoSensitivity: "", manualOverride: false },
-  ]);
+  const [astRows, setAstRows] = useState<AstCsvImportRow[]>([emptyAstRow()]);
   const age = ageValue.trim() ? `${ageValue.trim()} ${ageUnit}` : "";
 
   // Build unique antibiotic options from breakpoints
@@ -897,6 +904,271 @@ export default function RegisterCase({
     setBreed(computed);
   }, [breedChoice, customBreed]);
 
+  /**
+   * Form draft autosave.
+   *
+   * Why: this form is huge and users routinely lose 10+ minutes of typing
+   * when the page reloads, the laptop sleeps, or they accidentally close the
+   * tab. Autosave persists the user-typed text fields to localStorage every
+   * ~750ms; on mount we check for an existing draft and offer to restore it.
+   *
+   * What we persist: only user-typed content (owner, animal, dates, notes,
+   * answers, AST rows, custom answers, toggles). NOT persisted:
+   *   - File attachments — those are already temp-staged on the server.
+   *   - Server-generated identifiers (case number, daily/monthly/yearly).
+   *   - UI-only ephemera (upload progress, preview index, etc.).
+   *
+   * Where: `localStorage` only, scoped by mode. Per-user scoping would need
+   * the user id which isn't trivially available here; in practice a single
+   * shared workstation will overwrite drafts between users which matches the
+   * existing model of "one terminal, one operator at a time".
+   */
+  const DRAFT_KEY = `vth:case-draft:${mode}`;
+  const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  type Draft = {
+    savedAt: string;
+    fields: {
+      billNumber: string;
+      ownerName: string;
+      ownerAddress: string;
+      ownerPhone: string;
+      species: string;
+      customSpecies: string;
+      breedChoice: string;
+      customBreed: string;
+      animalName: string;
+      ageValue: string;
+      ageUnit: typeof ageUnit;
+      sex: string;
+      sampleType: string;
+      dateBs: string;
+      dateAd: string;
+      sampleDateBs: string;
+      sampleDateAd: string;
+      cultureResult: string;
+      historyNotes: string;
+      previousMedicationNotes: string;
+      clinicalSignsSymptomsNotes: string;
+      temperatureValue: string;
+      temperatureUnit: "C" | "F";
+      weightUnit: "kg" | "g";
+      crtValue: string;
+      dehydrationPercentage: string;
+      avianFlockSize: string;
+      avianHatchery: string;
+      avianFeedSupplier: string;
+      avianFeedIntake: string;
+      avianWaterIntake: string;
+      avianMortality: string;
+      testsSuggested: string[];
+      enzymePanelTests: string[];
+      rapidDiagnosticTests: string[];
+      biopsyDetails: string;
+      cytologyDetails: string;
+      xrayDetails: string;
+      ultrasoundDetails: string;
+      cultureDetails: string;
+      remarks: string;
+      customAnswers: typeof customAnswers;
+      treatmentAnswers: typeof treatmentAnswers;
+      sectionAnswers: typeof sectionAnswers;
+      attendingVetByQuestion: typeof attendingVetByQuestion;
+      astRows: typeof astRows;
+    };
+  };
+
+  const [draftPrompt, setDraftPrompt] = useState<Draft | null>(null);
+  const draftLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Draft | null;
+      if (!parsed?.savedAt || !parsed.fields) return;
+      const age = Date.now() - Date.parse(parsed.savedAt);
+      if (!Number.isFinite(age) || age > DRAFT_MAX_AGE_MS) {
+        window.localStorage.removeItem(DRAFT_KEY);
+        return;
+      }
+      setDraftPrompt(parsed);
+    } catch {
+      // Corrupt draft — clear and move on.
+      try {
+        window.localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [DRAFT_KEY, DRAFT_MAX_AGE_MS]);
+
+  const applyDraft = (draft: Draft) => {
+    const f = draft.fields;
+    setBillNumber(f.billNumber ?? "");
+    setOwnerName(f.ownerName ?? "");
+    setOwnerAddress(f.ownerAddress ?? "");
+    setOwnerPhone(f.ownerPhone ?? "");
+    setSpecies(f.species ?? "");
+    setCustomSpecies(f.customSpecies ?? "");
+    setBreedChoice(f.breedChoice ?? "");
+    setCustomBreed(f.customBreed ?? "");
+    setAnimalName(f.animalName ?? "");
+    setAgeValue(f.ageValue ?? "");
+    setAgeUnit(f.ageUnit ?? "years");
+    setSex(f.sex ?? "");
+    setSampleType(f.sampleType ?? "");
+    setDateBs(f.dateBs ?? dateBs);
+    setDateAd(f.dateAd ?? dateAd);
+    setSampleDateBs(f.sampleDateBs ?? sampleDateBs);
+    setSampleDateAd(f.sampleDateAd ?? sampleDateAd);
+    setCultureResult(f.cultureResult ?? "");
+    setHistoryNotes(f.historyNotes ?? "");
+    setPreviousMedicationNotes(f.previousMedicationNotes ?? "");
+    setClinicalSignsSymptomsNotes(f.clinicalSignsSymptomsNotes ?? "");
+    setTemperatureValue(f.temperatureValue ?? "");
+    setTemperatureUnit(f.temperatureUnit ?? "C");
+    setWeightUnit(f.weightUnit ?? "kg");
+    setCrtValue(f.crtValue ?? "");
+    setDehydrationPercentage(f.dehydrationPercentage ?? "");
+    setAvianFlockSize(f.avianFlockSize ?? "");
+    setAvianHatchery(f.avianHatchery ?? "");
+    setAvianFeedSupplier(f.avianFeedSupplier ?? "");
+    setAvianFeedIntake(f.avianFeedIntake ?? "");
+    setAvianWaterIntake(f.avianWaterIntake ?? "");
+    setAvianMortality(f.avianMortality ?? "");
+    setTestsSuggested(f.testsSuggested ?? []);
+    setEnzymePanelTests(f.enzymePanelTests ?? []);
+    setRapidDiagnosticTests(f.rapidDiagnosticTests ?? []);
+    setBiopsyDetails(f.biopsyDetails ?? "");
+    setCytologyDetails(f.cytologyDetails ?? "");
+    setXrayDetails(f.xrayDetails ?? "");
+    setUltrasoundDetails(f.ultrasoundDetails ?? "");
+    setCultureDetails(f.cultureDetails ?? "");
+    setRemarks(f.remarks ?? "");
+    setCustomAnswers(f.customAnswers ?? {});
+    setTreatmentAnswers(f.treatmentAnswers ?? {});
+    setSectionAnswers(f.sectionAnswers ?? {});
+    setAttendingVetByQuestion(f.attendingVetByQuestion ?? {});
+    if (Array.isArray(f.astRows) && f.astRows.length > 0) {
+      setAstRows(f.astRows);
+    }
+    draftLoadedRef.current = true;
+    setDraftPrompt(null);
+  };
+
+  const discardDraft = () => {
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+    draftLoadedRef.current = true;
+    setDraftPrompt(null);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (draftPrompt) return;
+    const handle = window.setTimeout(() => {
+      try {
+        const payload: Draft = {
+          savedAt: new Date().toISOString(),
+          fields: {
+            billNumber,
+            ownerName,
+            ownerAddress,
+            ownerPhone,
+            species,
+            customSpecies,
+            breedChoice,
+            customBreed,
+            animalName,
+            ageValue,
+            ageUnit,
+            sex,
+            sampleType,
+            dateBs,
+            dateAd,
+            sampleDateBs,
+            sampleDateAd,
+            cultureResult,
+            historyNotes,
+            previousMedicationNotes,
+            clinicalSignsSymptomsNotes,
+            temperatureValue,
+            temperatureUnit,
+            weightUnit,
+            crtValue,
+            dehydrationPercentage,
+            avianFlockSize,
+            avianHatchery,
+            avianFeedSupplier,
+            avianFeedIntake,
+            avianWaterIntake,
+            avianMortality,
+            testsSuggested,
+            enzymePanelTests,
+            rapidDiagnosticTests,
+            biopsyDetails,
+            cytologyDetails,
+            xrayDetails,
+            ultrasoundDetails,
+            cultureDetails,
+            remarks,
+            customAnswers,
+            treatmentAnswers,
+            sectionAnswers,
+            attendingVetByQuestion,
+            astRows,
+          },
+        };
+        const hasAnyContent =
+          ownerName.trim() ||
+          ownerAddress.trim() ||
+          ownerPhone.trim() ||
+          species.trim() ||
+          customSpecies.trim() ||
+          breed.trim() ||
+          animalName.trim() ||
+          historyNotes.trim() ||
+          previousMedicationNotes.trim() ||
+          clinicalSignsSymptomsNotes.trim() ||
+          remarks.trim() ||
+          Object.keys(customAnswers).length > 0 ||
+          Object.keys(treatmentAnswers).length > 0 ||
+          astRows.some((r) => r.antibiotic || r.zoneSize);
+        if (!hasAnyContent) {
+          window.localStorage.removeItem(DRAFT_KEY);
+          return;
+        }
+        window.localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+      } catch {
+        // quota or serialization issue — silently skip this save
+      }
+    }, 750);
+    return () => window.clearTimeout(handle);
+  }, [
+    DRAFT_KEY,
+    draftPrompt,
+    billNumber, ownerName, ownerAddress, ownerPhone,
+    species, customSpecies, breedChoice, customBreed, breed,
+    animalName, ageValue, ageUnit, sex, sampleType,
+    dateBs, dateAd, sampleDateBs, sampleDateAd, cultureResult,
+    historyNotes, previousMedicationNotes, clinicalSignsSymptomsNotes,
+    temperatureValue, temperatureUnit, weightUnit,
+    crtValue, dehydrationPercentage,
+    avianFlockSize, avianHatchery, avianFeedSupplier,
+    avianFeedIntake, avianWaterIntake, avianMortality,
+    testsSuggested, enzymePanelTests, rapidDiagnosticTests,
+    biopsyDetails, cytologyDetails, xrayDetails, ultrasoundDetails,
+    cultureDetails, remarks,
+    customAnswers, treatmentAnswers, sectionAnswers,
+    attendingVetByQuestion, astRows,
+  ]);
+
   const allQuestions = useMemo(() => {
     const out: Array<FormDefinition["sections"][number]["questions"][number] & { sectionKey: string }> = [];
     for (const s of formDefinition?.sections ?? []) {
@@ -917,7 +1189,7 @@ export default function RegisterCase({
     questionByKey.get(key)?.required ?? fallback;
 
   // Build AST rows from the preset breakpoint list
-  const buildPresetRows = (): AstRow[] => {
+  const buildPresetRows = (): AstCsvImportRow[] => {
     return presetBreakpoints.map((bp) => ({
       breakpointId: bp.id,
       antibiotic: bp.antibiotic,
@@ -931,8 +1203,18 @@ export default function RegisterCase({
   };
 
 
+  const addRow = () => {
+    setAstRows([...astRows, emptyAstRow()]);
+  };
+
+  const skipPresetSyncRef = useRef(false);
+
   // Keep AST rows in sync with preset toggle state
   useEffect(() => {
+    if (skipPresetSyncRef.current) {
+      skipPresetSyncRef.current = false;
+      return;
+    }
     if (usePresetAntibiotics) {
       const rows = buildPresetRows();
       if (rows.length > 0) {
@@ -942,23 +1224,61 @@ export default function RegisterCase({
     }
 
     // Turning presets off should clear preset-selected rows
-    setAstRows([
-      {
-        breakpointId: null,
-        antibiotic: "",
-        symbol: "",
-        discContent: "",
-        zoneSize: "",
-        sensitivity: "",
-        autoSensitivity: "",
-        manualOverride: false,
-      },
-    ]);
+    setAstRows([emptyAstRow()]);
   }, [usePresetAntibiotics, breakpointsData]);
 
-  const addRow = () => {
-    setAstRows([...astRows, { breakpointId: null, antibiotic: "", symbol: "", discContent: "", zoneSize: "", sensitivity: "", autoSensitivity: "", manualOverride: false }]);
-  };
+  // Apply AST rows staged from Breakpoints → Import CSV (sessionStorage).
+  useEffect(() => {
+    if (mode !== "ast" || !breakpointsData?.length) return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(PENDING_AST_CSV_IMPORT_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let payload: PendingAstCsvImportPayload;
+    try {
+      payload = JSON.parse(raw) as PendingAstCsvImportPayload;
+    } catch {
+      try {
+        sessionStorage.removeItem(PENDING_AST_CSV_IMPORT_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (payload.version !== 1 || !Array.isArray(payload.rows)) {
+      try {
+        sessionStorage.removeItem(PENDING_AST_CSV_IMPORT_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      sessionStorage.removeItem(PENDING_AST_CSV_IMPORT_KEY);
+    } catch {
+      /* ignore */
+    }
+    skipPresetSyncRef.current = true;
+    setUsePresetAntibiotics(false);
+    if (payload.mode === "append") {
+      setAstRows((prev) => [...prev, ...payload.rows]);
+    } else {
+      setAstRows(payload.rows.length > 0 ? payload.rows : [emptyAstRow()]);
+    }
+    const parsed = payload.parsed ?? payload.rows.length;
+    const matched = payload.matched ?? 0;
+    const um = payload.unmatched ?? [];
+    toast({
+      title: `Applied ${matched}/${parsed} AST row(s) from CSV`,
+      description:
+        um.length > 0
+          ? `Some rows need manual antibiotic: ${um.slice(0, 4).join(", ")}${um.length > 4 ? "…" : ""}`
+          : "Review the AST results section, then save your case.",
+    });
+  }, [mode, breakpointsData, toast]);
 
   const removeRow = (index: number) => {
     setAstRows(astRows.filter((_, i) => i !== index));
@@ -979,7 +1299,7 @@ export default function RegisterCase({
     // Re-interpret if zone already entered
     if (row.zoneSize && autoMode && !row.manualOverride) {
       const zone = parseFloat(row.zoneSize);
-      const result = interpretZone(zone, bp);
+      const result = interpretAstZone(zone, bp);
       row.autoSensitivity = result;
       row.sensitivity = result;
     }
@@ -996,7 +1316,7 @@ export default function RegisterCase({
       const bp = breakpointsData?.find((b) => b.id === row.breakpointId);
       if (bp) {
         const zone = parseFloat(value);
-        const result = interpretZone(zone, bp);
+        const result = interpretAstZone(zone, bp);
         row.autoSensitivity = result;
         row.sensitivity = result;
       }
@@ -1019,7 +1339,7 @@ export default function RegisterCase({
     if (!row.manualOverride && row.breakpointId && row.zoneSize) {
       const bp = breakpointsData?.find((b) => b.id === row.breakpointId);
       if (bp) {
-        const result = interpretZone(parseFloat(row.zoneSize), bp);
+        const result = interpretAstZone(parseFloat(row.zoneSize), bp);
         row.autoSensitivity = result;
         row.sensitivity = result;
       }
@@ -1050,6 +1370,11 @@ export default function RegisterCase({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/next-case-info"] });
+      try {
+        window.localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
+      }
       toast({ title: "Case registered successfully" });
       setLocation(onSuccessRedirect);
     },
@@ -1296,6 +1621,9 @@ export default function RegisterCase({
           if (q.inputType !== "hospital_veterinarian" || !q.enabled || !q.required) return false;
           if (shouldSkipQuestionValidation(q)) return false;
           const hv = attendingVetByQuestion[q.key];
+          if (hv?.isIntern) {
+            return !String(hv?.name ?? "").trim();
+          }
           return (
             !String(hv?.name ?? "").trim() ||
             !String(hv?.nvc ?? "").trim() ||
@@ -1577,6 +1905,14 @@ export default function RegisterCase({
           veterinarianName: null,
           veterinarianNvc: null,
           veterinarianDepartment: null,
+        };
+      }
+      if (hv?.isIntern) {
+        return {
+          veterinarianId: null,
+          veterinarianName: toTitleCase(name),
+          veterinarianNvc: null,
+          veterinarianDepartment: "Intern",
         };
       }
       return {
@@ -1919,6 +2255,7 @@ export default function RegisterCase({
           nvc: "",
           department: "",
           customMode: false,
+          isIntern: false,
         };
       const vetOptions: FilterableOption[] = veterinariansData.map((v) => ({
         value: v.fullName,
@@ -1941,7 +2278,11 @@ export default function RegisterCase({
           <FilterableField
             value={data.name}
             options={vetOptions}
-            placeholder="Veterinarian name (select suggestion or type)"
+            placeholder={
+              data.isIntern
+                ? "Intern name"
+                : "Veterinarian name (select suggestion or type)"
+            }
             customMode={data.customMode}
             onCustomModeChange={(next) => {
               setAttendingVetByQuestion((prev) => ({
@@ -1953,11 +2294,26 @@ export default function RegisterCase({
                       nvc: "",
                       department: "",
                       customMode: true,
+                      isIntern: false,
                     }
                   : {
                       ...(prev[vetKey] ?? data),
                       customMode: false,
+                      isIntern: false,
                     },
+              }));
+            }}
+            onInternSelect={() => {
+              setAttendingVetByQuestion((prev) => ({
+                ...prev,
+                [vetKey]: {
+                  veterinarianId: null,
+                  name: "",
+                  nvc: "",
+                  department: "",
+                  customMode: false,
+                  isIntern: true,
+                },
               }));
             }}
             onPickOption={(option) => {
@@ -1972,6 +2328,7 @@ export default function RegisterCase({
                   nvc: String(m?.nvcRegistrationNumber ?? ""),
                   department: String(m?.department ?? ""),
                   customMode: false,
+                  isIntern: false,
                 },
               }));
             }}
@@ -1983,8 +2340,12 @@ export default function RegisterCase({
                   nvc: "",
                   department: "",
                   customMode: false,
+                  isIntern: false,
                 };
                 const next = { ...cur, name };
+                if (cur.isIntern) {
+                  return { ...prev, [vetKey]: next };
+                }
                 const match = veterinariansData.find((v) => v.fullName === name.trim());
                 if (match && cur.veterinarianId === match.id) {
                   return { ...prev, [vetKey]: next };
@@ -1999,7 +2360,17 @@ export default function RegisterCase({
               });
             }}
           />
-          {(data.customMode || data.veterinarianId === null) && (
+          {data.isIntern && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                Intern
+              </span>
+              <span className="text-muted-foreground">
+                NVC no. and department are not required.
+              </span>
+            </div>
+          )}
+          {!data.isIntern && (data.customMode || data.veterinarianId === null) && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Nepal Veterinary Council registration no.</Label>
@@ -2029,7 +2400,7 @@ export default function RegisterCase({
               </div>
             </div>
           )}
-          {!data.customMode && data.veterinarianId !== null && (data.nvc || data.department) && (
+          {!data.customMode && !data.isIntern && data.veterinarianId !== null && (data.nvc || data.department) && (
             <div className="text-xs text-muted-foreground space-y-0.5">
               {data.nvc ? <p>NVC no.: {data.nvc}</p> : null}
               {data.department ? <p>Department: {data.department}</p> : null}
@@ -2804,6 +3175,42 @@ export default function RegisterCase({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+      {/* Restore-draft banner — only shown when localStorage has a recent
+          autosaved form for this scope (autosave fires every ~750ms while
+          typing; cleared on successful submit). */}
+      {draftPrompt && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          role="status"
+        >
+          <span className="font-medium">Unsaved draft from</span>
+          <span title={new Date(draftPrompt.savedAt).toLocaleString()}>
+            {new Date(draftPrompt.savedAt).toLocaleString()}
+          </span>
+          <span className="text-amber-700">
+            Continue where you left off, or discard it.
+          </span>
+          <div className="ml-auto flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => applyDraft(draftPrompt)}
+              data-testid="button-restore-draft"
+            >
+              Restore
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={discardDraft}
+              data-testid="button-discard-draft"
+            >
+              Discard
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href={backHref}>
@@ -3088,10 +3495,12 @@ export default function RegisterCase({
               </div>
             ))}
 
-            <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addRow} data-testid="button-add-antibiotic">
-              <Plus className="w-3.5 h-3.5" />
-              Add Antibiotic
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addRow} data-testid="button-add-antibiotic">
+                <Plus className="w-3.5 h-3.5" />
+                Add Antibiotic
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

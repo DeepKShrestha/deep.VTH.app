@@ -1,19 +1,6 @@
 import { type SQL } from "drizzle-orm";
 import { db, DB_PROVIDER } from "./db";
-import { Pool } from "pg";
-
-let pgPool: Pool | null = null;
-
-function getPgPool(): Pool {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error("DATABASE_URL is required when DB_PROVIDER=postgres");
-  }
-  if (!pgPool) {
-    pgPool = new Pool({ connectionString: url });
-  }
-  return pgPool;
-}
+import { getPgPool } from "./pg-pool";
 
 function pgSqlToText(query: SQL): { text: string; values: unknown[] } {
   let index = 0;
@@ -51,4 +38,34 @@ export async function dbAll<T>(query: SQL): Promise<T[]> {
     return result.rows as T[];
   }
   return db.all<T>(query);
+}
+
+/**
+ * Run an INSERT and return the new row's `id`, atomically.
+ *
+ * Avoids the race window of "INSERT … then SELECT ORDER BY id DESC LIMIT 1",
+ * which can return the wrong row under concurrent inserts. Uses
+ * `lastInsertRowid` on SQLite and appends `RETURNING id` on Postgres.
+ *
+ * The INSERT statement passed in MUST NOT already contain a RETURNING clause.
+ */
+export async function dbInsertReturningId(query: SQL): Promise<number> {
+  if (DB_PROVIDER === "postgres") {
+    const { text, values } = pgSqlToText(query);
+    const result = await getPgPool().query<{ id: number | string }>(
+      `${text} RETURNING id`,
+      values,
+    );
+    const id = result.rows[0]?.id;
+    if (id == null) {
+      throw new Error("INSERT … RETURNING id produced no row");
+    }
+    return Number(id);
+  }
+  const result = db.run(query);
+  const id = result.lastInsertRowid;
+  if (id == null) {
+    throw new Error("INSERT did not return a lastInsertRowid");
+  }
+  return Number(id);
 }

@@ -208,7 +208,7 @@ export default function AdminPanel({
             "downloads",
             "password-resets",
             "access-control",
-            ...(isSuperAdmin ? ["backup"] : []),
+            ...(isSuperAdmin ? ["backup", "audit-log"] : []),
             "form-options",
           ];
     return tab && allowed.includes(tab) ? tab : mode === "form-only" ? "form-options" : "pending";
@@ -219,7 +219,8 @@ export default function AdminPanel({
   }, [initialTabFromUrl]);
   useEffect(() => {
     if (mode !== "full") return;
-    if (activeTab === "backup" && !isSuperAdmin) setActiveTab("pending");
+    if ((activeTab === "backup" || activeTab === "audit-log") && !isSuperAdmin)
+      setActiveTab("pending");
   }, [activeTab, isSuperAdmin, mode]);
   useEffect(() => {
     if (mode !== "form-only") return;
@@ -268,6 +269,9 @@ export default function AdminPanel({
   const [downloadSourceFilter, setDownloadSourceFilter] = useState<"all" | "ast_report" | "hospital_case">("all");
   const [usersFilter, setUsersFilter] = useState("");
   const [studentBatchFilter, setStudentBatchFilter] = useState<string>("all");
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(() => new Set());
+  /** When true, All Users shows row checkboxes and bulk delete controls (works with search and batch filter). */
+  const [usersMultiSelectMode, setUsersMultiSelectMode] = useState(false);
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -277,10 +281,21 @@ export default function AdminPanel({
     designation: "",
   });
 
+  useEffect(() => {
+    setSelectedUserIds(new Set());
+  }, [usersFilter, studentBatchFilter]);
+
+  useEffect(() => {
+    if (activeTab !== "users") {
+      setUsersMultiSelectMode(false);
+      setSelectedUserIds(new Set());
+    }
+  }, [activeTab]);
+
   const { data: allUsers = [] } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
     enabled: mode === "full",
-    refetchInterval: mode === "full" ? 10000 : false,
+    refetchInterval: mode === "full" ? 5000 : false,
     refetchIntervalInBackground: true,
     staleTime: 0,
   });
@@ -421,6 +436,15 @@ export default function AdminPanel({
       (u.designation === "student" && `${u.studentBatch ?? ""}`.includes(normalizedUsersFilter))
     );
   });
+  const deletableFilteredUsers = useMemo(
+    () =>
+      filteredApprovedUsers.filter((u) => {
+        if (!currentUser || u.id === currentUser.id) return false;
+        if (currentUser.role === "superadmin") return true;
+        return u.role !== "superadmin" && u.role !== "admin";
+      }),
+    [filteredApprovedUsers, currentUser],
+  );
   const sourceMatches = (r: { requestSource?: string }) =>
     downloadSourceFilter === "all" || (r.requestSource || "ast_report") === downloadSourceFilter;
   const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending" && sourceMatches(r));
@@ -483,6 +507,35 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to delete batch",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bulkDeleteUsersMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      const res = await apiRequest("POST", "/api/admin/users/bulk-delete", { ids });
+      return res.json() as Promise<{
+        message?: string;
+        deletedCount: number;
+        skipped?: { id: number; reason: string }[];
+      }>;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      setSelectedUserIds(new Set());
+      const skipped = result.skipped?.length ?? 0;
+      toast({
+        title: result?.message || "Users removed",
+        description:
+          skipped > 0
+            ? `${skipped} account(s) were skipped (e.g. protected admin or not found).`
+            : undefined,
+      });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Bulk delete failed",
         variant: "destructive",
       });
     },
@@ -1000,6 +1053,16 @@ export default function AdminPanel({
               Backup
             </TabsTrigger>
           )}
+          {isSuperAdmin && (
+            <TabsTrigger
+              className="shrink-0 text-xs sm:text-sm"
+              value="audit-log"
+              data-testid="tab-audit-log"
+            >
+              <Clock className="w-3.5 h-3.5 mr-1 inline" />
+              Audit Log
+            </TabsTrigger>
+          )}
         </TabsList>
         )}
 
@@ -1061,7 +1124,7 @@ export default function AdminPanel({
           {/* All Users */}
         <TabsContent value="users" className="space-y-3 mt-4">
           <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:items-center">
               <Input
                 value={usersFilter}
                 onChange={(e) => setUsersFilter(e.target.value)}
@@ -1082,6 +1145,69 @@ export default function AdminPanel({
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                type="button"
+                size="sm"
+                variant={usersMultiSelectMode ? "secondary" : "outline"}
+                className="h-9 text-xs shrink-0"
+                onClick={() => {
+                  if (usersMultiSelectMode) {
+                    setUsersMultiSelectMode(false);
+                    setSelectedUserIds(new Set());
+                  } else {
+                    setUsersMultiSelectMode(true);
+                  }
+                }}
+                data-testid="button-users-multi-select-mode"
+              >
+                {usersMultiSelectMode ? "Done selecting" : "Select multiple"}
+              </Button>
+              {usersMultiSelectMode && (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-9 text-xs"
+                    disabled={deletableFilteredUsers.length === 0 || bulkDeleteUsersMutation.isPending}
+                    onClick={() =>
+                      setSelectedUserIds(new Set(deletableFilteredUsers.map((u) => u.id)))
+                    }
+                    data-testid="button-select-visible-users"
+                  >
+                    Select all listed
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-9 text-xs"
+                    disabled={selectedUserIds.size === 0}
+                    onClick={() => setSelectedUserIds(new Set())}
+                    data-testid="button-clear-user-selection"
+                  >
+                    Clear selection
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-9 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                    disabled={selectedUserIds.size === 0 || bulkDeleteUsersMutation.isPending}
+                    onClick={() => {
+                      const ids = Array.from(selectedUserIds);
+                      const ok = window.confirm(
+                        `Permanently delete ${ids.length} selected account(s)? This cannot be undone.`,
+                      );
+                      if (!ok) return;
+                      bulkDeleteUsersMutation.mutate(ids);
+                    }}
+                    data-testid="button-bulk-delete-users"
+                  >
+                    Delete selected ({selectedUserIds.size})
+                  </Button>
+                </>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -1112,6 +1238,12 @@ export default function AdminPanel({
               Download CSV
             </Button>
           </div>
+          {usersMultiSelectMode && (
+            <p className="text-xs text-muted-foreground">
+              Tick the users to delete, or use &quot;Select all listed&quot; for everyone on this screen.
+              Search and batch filters still apply.
+            </p>
+          )}
 
           {filteredApprovedUsers.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
@@ -1122,11 +1254,50 @@ export default function AdminPanel({
               <Card key={u.id}>
                 <CardContent className="pt-4 pb-3">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="flex-1 min-w-0">
+                    <div
+                      className={`flex flex-1 min-w-0 items-start ${usersMultiSelectMode ? "gap-3" : ""}`}
+                    >
+                      {usersMultiSelectMode &&
+                        (() => {
+                          const canSelect =
+                            currentUser &&
+                            u.id !== currentUser.id &&
+                            (currentUser.role === "superadmin" ||
+                              (u.role !== "superadmin" && u.role !== "admin"));
+                          return canSelect ? (
+                            <input
+                              type="checkbox"
+                              className="mt-1.5 h-4 w-4 shrink-0 rounded border-input accent-primary cursor-pointer"
+                              checked={selectedUserIds.has(u.id)}
+                              onChange={() => {
+                                setSelectedUserIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(u.id)) next.delete(u.id);
+                                  else next.add(u.id);
+                                  return next;
+                                });
+                              }}
+                              aria-label={`Select ${u.fullName}`}
+                              data-testid={`checkbox-select-user-${u.id}`}
+                            />
+                          ) : (
+                            <span
+                              className="mt-1.5 h-4 w-4 shrink-0 rounded border border-dashed border-muted-foreground/25 bg-muted/20"
+                              title={
+                                u.id === currentUser?.id
+                                  ? "You cannot select your own account."
+                                  : "This account cannot be selected for bulk delete with your role."
+                              }
+                              aria-hidden
+                            />
+                          );
+                        })()}
+                      <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{u.fullName}</span>
                         {roleBadge(u.role)}
                         <Badge
+                          title="Active means this account had API activity in the last 3 minutes while its session is still valid. The list refreshes about every 5 seconds. Closing the browser does not end the session until it expires or the user signs out."
                           className={`border-0 text-[10px] px-2 py-0.5 ${
                             u.activeNow
                               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
@@ -1142,6 +1313,7 @@ export default function AdminPanel({
                         {" \u00b7 "}
                         {u.email}
                       </div>
+                    </div>
                     </div>
 
                     {u.id !== currentUser?.id && (
@@ -1662,6 +1834,12 @@ export default function AdminPanel({
         {mode === "full" && isSuperAdmin && (
           <TabsContent value="backup" className="space-y-3 mt-4">
             <AdminSiteBackupPanel />
+          </TabsContent>
+        )}
+
+        {mode === "full" && isSuperAdmin && (
+          <TabsContent value="audit-log" className="space-y-3 mt-4">
+            <AdminAuditLogPanel />
           </TabsContent>
         )}
 
@@ -2457,5 +2635,197 @@ export default function AdminPanel({
         </Card>
       )}
     </div>
+  );
+}
+
+type AdminActionLogEntry = {
+  id: number;
+  actorUserId: number;
+  actorRole: string;
+  actorName: string | null;
+  actorUsername: string | null;
+  actionType: string;
+  targetType: string;
+  targetId: string | null;
+  details: unknown;
+  createdAt: string;
+};
+
+/**
+ * Read-only viewer for the `admin_action_logs` table. Surfaces:
+ *   - who did it (actor name + role)
+ *   - what they did (action type) and to what (target type + id)
+ *   - any structured detail JSON the action recorded (rendered compact)
+ *
+ * Kept intentionally simple — superadmin can use this to audit account
+ * approvals, role changes, password-reset resolutions, and site restores.
+ */
+function AdminAuditLogPanel() {
+  const [actionFilter, setActionFilter] = useState<string>("all");
+  const [limit, setLimit] = useState<number>(100);
+
+  const actionTypesQuery = useQuery<string[]>({
+    queryKey: ["/api/admin/action-logs/action-types"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/action-logs/action-types");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const actionTypeOptions = useMemo(() => {
+    const fromApi = (actionTypesQuery.data ?? []).filter((a) => a && a !== "all");
+    return ["all", ...fromApi];
+  }, [actionTypesQuery.data]);
+
+  useEffect(() => {
+    if (actionFilter === "all") return;
+    const loaded = actionTypesQuery.data;
+    if (!loaded || loaded.length === 0) return;
+    if (!loaded.includes(actionFilter)) {
+      setActionFilter("all");
+    }
+  }, [actionFilter, actionTypesQuery.data]);
+
+  const auditQuery = useQuery<AdminActionLogEntry[]>({
+    queryKey: ["/api/admin/action-logs", actionFilter, limit],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (actionFilter && actionFilter !== "all") params.set("actionType", actionFilter);
+      const res = await apiRequest("GET", `/api/admin/action-logs?${params.toString()}`);
+      return res.json();
+    },
+  });
+  const rows = auditQuery.data ?? [];
+
+  const formatRelative = (iso: string): string => {
+    const ts = Date.parse(iso);
+    if (!Number.isFinite(ts)) return iso;
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return "just now";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return new Date(iso).toLocaleString();
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Admin Action Log</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Append-only log of administrative actions: approvals, role changes,
+          password resets, site restores, and similar. Latest first.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Action type</Label>
+            <Select
+              value={actionFilter}
+              onValueChange={setActionFilter}
+              disabled={actionTypesQuery.isLoading}
+            >
+              <SelectTrigger className="h-9 w-56">
+                <SelectValue placeholder={actionTypesQuery.isLoading ? "Loading types…" : undefined} />
+              </SelectTrigger>
+              <SelectContent>
+                {actionTypeOptions.map((a) => (
+                  <SelectItem key={a} value={a}>
+                    {a === "all" ? "All actions" : a}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs">Show</Label>
+            <Select
+              value={String(limit)}
+              onValueChange={(v) => setLimit(Number.parseInt(v, 10) || 100)}
+            >
+              <SelectTrigger className="h-9 w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="50">Last 50</SelectItem>
+                <SelectItem value="100">Last 100</SelectItem>
+                <SelectItem value="200">Last 200</SelectItem>
+                <SelectItem value="500">Last 500</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => auditQuery.refetch()}
+            disabled={auditQuery.isFetching}
+          >
+            {auditQuery.isFetching ? "Loading…" : "Refresh"}
+          </Button>
+        </div>
+
+        {auditQuery.isLoading ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No admin actions recorded yet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded border">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="px-2 py-1.5 text-left font-medium">When</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Actor</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Action</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Target</th>
+                  <th className="px-2 py-1.5 text-left font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} className="border-t align-top">
+                    <td
+                      className="px-2 py-1.5 whitespace-nowrap"
+                      title={new Date(row.createdAt).toLocaleString()}
+                    >
+                      {formatRelative(row.createdAt)}
+                    </td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <div className="font-medium">
+                        {row.actorName ?? `User ${row.actorUserId}`}
+                      </div>
+                      <div className="text-muted-foreground">
+                        {row.actorUsername ? `@${row.actorUsername} · ` : ""}
+                        {row.actorRole}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <Badge variant="secondary" className="text-[10px]">
+                        {row.actionType}
+                      </Badge>
+                    </td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <div>{row.targetType}</div>
+                      {row.targetId && (
+                        <div className="text-muted-foreground">#{row.targetId}</div>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 font-mono text-[10px] max-w-[28rem]">
+                      {row.details == null
+                        ? "—"
+                        : typeof row.details === "string"
+                          ? row.details
+                          : JSON.stringify(row.details)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

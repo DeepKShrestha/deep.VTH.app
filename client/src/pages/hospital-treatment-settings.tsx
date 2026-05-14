@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Pill, Syringe, Clock3, Ruler } from "lucide-react";
+import { ArrowLeft, Pill, Syringe, Clock3, Ruler, Timer } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -199,7 +199,9 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage medication records only.</p>
             <Link href="/new-case/settings/treatment/medications" className="mt-auto">
-              <Button className="w-full">Open Medication Database</Button>
+              <Button className="w-full bg-sky-600 hover:bg-sky-700 text-white">
+                Open Medication Database
+              </Button>
             </Link>
           </CardContent>
         </Card>
@@ -214,7 +216,9 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage route records only.</p>
             <Link href="/new-case/settings/treatment/routes" className="mt-auto">
-              <Button className="w-full">Open Route Options</Button>
+              <Button className="w-full bg-orange-600 hover:bg-orange-700 text-white">
+                Open Route Options
+              </Button>
             </Link>
           </CardContent>
         </Card>
@@ -229,7 +233,9 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage frequency records only.</p>
             <Link href="/new-case/settings/treatment/frequencies" className="mt-auto">
-              <Button className="w-full">Open Frequency Options</Button>
+              <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
+                Open Frequency Options
+              </Button>
             </Link>
           </CardContent>
         </Card>
@@ -244,7 +250,26 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage dose unit records only.</p>
             <Link href="/new-case/settings/treatment/dose-units" className="mt-auto">
-              <Button className="w-full">Open Dose Units</Button>
+              <Button className="w-full bg-lime-600 hover:bg-lime-700 text-white">
+                Open Dose Units
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Timer className="w-4 h-4 text-primary shrink-0" />
+              Duration / Day Options
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col gap-3">
+            <p className="text-sm text-muted-foreground">Manage duration or day-range options used in prescriptions.</p>
+            <Link href="/new-case/settings/treatment/durations" className="mt-auto">
+              <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
+                Open Duration Options
+              </Button>
             </Link>
           </CardContent>
         </Card>

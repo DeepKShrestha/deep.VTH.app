@@ -1,12 +1,14 @@
 import type { NextFunction, Request, Response } from "express";
 import NepaliDateImport from "nepali-date-converter";
+import type { PermissionCapability } from "@shared/capabilities";
+import { hasCapability, resolveCapabilitiesForRole } from "@shared/capabilities";
 import type { AuthenticatedRequest, CurrentUser } from "./types";
 import { MESSAGES } from "./messages";
 import { DB_PROVIDER } from "../db";
 import { sql } from "drizzle-orm";
 import crypto from "crypto";
 import { authSessionRepo } from "../auth-session-repo";
-import { Pool } from "pg";
+import { getPgPool } from "../pg-pool";
 import { dbAll, dbGet } from "../db-query";
 
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
@@ -19,20 +21,6 @@ export function getTodayBs(): string {
   const NepaliDate = getNepaliDateClass();
   const nd = new NepaliDate();
   return nd.format("YYYY-MM-DD");
-}
-
-let pgPool: Pool | null = null;
-function getPgPool(): Pool {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is required when DB_PROVIDER=postgres for dashboard visibility checks",
-    );
-  }
-  if (!pgPool) {
-    pgPool = new Pool({ connectionString: url });
-  }
-  return pgPool;
 }
 
 export const sessions = {
@@ -97,36 +85,8 @@ export function isAdminRole(role: string): boolean {
   return role === "superadmin" || role === "admin";
 }
 
-type PermissionCapability =
-  | "hospital.case.create"
-  | "hospital.case.view"
-  | "ast.case.create"
-  | "ast.case.view"
-  | "ast.download"
-  | "ast.admin";
-
-export function resolveCapabilitiesForRole(role: string): PermissionCapability[] {
-  const isAdmin = role === "superadmin" || role === "admin";
-  const base: PermissionCapability[] = [];
-  if (role === "student" || role === "intern" || role === "staff" || isAdmin) {
-    base.push("hospital.case.view", "ast.case.view");
-    base.push("hospital.case.create");
-  }
-  if (role === "staff" || role === "intern" || isAdmin) {
-    base.push("ast.case.create");
-  }
-  if (role === "intern" || role === "staff" || isAdmin) {
-    base.push("ast.download");
-  }
-  if (isAdmin) {
-    base.push("ast.admin");
-  }
-  return base;
-}
-
-export function hasCapability(role: string, capability: PermissionCapability): boolean {
-  return resolveCapabilitiesForRole(role).includes(capability);
-}
+export type { PermissionCapability };
+export { resolveCapabilitiesForRole, hasCapability };
 
 export function requireAnyCapability(...capabilities: PermissionCapability[]) {
   return (req: Request, res: Response, next: NextFunction) => {

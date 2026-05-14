@@ -93,7 +93,7 @@ describe("module-scope API flow (e2e-style)", () => {
     registerCaseAndDownloadRoutes(app as unknown as any);
     const listHandlers = app.routes.get.get("/api/cases")!;
     const listHandler = listHandlers.at(-1)!;
-    vi.mocked(caseRepo.getCases).mockImplementation(async (scope?: "ast" | "hospital") => {
+    vi.mocked(caseRepo.getCases).mockImplementation(async (scope?: "ast" | "hospital", _viewer?: unknown) => {
       if (scope === "hospital") return [{ id: 2, caseNumber: "CASE-2083-001" }] as any;
       return [{ id: 1, caseNumber: "AST-2083-001" }] as any;
     });
@@ -118,7 +118,7 @@ describe("module-scope API flow (e2e-style)", () => {
 
     await getHandler(req, res);
 
-    expect(caseRepo.getCase).toHaveBeenCalledWith(2, "ast");
+    expect(caseRepo.getCase).toHaveBeenCalledWith(2, "ast", undefined);
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
@@ -133,7 +133,7 @@ describe("module-scope API flow (e2e-style)", () => {
 
     await deleteHandler(req, res);
 
-    expect(caseRepo.getCase).toHaveBeenCalledWith(2, "ast");
+    expect(caseRepo.getCase).toHaveBeenCalledWith(2, "ast", undefined);
     expect(res.status).toHaveBeenCalledWith(404);
     expect(caseRepo.deleteCase).not.toHaveBeenCalled();
   });

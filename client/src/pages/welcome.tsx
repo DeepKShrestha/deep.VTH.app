@@ -109,16 +109,23 @@ function playNotificationSound(style: NotificationSoundStyle, volume: number) {
     try {
       const audio = new Audio(externalSound);
       audio.volume = clampedVolume;
-      void audio.play();
+      void audio.play().catch(() => {
+        // Autoplay policy or missing asset; ignore.
+      });
     } catch {
       // Ignore if browser blocks autoplay.
     }
     return;
   }
   try {
-    const audioCtx = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
+    const AudioCtx =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const audioCtx = new AudioCtx();
     const gain = audioCtx.createGain();
-    gain.gain.value = 0.02 + clampedVolume * 0.2;
+    // File-based styles use element volume 0–1; match perceived loudness for built-in tones.
+    gain.gain.value = Math.min(0.85, 0.1 + clampedVolume * 0.55);
     gain.connect(audioCtx.destination);
 
     const addTone = (type: OscillatorType, freq: number, start: number, end: number) => {
@@ -130,19 +137,26 @@ function playNotificationSound(style: NotificationSoundStyle, volume: number) {
       osc.stop(audioCtx.currentTime + end);
     };
 
-    if (style === "ding") {
-      addTone("sine", 1174, 0, 0.14); // D6
-      return;
-    }
-    if (style === "pulse") {
-      addTone("square", 880, 0, 0.06);
-      addTone("square", 988, 0.1, 0.17);
-      addTone("square", 1046, 0.2, 0.3);
-      return;
-    }
-    // default: chime
-    addTone("triangle", 1046, 0, 0.09); // C6
-    addTone("sine", 1318, 0.1, 0.22); // E6
+    const schedule = () => {
+      if (style === "ding") {
+        addTone("sine", 1174, 0, 0.14); // D6
+        return;
+      }
+      if (style === "pulse") {
+        addTone("square", 880, 0, 0.06);
+        addTone("square", 988, 0.1, 0.17);
+        addTone("square", 1046, 0.2, 0.3);
+        return;
+      }
+      // default: chime
+      addTone("triangle", 1046, 0, 0.09); // C6
+      addTone("sine", 1318, 0.1, 0.22); // E6
+    };
+
+    void audioCtx.resume().then(schedule).catch(() => {
+      // Still try scheduling if resume is unsupported.
+      schedule();
+    });
   } catch {
     // Optional enhancement only; silently ignore when audio isn't allowed.
   }
@@ -186,8 +200,15 @@ export default function Welcome() {
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
-    refetchIntervalInBackground: true,
-    refetchInterval: 5000,
+    // Previously polled every 5s in the background of every tab. With ~5
+    // admin users that's 5 × 17 280 = 86k requests/day for a feature that
+    // doesn't need that granularity. Pause polling when the tab is hidden;
+    // a focus refetch picks up any backlog when the user returns.
+    refetchIntervalInBackground: false,
+    refetchInterval: () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden"
+        ? false
+        : 30000,
   });
   const markNotificationReadMutation = useMutation({
     mutationFn: async (key: string) => {
@@ -342,7 +363,7 @@ export default function Welcome() {
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <Link href="/profile">
               <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-profile">
                 <User className="w-3.5 h-3.5" />

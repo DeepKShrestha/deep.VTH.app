@@ -1,4 +1,6 @@
-# Operations Guide
+## See also
+
+- **`docs/PRODUCTION-DEPLOYMENT.md`** — checklist for anyone doing a **production** deploy (required env vars, order of operations, smoke tests, rollback).
 
 ## Runtime health endpoints
 
