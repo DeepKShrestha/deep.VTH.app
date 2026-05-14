@@ -351,6 +351,7 @@ export default function ProfilePage() {
         setResetReason("");
         setSaveState("saved");
         toast({ title: "Profile updated" });
+        navigate("/");
       } else {
         toast({
           title: body?.message || "Failed to update profile",
