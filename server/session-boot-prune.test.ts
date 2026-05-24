@@ -18,20 +18,28 @@ describe("pruneSessionsOnBoot", () => {
     delete process.env.WIPE_SESSIONS_ON_BOOT;
   });
 
-  it("deletes only expired sessions by default", async () => {
+  it("wipes ALL sessions by default (restart = logout for everyone)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await pruneSessionsOnBoot();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/Wiping all sessions on boot/),
+    );
+    expect(dbRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps active sessions when WIPE_SESSIONS_ON_BOOT=false (opt-out)", async () => {
+    process.env.WIPE_SESSIONS_ON_BOOT = "false";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await pruneSessionsOnBoot();
     expect(warn).not.toHaveBeenCalled();
     expect(dbRun).toHaveBeenCalledTimes(1);
   });
 
-  it("wipes all sessions and logs when WIPE_SESSIONS_ON_BOOT=true", async () => {
+  it("wipes when WIPE_SESSIONS_ON_BOOT is set to any value other than 'false'", async () => {
     process.env.WIPE_SESSIONS_ON_BOOT = "true";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await pruneSessionsOnBoot();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/WIPE_SESSIONS_ON_BOOT=true/),
-    );
+    expect(warn).toHaveBeenCalled();
     expect(dbRun).toHaveBeenCalledTimes(1);
   });
 });

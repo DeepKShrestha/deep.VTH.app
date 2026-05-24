@@ -318,7 +318,11 @@ AWS_SECRET_ACCESS_KEY=...
 # Lifetime of signed image URLs (60_000 – 86_400_000 ms). Default 900_000 (15 min).
 # ATTACHMENT_SIGNING_TTL_MS=900000
 
-# On restart, prune only expired sessions (default). Set to "true" to force-logout everyone.
+# Session pruning behaviour on boot.
+# Default (unset or any value other than "false"): WIPE all sessions on every
+# restart, so users must log in again after a deploy/restart. This is the safe
+# posture for a clinic deployment. Set to "false" only if you want active
+# sessions to survive restarts (handy on a dev machine).
 # WIPE_SESSIONS_ON_BOOT=false
 
 # Cleanup of orphaned temp uploads (defaults are fine for most installs).
@@ -589,7 +593,7 @@ Every API request is logged as a JSON line tagged `"type":"api_request"`. Every 
 sudo systemctl restart vth-app
 ```
 
-Active user sessions are preserved across restarts (only expired sessions are pruned). Set `WIPE_SESSIONS_ON_BOOT=true` if you need to force everyone to log in.
+Every server restart wipes all sessions by default — users must log in again after a deploy/restart. Set `WIPE_SESSIONS_ON_BOOT=false` if you want active sessions to survive restarts (only expired sessions are pruned in that mode).
 
 ### Watch resource usage
 
@@ -677,7 +681,7 @@ If the service is up but on a different port, fix `PORT` in `/opt/vth-app/.env` 
 
 ### Login works but every other request returns 401
 
-Bearer tokens are stored in `sessionStorage` (per-tab). If you set `WIPE_SESSIONS_ON_BOOT=true` and restarted the server, every existing session is gone — log in again.
+Bearer tokens are stored in `sessionStorage` (per-tab). The server's default behaviour is to wipe all sessions on every restart, so any restart of the service requires every user to log in again. (Set `WIPE_SESSIONS_ON_BOOT=false` to opt out.)
 
 ### Images don’t load (broken thumbnails in case view)
 

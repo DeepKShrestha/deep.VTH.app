@@ -52,6 +52,12 @@ import {
   toAstWideExportRows,
   toHospitalExportRows,
 } from "./cases-export";
+import {
+  computeHospitalDashboard,
+  resolvePeriodWindow,
+  type GroupBy,
+  type HospitalDashboardPayload,
+} from "../hospital-dashboard-analytics";
 
 function resolveFormScope(raw: unknown): "ast" | "hospital" {
   return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
@@ -847,6 +853,151 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       },
       drilldownRows,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Hospital-native dashboard summary.
+  //
+  // Returns a different payload shape than `/api/dashboard/summary` because the
+  // hospital module's analytics are based on prescriptions, vets/departments,
+  // vitals, tests-ordered and avian flock data — *not* AST samples/organisms/
+  // antibiograms. Kept as a separate endpoint so the AST handler above stays
+  // untouched and so the wire shape can evolve independently.
+  // -------------------------------------------------------------------------
+  app.get("/api/dashboard/hospital-summary", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    if (!userCanViewScope(currentUser.role, "hospital")) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    if (!(await isVthDashboardVisibleForRole(currentUser.role))) {
+      return res.status(403).json({ message: "Dashboard is disabled for your role" });
+    }
+
+    const preset = String(req.query.preset ?? "30d");
+    const groupByRaw = String(req.query.groupBy ?? "month").toLowerCase();
+    const groupBy: GroupBy =
+      groupByRaw === "day" || groupByRaw === "week" || groupByRaw === "year"
+        ? (groupByRaw as GroupBy)
+        : "month";
+    const dateFromRaw = String(req.query.dateFrom ?? "").trim();
+    const dateToRaw = String(req.query.dateTo ?? "").trim();
+    const speciesFilter = String(req.query.species ?? "all").trim();
+    const breedFilter = String(req.query.breed ?? "all").trim();
+    const sexFilter = String(req.query.sex ?? "all").trim();
+    const departmentFilter = String(req.query.department ?? "all").trim();
+    const vetFilter = String(req.query.vet ?? "all").trim();
+    const medicationClassFilter = String(req.query.medicationClass ?? "all").trim();
+    const avianOnly = String(req.query.avianOnly ?? "").toLowerCase() === "true";
+    const comparePrior = String(req.query.comparePrior ?? "true").toLowerCase() !== "false";
+
+    const now = new Date();
+    // Custom date range support: only treat as custom if both ends look like
+    // AD ISO dates (the only format the period resolver understands here).
+    const isAdYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+    const customAdFrom = isAdYmd(dateFromRaw) ? dateFromRaw : undefined;
+    const customAdTo = isAdYmd(dateToRaw) ? dateToRaw : undefined;
+    const periodWindow = resolvePeriodWindow({
+      preset,
+      now,
+      dateFromAd: customAdFrom,
+      dateToAd: customAdTo,
+    });
+
+    // To compute deltas + the caseload-trend overlay, fetch cases that span
+    // BOTH the current and the prior window. The analytics module splits them
+    // internally based on each case's AD date.
+    const sqlFromAd = periodWindow.prior.start;
+    const sqlToAd = periodWindow.current.end;
+    let dateFromBs = isLikelyBsYmd(dateFromRaw) ? dateFromRaw : undefined;
+    let dateToBs = isLikelyBsYmd(dateToRaw) ? dateToRaw : undefined;
+    const dateFromAd = dateFromBs ? undefined : sqlFromAd;
+    const dateToAd = dateToBs ? undefined : sqlToAd;
+    if (!dateFromBs && dateFromAd) dateFromBs = adYmdToBsYmd(dateFromAd);
+    if (!dateToBs && dateToAd) dateToBs = adYmdToBsYmd(dateToAd);
+
+    const viewer = caseViewerAccess(currentUser);
+    const filterOptions = await caseRepo.getDashboardFilterOptions("hospital", viewer);
+    const caseRows = await caseRepo.getCasesForDashboard("hospital", {
+      viewer,
+      dateFromAd,
+      dateToAd,
+      dateFromBs,
+      dateToBs,
+      species: speciesFilter,
+      breed: breedFilter,
+      sex: sexFilter,
+    });
+
+    // Distinct department / vet values come from the case set itself (what the
+    // viewer is actually allowed to see), not the veterinarians catalog — that
+    // keeps role-scoped views honest.
+    const departments = new Set<string>();
+    const vets = new Set<string>();
+    for (const c of caseRows) {
+      const d = String(c.veterinarianDepartment ?? "").trim();
+      const v = String(c.veterinarianName ?? "").trim();
+      if (d) departments.add(d);
+      if (v) vets.add(v);
+    }
+
+    // Medication catalog → class lookup (lower-cased name for case-insensitive matching).
+    const medRows = await dbAll<{ name: string; medication_class: string | null }>(
+      sql`SELECT name, medication_class FROM medications`,
+    );
+    const medicationClassByName = new Map<string, string>();
+    const medicationClasses = new Set<string>();
+    for (const row of medRows) {
+      const name = String(row.name ?? "").trim().toLowerCase();
+      const klass = String(row.medication_class ?? "").trim();
+      if (name && klass) {
+        medicationClassByName.set(name, klass);
+        medicationClasses.add(klass);
+      }
+    }
+
+    const analytics = computeHospitalDashboard({
+      cases: caseRows,
+      groupBy,
+      medicationClassByName,
+      filters: {
+        department: departmentFilter,
+        vet: vetFilter,
+        medicationClass: medicationClassFilter,
+        avianOnly,
+      },
+      now,
+      period: periodWindow,
+      casesIncludePrior: true,
+      comparePrior,
+    });
+
+    const payload: HospitalDashboardPayload = {
+      filters: {
+        preset,
+        groupBy,
+        species: speciesFilter,
+        breed: breedFilter,
+        sex: sexFilter,
+        department: departmentFilter,
+        vet: vetFilter,
+        medicationClass: medicationClassFilter,
+        avianOnly,
+        dateFrom: dateFromRaw || undefined,
+        dateTo: dateToRaw || undefined,
+        comparePrior,
+      },
+      options: {
+        species: filterOptions.species,
+        breeds: filterOptions.breeds,
+        sex: filterOptions.sexes,
+        departments: Array.from(departments).sort((a, b) => a.localeCompare(b)),
+        vets: Array.from(vets).sort((a, b) => a.localeCompare(b)),
+        medicationClasses: Array.from(medicationClasses).sort((a, b) => a.localeCompare(b)),
+      },
+      ...analytics,
+    };
+
+    return res.json(payload);
   });
 
   app.get(

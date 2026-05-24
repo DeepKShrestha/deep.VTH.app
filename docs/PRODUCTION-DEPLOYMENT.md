@@ -43,7 +43,7 @@ The **bundled** server (`npm run build` → `npm start` / `node dist/index.cjs`)
 | **`ALLOW_DEFAULT_ADMIN=false`** | After the first real admin exists, keep this **false** so the emergency bootstrap account is not recreated. |
 | **`DEFAULT_ADMIN_PASSWORD`** | Used only when the bootstrap admin is created (empty DB or `ALLOW_DEFAULT_ADMIN=true`). Must be **12+ chars** with letters and digits. If unset, the server generates a one-time random password and logs it once at startup — capture it from the log and rotate immediately. The legacy `admin123` default has been removed. |
 | **`LOG_RESPONSE_BODIES`** | Ignored in production (response bodies are **never** logged when `NODE_ENV=production`). Useful only for local debugging. |
-| **`WIPE_SESSIONS_ON_BOOT`** | Defaults to **`false`** — only expired sessions are pruned on restart, so users stay signed in across deploys. Set to `true` only if you need the old behavior (force-logout everyone on restart). |
+| **`WIPE_SESSIONS_ON_BOOT`** | Defaults to **wipe** — every server restart deletes all sessions, so every user must log in again. This is the safe posture for a clinic deployment. Set to `false` only if you want active sessions to survive deploys (only expired rows are pruned in that mode). |
 
 ### Paths (recommended absolute paths in production)
 
@@ -92,7 +92,7 @@ Run the process under **systemd**, **PM2**, Kubernetes, or your platform’s sup
 
 ## 6) Security and product notes (read once)
 
-- **Sessions:** On restart, only **expired** sessions are pruned (set `WIPE_SESSIONS_ON_BOOT=true` to force-logout everyone). Session `last_seen_at` is throttled to one write every 5 minutes per session.
+- **Sessions:** Every server restart **wipes all sessions** by default — users must log in again after a deploy or service restart. Set `WIPE_SESSIONS_ON_BOOT=false` to keep active sessions across restarts (only expired rows are pruned in that mode). Session `last_seen_at` is throttled to one write every 5 minutes per session.
 - **Student exports:** Download approvals are **single‑use** and **range‑bound**. A student must pass `dateFrom`/`dateTo` that fall inside the approved BS window; the UI auto‑fills the picker with the approved range. The server consumes the approval atomically on the first successful export.
 - **Attachment URLs:** Signed download URLs are bound to the issuing user (`uid` claim) and expire after 15 minutes by default (`ATTACHMENT_SIGNING_TTL_MS`).
 - **Students:** The API restricts **student** users to cases they **registered** (`registered_by`). If your institution expects students to see **all** cases in a module, that is a product change—coordinate with development before go‑live.
