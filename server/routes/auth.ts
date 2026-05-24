@@ -2,6 +2,8 @@ import type { Express, NextFunction, Request, Response } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
+import { sql } from "drizzle-orm";
+import { dbRun } from "../db-query";
 import { insertUserSchema, validateStrongPassword } from "@shared/schema";
 import type { User } from "@shared/schema";
 import bcrypt from "bcryptjs";
@@ -42,9 +44,11 @@ function publicAuthUser(user: User) {
   return toClientSafeUser(user);
 }
 
+const PROFILE_PHOTO_MAX_UPLOAD_BYTES = 1024 * 1024;
+
 const signupPhotoUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: PROFILE_PHOTO_MAX_UPLOAD_BYTES },
   fileFilter(_req, file, cb) {
     const err = profilePhotoMimeError(file.mimetype);
     if (err) {
@@ -57,7 +61,7 @@ const signupPhotoUpload = multer({
 
 const profilePhotoUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: PROFILE_PHOTO_MAX_UPLOAD_BYTES },
   fileFilter(_req, file, cb) {
     const err = profilePhotoMimeError(file.mimetype);
     if (err) {
@@ -522,6 +526,31 @@ export function registerAuthRoutes(app: Express) {
     const updated = await authSessionRepo.updateUser(currentUser.id, updates);
     if (!updated) {
       return res.status(500).json({ message: "Failed to update user" });
+    }
+
+    // After a successful password change, terminate every *other* session
+    // for this user. The current session (this request's bearer token) is
+    // preserved so the response can still complete. Without this, an
+    // attacker who had stolen a session token could keep using it even
+    // after the legitimate owner rotated the password.
+    if (updates.passwordHash) {
+      const authHeader = req.headers.authorization || "";
+      const currentToken = authHeader.startsWith("Bearer ")
+        ? authHeader.substring(7)
+        : "";
+      try {
+        if (currentToken) {
+          await dbRun(
+            sql`DELETE FROM sessions WHERE user_id = ${currentUser.id} AND token <> ${currentToken}`,
+          );
+        } else {
+          await authSessionRepo.deleteSessionsByUserId(currentUser.id);
+        }
+      } catch {
+        // Best-effort: failure to clean other sessions must not undo the
+        // password change itself; the user can manually click "Sign out
+        // everywhere" from Profile if needed.
+      }
     }
 
     return res.json({ success: true, user: publicAuthUser(updated) });

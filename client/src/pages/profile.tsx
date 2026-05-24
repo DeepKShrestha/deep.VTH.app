@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth, getAuthToken } from "../lib/auth";
 import { apiRequest, apiRequestForm } from "../lib/queryClient";
+import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
 import { useToast } from "../hooks/use-toast";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Label } from "../components/ui/label";
@@ -96,8 +98,6 @@ export default function ProfilePage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saved">("idle");
-  const [resetReason, setResetReason] = useState("");
-  const [isResetSubmitting, setIsResetSubmitting] = useState(false);
   const [isLogoutAllSubmitting, setIsLogoutAllSubmitting] = useState(false);
   const [totpDraftSecret, setTotpDraftSecret] = useState<string | null>(null);
   const [totpDraftUrl, setTotpDraftUrl] = useState<string | null>(null);
@@ -105,6 +105,8 @@ export default function ProfilePage() {
   const [totpDisablePassword, setTotpDisablePassword] = useState("");
   const [totpBusy, setTotpBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [compressingProfilePhoto, setCompressingProfilePhoto] = useState(false);
+  const profilePhotoBusy = photoBusy || compressingProfilePhoto;
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [lastProfileUpdateAt, setLastProfileUpdateAt] = useState<string | null>(
     localStorage.getItem(LAST_PROFILE_UPDATE_AT_KEY),
@@ -207,8 +209,11 @@ export default function ProfilePage() {
     if (!file) return;
     try {
       setPhotoBusy(true);
+      setCompressingProfilePhoto(true);
+      const prepared = await compressProfilePhotoImage(file);
+      setCompressingProfilePhoto(false);
       const fd = new FormData();
-      fd.append("profilePhoto", file);
+      fd.append("profilePhoto", prepared);
       const res = await apiRequestForm("POST", "/api/users/me/profile-photo", fd);
       const body = (await res.json()) as { user?: unknown; message?: string };
       if (body?.user && typeof body.user === "object") {
@@ -227,6 +232,7 @@ export default function ProfilePage() {
         variant: "destructive",
       });
     } finally {
+      setCompressingProfilePhoto(false);
       setPhotoBusy(false);
     }
   }
@@ -348,7 +354,6 @@ export default function ProfilePage() {
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
-        setResetReason("");
         setSaveState("saved");
         toast({ title: "Profile updated" });
         navigate("/");
@@ -366,46 +371,6 @@ export default function ProfilePage() {
       });
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleRequestPasswordReset() {
-    if (
-      !newPassword ||
-      newPassword.length < PASSWORD_MIN_LENGTH ||
-      newPassword !== confirmPassword
-    ) {
-      toast({
-        title: "Enter and confirm a valid new password first",
-        variant: "destructive",
-      });
-      return;
-    }
-    const usernameOrEmail = user?.email || user?.username;
-    if (!usernameOrEmail) {
-      toast({
-        title: "Could not resolve your account identifier",
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      setIsResetSubmitting(true);
-      await apiRequest("POST", "/api/auth/password-reset-requests", {
-        usernameOrEmail,
-        newPassword,
-        reason: resetReason.trim() || "Requested from profile security panel",
-      });
-      toast({
-        title: "Password reset request submitted",
-      });
-    } catch (err: unknown) {
-      toast({
-        title: err instanceof Error ? err.message : "Failed to request reset",
-        variant: "destructive",
-      });
-    } finally {
-      setIsResetSubmitting(false);
     }
   }
 
@@ -440,23 +405,29 @@ export default function ProfilePage() {
 
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6 space-y-4 sm:space-y-5 pb-28">
-      <div className="flex items-center gap-3">
-        <Link href="/">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-lg font-semibold" data-testid="text-profile-title">
-            My Profile
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage account details, security, and session preferences.
-          </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-6xl"
+      contentPaddingClass="py-4 sm:py-6"
+      className="pb-28"
+      bodyClassName="space-y-4 sm:space-y-5"
+      sticky={
+        <div className="flex items-center gap-3">
+          <Link href="/">
+            <Button variant="ghost" size="icon" data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-lg font-semibold" data-testid="text-profile-title">
+              My Profile
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Manage account details, security, and session preferences.
+            </p>
+          </div>
         </div>
-      </div>
-
+      }
+    >
       <Card>
         <CardContent className="pt-5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -509,24 +480,30 @@ export default function ProfilePage() {
               <div className="space-y-1.5">
                 <Label>Identification photo</Label>
                 <p className="text-xs text-muted-foreground">
-                  Optional. JPEG, PNG, or WebP, up to 2 MB. Shown on your profile and helps admins verify pending accounts.
+                  Optional. JPEG, PNG, or WebP, up to 5MB each. Larger photos are automatically optimized to under 1MB before upload.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={photoBusy}
+                    disabled={profilePhotoBusy}
                     onClick={() => profilePhotoInputRef.current?.click()}
                   >
-                    {photoBusy ? "Working…" : user.profilePhotoUrl ? "Change photo" : "Upload photo"}
+                    {compressingProfilePhoto
+                      ? "Optimizing photo…"
+                      : photoBusy
+                        ? "Working…"
+                        : user.profilePhotoUrl
+                          ? "Change photo"
+                          : "Upload photo"}
                   </Button>
                   {user.profilePhotoUrl ? (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      disabled={photoBusy}
+                      disabled={profilePhotoBusy}
                       onClick={() => void handleProfilePhotoRemove()}
                     >
                       Remove
@@ -757,40 +734,14 @@ export default function ProfilePage() {
                         <p className="text-xs text-destructive">{passwordMismatchError}</p>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="resetReason">Reset request note (optional)</Label>
-                      <Input
-                        id="resetReason"
-                        value={resetReason}
-                        onChange={(e) => setResetReason(e.target.value)}
-                        placeholder="Reason for admin-reviewed password reset request"
-                      />
-                    </div>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button type="button" variant="outline" className="w-full">
-                          Request Password Reset (Admin Approval)
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Submit password reset request?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This sends your new password request for admin approval. Use this only
-                            if you cannot change the password directly.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={handleRequestPasswordReset}
-                            disabled={isResetSubmitting}
-                          >
-                            {isResetSubmitting ? "Submitting..." : "Submit request"}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <p className="text-xs text-muted-foreground">
+                      Enter your current password and a new one, then click{" "}
+                      <span className="font-medium">Save Changes</span> below.
+                      No admin approval is required to change your own password.
+                      If you forgot your password and cannot sign in, use the{" "}
+                      <span className="font-medium">Forgot password</span> link
+                      on the login screen instead.
+                    </p>
                   </AccordionContent>
                 </AccordionItem>
                 {(isAdmin || isSuperAdmin) && (
@@ -1158,6 +1109,6 @@ export default function ProfilePage() {
           </Button>
         </div>
       </div>
-    </div>
+    </StickyScrollPage>
   );
 }

@@ -213,7 +213,7 @@ function ProtectedRoutes() {
           <Route component={NotFound} />
         </Switch>
       </main>
-      <footer className="no-print border-t border-border py-3 text-center text-xs text-muted-foreground space-y-1">
+      <footer className="no-print border-t border-border py-2 text-center text-[11px] text-muted-foreground/70 space-y-0.5">
         <DeepASTAttribution />
         <div>
           © {new Date().getFullYear()} Deep Kumar Shrestha, B.V.Sc &amp; AH, 9th

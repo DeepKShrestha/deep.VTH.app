@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { Link } from "wouter";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Case } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -25,20 +25,80 @@ import {
   Eye,
   FolderOpen,
   Clock,
+  Copy,
+  Rows3,
+  LayoutList,
+  Trash2,
 } from "lucide-react";
-import { Trash2 } from "lucide-react";
+import { CaseListDateFilterDialog } from "@/components/case-list-date-filter-dialog";
 import { formatBsDate } from "@/lib/nepali-date";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import {
+  casesListQueryKey,
+  fetchCasesPage,
+} from "@/lib/cases-list-query";
 
-type CasesPageResponse = {
-  items: Case[];
+const RECENT_SEARCHES_KEY = "vth:case-list-recent-search";
+const COMPACT_LIST_KEY = "vth:case-list-compact";
+
+function readCaseListParamsFromHash(): {
+  q: string;
+  species: string;
+  dateFrom: string;
+  dateTo: string;
   page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-};
+} {
+  if (typeof window === "undefined") {
+    return { q: "", species: "", dateFrom: "", dateTo: "", page: 1 };
+  }
+  const hash = window.location.hash.replace(/^#/, "");
+  const qi = hash.indexOf("?");
+  const qs = qi >= 0 ? hash.slice(qi + 1) : "";
+  const p = new URLSearchParams(qs);
+  const pg = Math.max(1, Number.parseInt(p.get("page") || "1", 10) || 1);
+  return {
+    q: p.get("q") ?? "",
+    species: p.get("species") ?? "",
+    dateFrom: p.get("dateFrom") ?? "",
+    dateTo: p.get("dateTo") ?? "",
+    page: pg,
+  };
+}
+
+function readRecentSearches(scope: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(`${RECENT_SEARCHES_KEY}:${scope}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentSearch(scope: string, term: string) {
+  const t = term.trim();
+  if (t.length < 2) return;
+  try {
+    const prev = readRecentSearches(scope);
+    const next = [t, ...prev.filter((x) => x.toLowerCase() !== t.toLowerCase())].slice(0, 8);
+    window.localStorage.setItem(`${RECENT_SEARCHES_KEY}:${scope}`, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearRecentSearches(scope: string) {
+  try {
+    window.localStorage.removeItem(`${RECENT_SEARCHES_KEY}:${scope}`);
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function CaseList({
   backHref = "/",
@@ -47,19 +107,55 @@ export default function CaseList({
   backHref?: string;
   scope?: "ast" | "hospital";
 }) {
+  const initParams = useMemo(() => readCaseListParamsFromHash(), []);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showCaseLogs, setShowCaseLogs] = useState(false);
   const [caseLogsFilter, setCaseLogsFilter] = useState("");
   const { isAdmin, isStudent, canRegisterAstCase, canRegisterHospitalCase } = useAuth();
   const { toast } = useToast();
+  const [path, setLocation] = useLocation();
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const filterDebounceRef = useRef({
+    q: initParams.q.trim(),
+    sp: initParams.species.trim(),
+    df: initParams.dateFrom.trim(),
+    dt: initParams.dateTo.trim(),
+  });
+
   const isHospitalHistory = scope ? scope === "hospital" : backHref === "/new-case";
   const caseScope = isHospitalHistory ? "hospital" : "ast";
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [speciesFilter, setSpeciesFilter] = useState("");
-  const [debouncedSpecies, setDebouncedSpecies] = useState("");
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(initParams.q);
+  const [debouncedSearch, setDebouncedSearch] = useState(initParams.q.trim());
+  const [speciesFilter, setSpeciesFilter] = useState(initParams.species);
+  const [debouncedSpecies, setDebouncedSpecies] = useState(initParams.species.trim());
+  const [dateFromBs, setDateFromBs] = useState(initParams.dateFrom);
+  const [dateToBs, setDateToBs] = useState(initParams.dateTo);
+  const [debouncedDateFrom, setDebouncedDateFrom] = useState(initParams.dateFrom.trim());
+  const [debouncedDateTo, setDebouncedDateTo] = useState(initParams.dateTo.trim());
+  const [page, setPage] = useState(initParams.page);
   const pageSize = 20;
+
+  const hasActiveFilters = Boolean(
+    debouncedSearch || debouncedSpecies || debouncedDateFrom || debouncedDateTo,
+  );
+  const dateRangeInvalid =
+    Boolean(debouncedDateFrom && debouncedDateTo) &&
+    debouncedDateFrom > debouncedDateTo;
+
+  const [compactCards, setCompactCards] = useState(() => {
+    try {
+      return window.localStorage.getItem(COMPACT_LIST_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [recentSearches, setRecentSearches] = useState<string[]>(() =>
+    typeof window !== "undefined" ? readRecentSearches(caseScope) : [],
+  );
+
+  useEffect(() => {
+    setRecentSearches(readRecentSearches(caseScope));
+  }, [caseScope]);
 
   useEffect(() => {
     const tmr = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);
@@ -72,42 +168,124 @@ export default function CaseList({
   }, [speciesFilter]);
 
   useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, debouncedSpecies, caseScope]);
+    const tmr = window.setTimeout(() => setDebouncedDateFrom(dateFromBs.trim()), 350);
+    return () => window.clearTimeout(tmr);
+  }, [dateFromBs]);
+
+  useEffect(() => {
+    const tmr = window.setTimeout(() => setDebouncedDateTo(dateToBs.trim()), 350);
+    return () => window.clearTimeout(tmr);
+  }, [dateToBs]);
+
+  useEffect(() => {
+    const prev = filterDebounceRef.current;
+    const nextQ = debouncedSearch;
+    const nextSp = debouncedSpecies;
+    const nextDf = debouncedDateFrom;
+    const nextDt = debouncedDateTo;
+    if (prev.q !== nextQ || prev.sp !== nextSp || prev.df !== nextDf || prev.dt !== nextDt) {
+      filterDebounceRef.current = { q: nextQ, sp: nextSp, df: nextDf, dt: nextDt };
+      setPage(1);
+    }
+  }, [debouncedSearch, debouncedSpecies, debouncedDateFrom, debouncedDateTo]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COMPACT_LIST_KEY, compactCards ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [compactCards]);
+
+  useEffect(() => {
+    const basePath = path.split("?")[0];
+    const params = new URLSearchParams();
+    if (debouncedSearch) params.set("q", debouncedSearch);
+    if (debouncedSpecies) params.set("species", debouncedSpecies);
+    if (debouncedDateFrom) params.set("dateFrom", debouncedDateFrom);
+    if (debouncedDateTo) params.set("dateTo", debouncedDateTo);
+    if (page > 1) params.set("page", String(page));
+    const qs = params.toString();
+    const next = qs ? `${basePath}?${qs}` : basePath;
+    if (typeof window !== "undefined") {
+      const current = window.location.hash.replace(/^#/, "");
+      if (current === next) return;
+    }
+    setLocation(next, { replace: true });
+  }, [debouncedSearch, debouncedSpecies, debouncedDateFrom, debouncedDateTo, page, path, setLocation]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" && e.key !== "?") return;
+      const el = document.activeElement;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          (el as HTMLElement).isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "?") {
+        e.preventDefault();
+        toast({
+          title: "Keyboard shortcuts",
+          description: "Press / to focus search. Filters and page sync to the URL for sharing.",
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toast]);
+
+  const effectiveDateFrom = dateRangeInvalid ? "" : debouncedDateFrom;
+  const effectiveDateTo = dateRangeInvalid ? "" : debouncedDateTo;
 
   const listQueryKey = useMemo(
-    () => ["/api/cases", caseScope, debouncedSearch, debouncedSpecies, page, pageSize] as const,
-    [caseScope, debouncedSearch, debouncedSpecies, page],
+    () =>
+      casesListQueryKey(
+        caseScope,
+        debouncedSearch,
+        debouncedSpecies,
+        effectiveDateFrom,
+        effectiveDateTo,
+        page,
+        pageSize,
+      ),
+    [caseScope, debouncedSearch, debouncedSpecies, effectiveDateFrom, effectiveDateTo, page, pageSize],
   );
 
   const { data: casesPayload, isLoading } = useQuery({
     queryKey: listQueryKey,
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("scope", caseScope);
-      params.set("paginated", "true");
-      params.set("page", String(page));
-      params.set("pageSize", String(pageSize));
-      if (debouncedSearch) params.set("q", debouncedSearch);
-      if (debouncedSpecies) params.set("species", debouncedSpecies);
-      const res = await apiRequest("GET", `/api/cases?${params.toString()}`);
-      const body = (await res.json()) as CasesPageResponse | Case[];
-      if (Array.isArray(body)) {
-        return {
-          items: body,
-          page: 1,
-          pageSize: body.length,
-          total: body.length,
-          totalPages: 1,
-        } satisfies CasesPageResponse;
-      }
-      return body as CasesPageResponse;
-    },
+    queryFn: () =>
+      fetchCasesPage(
+        caseScope,
+        debouncedSearch,
+        debouncedSpecies,
+        effectiveDateFrom,
+        effectiveDateTo,
+        page,
+        pageSize,
+      ),
   });
 
   const filtered = casesPayload?.items ?? [];
   const total = casesPayload?.total ?? 0;
   const totalPages = Math.max(1, casesPayload?.totalPages ?? 1);
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!debouncedSearch.trim()) return;
+    if (filtered.length === 0) return;
+    pushRecentSearch(caseScope, debouncedSearch);
+    setRecentSearches(readRecentSearches(caseScope));
+  }, [isLoading, debouncedSearch, filtered.length, caseScope]);
 
   const deleteCaseMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -163,53 +341,210 @@ export default function CaseList({
     );
   });
 
+  const showBulkToolbar = isAdmin && !isLoading && filtered.length > 0;
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Link href={backHref}>
-            <Button variant="ghost" size="icon" data-testid="button-back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
-          <h1 className="text-lg font-semibold" data-testid="text-page-title">
-            Previous Cases
-          </h1>
-        </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-          {canCreateFromThisList && (
-            <Link href={createCaseHref} className="w-full sm:w-auto">
-              <Button size="sm" className="gap-1.5" data-testid="button-new-case">
-                <ClipboardPlus className="w-3.5 h-3.5" />
-                New Case
+    <StickyScrollPage
+      bodyClassName="space-y-6"
+      stickyClassName="max-sm:max-h-[min(48vh,22rem)] max-sm:overflow-y-auto"
+      sticky={
+        <div className="space-y-4">
+          <PageBreadcrumbs
+            items={
+              isHospitalHistory
+                ? [
+                    { label: "Hospital", href: "/new-case" },
+                    { label: "Previous cases" },
+                  ]
+                : [
+                    { label: "AST module", href: "/ast-report" },
+                    { label: "Previous cases" },
+                  ]
+            }
+          />
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <Link href={backHref}>
+                <Button variant="ghost" size="icon" data-testid="button-back">
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </Link>
+              <h1 className="text-lg font-semibold truncate" data-testid="text-page-title">
+                Previous Cases
+              </h1>
+            </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5"
+                title={compactCards ? "Comfortable card spacing" : "Compact list (denser cards)"}
+                onClick={() => setCompactCards((c) => !c)}
+              >
+                {compactCards ? (
+                  <>
+                    <LayoutList className="w-3.5 h-3.5" />
+                    Comfortable
+                  </>
+                ) : (
+                  <>
+                    <Rows3 className="w-3.5 h-3.5" />
+                    Compact
+                  </>
+                )}
               </Button>
-            </Link>
+              {canCreateFromThisList && (
+                <Link href={createCaseHref} className="w-full sm:w-auto">
+                  <Button size="sm" className="gap-1.5" data-testid="button-new-case">
+                    <ClipboardPlus className="w-3.5 h-3.5" />
+                    New Case
+                  </Button>
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {isAdmin && (
+            <Card>
+              <CardContent className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {isHospitalHistory ? "Hospital Case Change Logs" : "AST Case Change Logs"}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setShowCaseLogs((v) => !v)}
+                  data-testid="button-toggle-case-change-logs"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  {showCaseLogs ? "Hide Logs" : "View Logs"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {recentSearches.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Recent search:</span>
+              {recentSearches.map((t) => (
+                <Button
+                  key={t}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setSearch(t)}
+                >
+                  {t}
+                </Button>
+              ))}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                data-testid="button-clear-recent-searches"
+                onClick={() => {
+                  clearRecentSearches(caseScope);
+                  setRecentSearches([]);
+                  toast({ title: "Recent searches cleared" });
+                }}
+              >
+                Clear all
+              </Button>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <Input
+                ref={searchInputRef}
+                type="search"
+                placeholder="Search by case number, owner, species, breed, or phone..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-9 pl-9"
+                data-testid="input-search"
+                aria-label="Search cases"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Press <kbd className="px-1 rounded border bg-muted font-mono text-[10px]">/</kbd> to focus
+              search · <kbd className="px-1 rounded border bg-muted font-mono text-[10px]">?</kbd> for
+              shortcuts · filters sync to the URL for sharing
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:flex-wrap">
+            <Input
+              type="text"
+              placeholder="Species (exact match, e.g. Canine)"
+              value={speciesFilter}
+              onChange={(e) => setSpeciesFilter(e.target.value)}
+              className="h-9 text-sm sm:max-w-xs"
+              data-testid="input-species-filter"
+            />
+            <CaseListDateFilterDialog
+              dateFrom={dateFromBs}
+              dateTo={dateToBs}
+              onApply={(from, to) => {
+                setDateFromBs(from);
+                setDateToBs(to);
+              }}
+              onClear={() => {
+                setDateFromBs("");
+                setDateToBs("");
+              }}
+            />
+            <p className="text-xs text-muted-foreground sm:pb-2">
+              {total} case{total === 1 ? "" : "s"}
+              {hasActiveFilters && !dateRangeInvalid ? " (filtered)" : ""}
+            </p>
+            {dateRangeInvalid ? (
+              <p className="text-xs text-destructive w-full sm:pb-2">
+                Date filter: from must be on or before to.
+              </p>
+            ) : null}
+          </div>
+
+          {showBulkToolbar && (
+            <div className="flex flex-col sm:flex-row items-end sm:items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>Selected: {selectedIds.length}</span>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 gap-1.5 text-destructive hover:text-destructive"
+                    disabled={selectedIds.length === 0}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete selected
+                  </Button>
+                </AlertDialogTrigger>
+                <DeleteBatchDialog
+                  count={selectedIds.length}
+                  onConfirm={async () => {
+                    await Promise.all(
+                      selectedIds.map((id) =>
+                        apiRequest("DELETE", `/api/cases/${id}?scope=${caseScope}`),
+                      ),
+                    );
+                    setSelectedIds([]);
+                    queryClient.invalidateQueries({ queryKey: ["/api/cases", caseScope] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/case-change-logs"] });
+                    toast({ title: "Selected cases deleted" });
+                  }}
+                />
+              </AlertDialog>
+            </div>
           )}
         </div>
-      </div>
-
-      {isAdmin && (
-        <Card>
-          <CardContent className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <div className="text-xs text-muted-foreground">
-              {isHospitalHistory ? "Hospital Case Change Logs" : "AST Case Change Logs"}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => setShowCaseLogs((v) => !v)}
-              data-testid="button-toggle-case-change-logs"
-            >
-              <Clock className="w-3.5 h-3.5" />
-              {showCaseLogs ? "Hide Logs" : "View Logs"}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
+      }
+    >
       {isAdmin && showCaseLogs && (
         <Card>
           <CardContent className="p-3 space-y-2">
@@ -238,7 +573,43 @@ export default function CaseList({
                   <tbody>
                     {filteredCaseLogs.map((row) => (
                       <tr key={`case-log-${row.id}`} className="border-t align-top">
-                        <td className="px-2 py-1.5">{row.caseNumber}</td>
+                        <td className="px-2 py-1.5">
+                          <div className="flex items-center gap-1 min-w-0">
+                            {row.caseId != null ? (
+                              <Link
+                                href={`${caseDetailBasePath}/${row.caseId}?scope=${caseScope}`}
+                                className="text-primary underline-offset-2 hover:underline truncate font-medium"
+                              >
+                                {row.caseNumber}
+                              </Link>
+                            ) : (
+                              <span className="truncate">{row.caseNumber}</span>
+                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0"
+                              title="Copy case number"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(row.caseNumber).then(
+                                  () => {
+                                    toast({ title: "Copied", description: row.caseNumber });
+                                  },
+                                  () => {
+                                    toast({
+                                      title: "Copy failed",
+                                      description: "Your browser blocked clipboard access.",
+                                      variant: "destructive",
+                                    });
+                                  },
+                                );
+                              }}
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </td>
                         <td className="px-2 py-1.5">
                           {row.action === "created" ? "Created" : "Deleted"}
                         </td>
@@ -260,39 +631,11 @@ export default function CaseList({
         </Card>
       )}
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Search by case number, owner, species, breed, or phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-          data-testid="input-search"
-        />
-      </div>
-      <div className="flex flex-col sm:flex-row gap-2">
-        <Input
-          type="text"
-          placeholder="Species (exact match, e.g. Canine)"
-          value={speciesFilter}
-          onChange={(e) => setSpeciesFilter(e.target.value)}
-          className="h-9 text-sm sm:max-w-xs"
-          data-testid="input-species-filter"
-        />
-        <p className="text-xs text-muted-foreground self-center">
-          {total} case{total === 1 ? "" : "s"}
-          {debouncedSearch || debouncedSpecies ? " (filtered)" : ""}
-        </p>
-      </div>
-
-            {/* Cases */}
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <Card key={i}>
-              <CardContent className="p-4 space-y-2">
+              <CardContent className={compactCards ? "p-3 space-y-2" : "p-4 space-y-2"}>
                 <Skeleton className="h-4 w-32" />
                 <Skeleton className="h-3 w-48" />
                 <Skeleton className="h-3 w-24" />
@@ -307,17 +650,51 @@ export default function CaseList({
           </div>
           <div className="space-y-1">
             <p className="font-medium text-sm">
-              {debouncedSearch || debouncedSpecies ? "No matching cases" : "No cases yet"}
+              {dateRangeInvalid
+                ? "Invalid date range"
+                : hasActiveFilters
+                  ? "No matching cases"
+                  : "No cases yet"}
             </p>
             <p className="text-sm text-muted-foreground">
-              {debouncedSearch || debouncedSpecies
-                ? "Try a different search term."
-                : `Register your first ${emptyStateCaseLabel} to get started.`}
+              {dateRangeInvalid
+                ? "Choose a from date on or before the to date."
+                : hasActiveFilters
+                  ? "Try a different search term or clear filters."
+                  : `Register your first ${emptyStateCaseLabel} to get started.`}
             </p>
           </div>
-          {!debouncedSearch && !debouncedSpecies && canCreateFromThisList && (
+          {(hasActiveFilters || dateRangeInvalid) && (
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {debouncedSearch ? (
+                <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setSearch("")}>
+                  Clear search
+                </Button>
+              ) : null}
+              {debouncedSpecies ? (
+                <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setSpeciesFilter("")}>
+                  Clear species filter
+                </Button>
+              ) : null}
+              {debouncedDateFrom || debouncedDateTo ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => {
+                    setDateFromBs("");
+                    setDateToBs("");
+                  }}
+                >
+                  Clear date range
+                </Button>
+              ) : null}
+            </div>
+          )}
+          {!hasActiveFilters && !dateRangeInvalid && canCreateFromThisList && (
             <Link href={createCaseHref}>
-              <Button size="sm" className="gap-1.5">
+              <Button size="sm" className="gap-1.5 h-9">
                 <ClipboardPlus className="w-3.5 h-3.5" />
                 Register Case
               </Button>
@@ -326,35 +703,6 @@ export default function CaseList({
         </div>
       ) : (
         <>
-          {isAdmin && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>Selected: {selectedIds.length}</span>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-destructive hover:text-destructive"
-                    disabled={selectedIds.length === 0}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete selected
-                  </Button>
-                </AlertDialogTrigger>
-                <DeleteBatchDialog
-                  count={selectedIds.length}
-                  onConfirm={async () => {
-                    await Promise.all(selectedIds.map((id) => apiRequest("DELETE", `/api/cases/${id}?scope=${caseScope}`)));
-                    setSelectedIds([]);
-                    queryClient.invalidateQueries({ queryKey: ["/api/cases", caseScope] });
-                    queryClient.invalidateQueries({ queryKey: ["/api/case-change-logs"] });
-                    toast({ title: "Selected cases deleted" });
-                  }}
-                />
-              </AlertDialog>
-            </div>
-          )}
-
           <div className="space-y-2">
             {filtered.map((c) => {
               let astCount = 0;
@@ -368,10 +716,16 @@ export default function CaseList({
               return (
                 <Card
                   key={c.id}
-                  className="transition-colors hover:bg-accent/50"
+                  className="transition-colors hover:bg-accent/50 motion-reduce:transition-none"
                 >
-                  <CardContent className="p-4">
-                    <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+                  <CardContent className={compactCards ? "p-3" : "p-4"}>
+                    <div
+                      className={
+                        compactCards
+                          ? "flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3"
+                          : "flex flex-col sm:flex-row items-start justify-between gap-4"
+                      }
+                    >
                       <div className="flex items-start gap-3 flex-1 min-w-0">
                         {isAdmin && (
                           <input
@@ -494,7 +848,7 @@ export default function CaseList({
           )}
         </>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }
 
@@ -558,7 +912,7 @@ function DeleteBatchDialog({
       <AlertDialogHeader>
         <AlertDialogTitle>Delete {count} selected cases?</AlertDialogTitle>
         <AlertDialogDescription>
-          This action cannot be undone. To confirm, type{" "}
+          These cases will be permanently removed from the system. This cannot be undone. To confirm, type{" "}
           <strong>CONFIRM</strong> below.
         </AlertDialogDescription>
       </AlertDialogHeader>

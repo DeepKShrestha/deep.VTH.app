@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { ExportRow } from "./cases-export";
+import { defuseSpreadsheetFormula } from "./cases-export";
 
 function sanitizeSheetName(name: string): string {
   const cleaned = name.replace(/[:\\/?*[\]]/g, "-").trim();
@@ -39,7 +40,7 @@ export async function rowsToXlsxBuffer(
   });
 
   for (const row of rows) {
-    sheet.addRow(headers.map((h) => String(row[h] ?? "")));
+    sheet.addRow(headers.map((h) => defuseSpreadsheetFormula(String(row[h] ?? ""))));
   }
 
   sheet.views = [{ state: "frozen", ySplit: 1 }];

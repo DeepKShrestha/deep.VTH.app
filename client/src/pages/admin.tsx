@@ -30,10 +30,12 @@ import {
   UserX,
   Users,
   Clock,
+  Copy,
 } from "lucide-react";
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 import { adToBs } from "@/lib/nepali-date";
 import { AdminSiteBackupPanel } from "@/components/admin-site-backup-panel";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 type FormEditLog = {
   id: number;
   actorUserId: number;
@@ -984,7 +986,11 @@ export default function AdminPanel({
   };
 
   return (
-    <div ref={editorRootRef} className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+    <StickyScrollPage
+      ref={editorRootRef}
+      maxWidthClass="max-w-6xl"
+      bodyClassName="space-y-5"
+      sticky={
       <div className="flex items-center gap-3">
         <Link href={backHref}>
           <Button variant="ghost" size="icon" data-testid="button-back">
@@ -996,6 +1002,8 @@ export default function AdminPanel({
           <p className="text-sm text-muted-foreground">{pageSubtitle}</p>
         </div>
       </div>
+      }
+    >
 
       {/* Summary cards */}
       {mode === "full" && (
@@ -1068,7 +1076,18 @@ export default function AdminPanel({
         {/* Pending Signups */}
         <TabsContent value="pending" className="space-y-3 mt-4">
           {pendingUsers.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No pending signup requests</p>
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+              <p className="text-sm text-muted-foreground">No pending signup requests.</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => setActiveTab("users")}
+              >
+                Go to All Users
+              </Button>
+            </div>
           ) : (
             pendingUsers.map((u) => (
               <Card key={u.id}>
@@ -1087,7 +1106,7 @@ export default function AdminPanel({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                        className="h-9 gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                         onClick={() => {
                           const role =
                             u.designation === "student"
@@ -1105,7 +1124,7 @@ export default function AdminPanel({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
+                        className="h-9 gap-1 text-red-600 border-red-200 hover:bg-red-50"
                         onClick={() => rejectMutation.mutate(u.id)}
                         data-testid={`button-reject-${u.id}`}
                       >
@@ -1122,14 +1141,14 @@ export default function AdminPanel({
 
           {/* All Users */}
         <TabsContent value="users" className="space-y-3 mt-4">
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-            <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-col flex-wrap gap-2 sm:flex-row sm:items-center">
               <Input
                 value={usersFilter}
                 onChange={(e) => setUsersFilter(e.target.value)}
                 placeholder="Search by name, username, email, or batch"
                 data-testid="input-users-filter"
-                className="sm:max-w-sm"
+                className="h-9 sm:max-w-sm"
               />
               <Select value={studentBatchFilter} onValueChange={setStudentBatchFilter}>
                 <SelectTrigger className="w-[150px] h-9 text-xs" data-testid="select-student-batch-filter">
@@ -1192,7 +1211,7 @@ export default function AdminPanel({
                     onClick={() => {
                       const ids = Array.from(selectedUserIds);
                       const ok = window.confirm(
-                        `Permanently delete ${ids.length} selected account(s)? This cannot be undone.`,
+                        `Permanently delete ${ids.length} selected account(s)? Their sessions will end immediately. This cannot be undone.`,
                       );
                       if (!ok) return;
                       bulkDeleteUsersMutation.mutate(ids);
@@ -1209,7 +1228,7 @@ export default function AdminPanel({
             <Button
               size="sm"
               variant="outline"
-              className="gap-1.5"
+              className="h-9 gap-1.5 shrink-0"
               onClick={downloadUsersCsv}
               disabled={filteredApprovedUsers.length === 0}
               data-testid="button-download-users-csv"
@@ -1219,9 +1238,46 @@ export default function AdminPanel({
             </Button>
           </div>
           {filteredApprovedUsers.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              {normalizedUsersFilter ? "No users match your search." : "No users found."}
-            </p>
+            <div className="flex flex-col items-center justify-center gap-4 px-4 py-12 text-center">
+              <p className="text-sm text-muted-foreground max-w-md">
+                {normalizedUsersFilter || studentBatchFilter !== "all"
+                  ? "No users match your current search or batch filter."
+                  : "No approved users to show yet."}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {normalizedUsersFilter ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9"
+                    onClick={() => setUsersFilter("")}
+                  >
+                    Clear search
+                  </Button>
+                ) : null}
+                {studentBatchFilter !== "all" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9"
+                    onClick={() => setStudentBatchFilter("all")}
+                  >
+                    Show all batches
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setActiveTab("pending")}
+                >
+                  View pending signups
+                </Button>
+              </div>
+            </div>
           ) : (
             filteredApprovedUsers.map((u) => (
               <Card key={u.id}>
@@ -1391,14 +1447,14 @@ export default function AdminPanel({
 
         {/* Download Requests */}
         <TabsContent value="downloads" className="space-y-3 mt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Source</Label>
-              <Select
-                value={downloadSourceFilter}
-                onValueChange={(v: "all" | "ast_report" | "hospital_case") => setDownloadSourceFilter(v)}
-              >
-                <SelectTrigger className="h-8 w-40 text-xs" data-testid="select-download-source-filter">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="download-source-filter" className="text-xs text-muted-foreground">
+                  Source
+                </Label>
+              <Select value={downloadSourceFilter} onValueChange={(v: "all" | "ast_report" | "hospital_case") => setDownloadSourceFilter(v)}>
+                <SelectTrigger id="download-source-filter" className="h-9 w-40 text-xs" data-testid="select-download-source-filter">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1407,11 +1463,13 @@ export default function AdminPanel({
                   <SelectItem value="hospital_case">Hospital Case</SelectItem>
                 </SelectContent>
               </Select>
+              </div>
             </div>
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="h-9"
               onClick={() => setShowDownloadLogs((v) => !v)}
               data-testid="button-toggle-download-logs"
             >
@@ -1422,19 +1480,19 @@ export default function AdminPanel({
           {showDownloadLogs && (
             <Card>
               <CardContent className="pt-3 pb-3">
-                <div className="mb-2 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+                <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <Input
                     value={downloadLogsFilter}
                     onChange={(e) => setDownloadLogsFilter(e.target.value)}
                     placeholder="Search by requester name or username"
-                    className="sm:max-w-sm h-8 text-xs"
+                    className="h-9 sm:max-w-sm text-xs"
                     data-testid="input-download-logs-filter"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="gap-1.5"
+                    className="h-9 gap-1.5 shrink-0"
                     onClick={downloadDownloadLogsCsv}
                     disabled={filteredResolvedDownloadLogs.length === 0}
                     data-testid="button-download-download-logs-csv"
@@ -1444,7 +1502,24 @@ export default function AdminPanel({
                   </Button>
                 </div>
                 {filteredResolvedDownloadLogs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No resolved download logs yet.</p>
+                  <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/10 px-4 py-8 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      {normalizedDownloadLogsFilter.trim()
+                        ? "No log entries match your search."
+                        : "No resolved download logs yet."}
+                    </p>
+                    {normalizedDownloadLogsFilter.trim() ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => setDownloadLogsFilter("")}
+                      >
+                        Clear log search
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="overflow-x-auto rounded border">
                     <table className="w-full text-xs">
@@ -1497,7 +1572,32 @@ export default function AdminPanel({
           )}
 
           {pendingDlRequests.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No pending download requests for selected source</p>
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+              <p className="text-sm text-muted-foreground">
+                No pending download requests for the selected source.
+              </p>
+              {downloadSourceFilter !== "all" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setDownloadSourceFilter("all")}
+                >
+                  Show all sources
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setShowDownloadLogs(true)}
+                >
+                  View resolved download logs
+                </Button>
+              )}
+            </div>
           ) : (
             pendingDlRequests.map((r) => (
               <Card key={r.id}>
@@ -1521,19 +1621,21 @@ export default function AdminPanel({
     <Button
       size="sm"
       variant="outline"
-      className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+      className="h-9 gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
       onClick={() => resolveDlMutation.mutate({ id: r.id, status: "approved" })}
       data-testid={`button-approve-dl-${r.id}`}
     >
+      <UserCheck className="w-3.5 h-3.5" />
       Approve
     </Button>
     <Button
       size="sm"
       variant="outline"
-      className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
+      className="h-9 gap-1 text-red-600 border-red-200 hover:bg-red-50"
       onClick={() => resolveDlMutation.mutate({ id: r.id, status: "rejected" })}
       data-testid={`button-reject-dl-${r.id}`}
     >
+      <UserX className="w-3.5 h-3.5" />
       Reject
     </Button>
   </>
@@ -1560,11 +1662,12 @@ export default function AdminPanel({
 
         {/* Password Reset Requests */}
         <TabsContent value="password-resets" className="space-y-3 mt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="h-9"
               onClick={() => setShowPasswordResetLogs((v) => !v)}
               data-testid="button-toggle-reset-logs"
             >
@@ -1575,7 +1678,7 @@ export default function AdminPanel({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="gap-1.5"
+                className="h-9 gap-1.5"
                 onClick={downloadPasswordResetLogsCsv}
                 disabled={resolvedPasswordResetLogs.length === 0}
                 data-testid="button-download-reset-logs-csv"
@@ -1594,12 +1697,29 @@ export default function AdminPanel({
                     value={passwordResetLogsFilter}
                     onChange={(e) => setPasswordResetLogsFilter(e.target.value)}
                     placeholder="Search by requester name or username"
-                    className="sm:max-w-sm h-8 text-xs"
+                    className="h-9 sm:max-w-sm text-xs"
                     data-testid="input-password-reset-logs-filter"
                   />
                 </div>
                 {filteredResolvedPasswordResetLogs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No resolved password reset logs yet.</p>
+                  <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border/80 bg-muted/10 px-4 py-8 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      {normalizedPasswordResetLogsFilter.trim()
+                        ? "No log entries match your search."
+                        : "No resolved password reset logs yet."}
+                    </p>
+                    {normalizedPasswordResetLogsFilter.trim() ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => setPasswordResetLogsFilter("")}
+                      >
+                        Clear log search
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="overflow-x-auto rounded border">
                     <table className="w-full text-xs">
@@ -1644,9 +1764,29 @@ export default function AdminPanel({
             </Card>
           )}
           {passwordResetRequests.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No password reset requests
-            </p>
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+              <p className="text-sm text-muted-foreground">No password reset requests right now.</p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setActiveTab("users")}
+                >
+                  Go to All Users
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setActiveTab("pending")}
+                >
+                  View pending signups
+                </Button>
+              </div>
+            </div>
           ) : (
             passwordResetRequests.map((r) => (
               <Card key={r.id}>
@@ -1693,7 +1833,7 @@ export default function AdminPanel({
                           <Button
                             size="sm"
                             variant="outline"
-                            className="gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                            className="h-9 gap-1 text-emerald-600 border-emerald-200 hover:bg-emerald-50"
                             onClick={() =>
                               resolvePasswordResetMutation.mutate({
                                 id: r.id,
@@ -1702,12 +1842,13 @@ export default function AdminPanel({
                               })
                             }
                           >
+                            <UserCheck className="w-3.5 h-3.5" />
                             Approve
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
-                            className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
+                            className="h-9 gap-1 text-red-600 border-red-200 hover:bg-red-50"
                             onClick={() =>
                               resolvePasswordResetMutation.mutate({
                                 id: r.id,
@@ -1716,6 +1857,7 @@ export default function AdminPanel({
                               })
                             }
                           >
+                            <UserX className="w-3.5 h-3.5" />
                             Reject
                           </Button>
                         </>
@@ -2630,7 +2772,7 @@ export default function AdminPanel({
           </CardContent>
         </Card>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }
 
@@ -2657,6 +2799,7 @@ type AdminActionLogEntry = {
  * approvals, role changes, password-reset resolutions, and site restores.
  */
 function AdminAuditLogPanel() {
+  const { toast } = useToast();
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [limit, setLimit] = useState<number>(100);
 
@@ -2802,11 +2945,41 @@ function AdminAuditLogPanel() {
                         {row.actionType}
                       </Badge>
                     </td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">
-                      <div>{row.targetType}</div>
-                      {row.targetId && (
-                        <div className="text-muted-foreground">#{row.targetId}</div>
-                      )}
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <div>
+                          <div>{row.targetType}</div>
+                          {row.targetId != null && (
+                            <div className="text-muted-foreground">#{row.targetId}</div>
+                          )}
+                        </div>
+                        {row.targetId != null && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            title="Copy target id"
+                            onClick={() => {
+                              const text = String(row.targetId);
+                              void navigator.clipboard.writeText(text).then(
+                                () => {
+                                  toast({ title: "Copied", description: text });
+                                },
+                                () => {
+                                  toast({
+                                    title: "Copy failed",
+                                    description: "Clipboard access was blocked.",
+                                    variant: "destructive",
+                                  });
+                                },
+                              );
+                            }}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-1.5 font-mono text-[10px] max-w-[28rem]">
                       {row.details == null

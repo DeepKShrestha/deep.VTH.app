@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import { DB_PROVIDER } from "./db";
 import { registerAdminRoutes } from "./routes/admin";
@@ -15,6 +16,8 @@ import { authSessionRepo } from "./auth-session-repo";
 import { domainRepo } from "./domain-repo";
 import { runPendingMigrations } from "./migration-runner";
 import { pruneExpiredPendingTwoFactor } from "./login-security";
+import { pruneSessionsOnBoot } from "./session-boot-prune";
+import { isStrongPassword } from "./password-policy";
 
 export async function registerRoutes(_httpServer: Server, app: Express) {
   if (DB_PROVIDER === "sqlite") {
@@ -39,8 +42,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     expires_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL
   )`);
-    // Force fresh auth after every server restart.
-    await dbRun(sql`DELETE FROM sessions`);
+    await pruneSessionsOnBoot();
     await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
     await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS password_reset_requests (
@@ -104,6 +106,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     description TEXT,
+    medication_class TEXT,
     display_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -333,6 +336,11 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       await dbRun(sql`ALTER TABLE medications ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
     }
     try {
+      await dbRun(sql`SELECT medication_class FROM medications LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE medications ADD COLUMN medication_class TEXT`);
+    }
+    try {
       await dbRun(sql`SELECT display_order FROM routes_of_administration LIMIT 1`);
     } catch {
       await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
@@ -436,7 +444,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       expires_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     )`);
-    await dbRun(sql`DELETE FROM sessions`);
+    await pruneSessionsOnBoot();
     await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id)`);
     await dbRun(sql`CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at)`);
 
@@ -513,6 +521,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       description TEXT,
+      medication_class TEXT,
       display_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
@@ -665,6 +674,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS custom_fields TEXT`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS treatment_details TEXT`);
     await dbRun(sql`ALTER TABLE medications ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`ALTER TABLE medications ADD COLUMN IF NOT EXISTS medication_class TEXT`);
     await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
     await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN IF NOT EXISTS abbreviation TEXT NOT NULL DEFAULT ''`);
     await dbRun(sql`ALTER TABLE frequencies ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
@@ -1088,8 +1098,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   await dbRun(
     sql`UPDATE form_questions
         SET is_builtin = 1
-        WHERE LOWER(section_key) = 'tests_suggested'
-          OR LOWER(key) IN (
+        WHERE LOWER(key) IN (
             'testssuggested',
             'enzymepaneltests',
             'rapiddiagnostictests',
@@ -1099,6 +1108,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             'cytologydetails',
             'culturedetails',
             'treatmentprescription'
+          )`,
+  );
+  await dbRun(
+    sql`UPDATE form_questions
+        SET is_builtin = 0
+        WHERE LOWER(section_key) = 'tests_suggested'
+          AND LOWER(key) NOT IN (
+            'testssuggested',
+            'enzymepaneltests',
+            'rapiddiagnostictests',
+            'xraydetails',
+            'ultrasounddetails',
+            'biopsydetails',
+            'cytologydetails',
+            'culturedetails'
           )`,
   );
   await dbRun(
@@ -1117,6 +1141,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
           AND (
             LOWER(REPLACE(REPLACE(REPLACE(label, ' ', ''), '-', ''), '_', '')) = 'testssuggested'
             OR LOWER(key) LIKE '%testssuggested%'
+          )`,
+  );
+  await dbRun(
+    sql`DELETE FROM form_questions
+        WHERE LOWER(section_key) = 'tests_suggested'
+          AND LOWER(input_type) IN ('text', 'textarea')
+          AND LOWER(key) NOT IN (
+            'xraydetails',
+            'ultrasounddetails',
+            'biopsydetails',
+            'cytologydetails',
+            'culturedetails',
+            'testssuggested'
+          )
+          AND (
+            LOWER(key) LIKE '%testssuggested%'
+            OR LOWER(REPLACE(REPLACE(REPLACE(COALESCE(label, ''), ' ', ''), '-', ''), '_', '')) LIKE '%testssuggested%'
           )`,
   );
   await dbRun(
@@ -1167,18 +1208,37 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       process.env.NODE_ENV !== "production" ||
       process.env.ALLOW_DEFAULT_ADMIN === "true";
     if (shouldSeedAdmin) {
-    const hash = bcrypt.hashSync("admin123", 10);
-    await authSessionRepo.createUser({
-      fullName: "Super Admin",
-      address: "VTH",
-      phone: "0000000000",
-      email: "admin@vth.edu.np",
-      designation: "veterinarian",
-      username: "admin",
-      passwordHash: hash,
-      role: "superadmin",
-      approved: true,
-    });
+      // Bootstrap superadmin. The previous static "admin123" was a known
+      // credential leak vector — anyone who pulled the repo or read the
+      // audit could walk in. Pin the password via DEFAULT_ADMIN_PASSWORD
+      // (required to be at least 12 chars, includes letters+digits), or
+      // we generate one and print it to the server log exactly once.
+      const overridePassword = process.env.DEFAULT_ADMIN_PASSWORD?.trim();
+      let initialPassword = overridePassword || "";
+      if (overridePassword) {
+        if (!isStrongPassword(overridePassword, 12)) {
+          throw new Error(
+            "DEFAULT_ADMIN_PASSWORD must be at least 12 characters and contain both letters and digits.",
+          );
+        }
+      } else {
+        initialPassword = crypto.randomBytes(18).toString("base64url");
+        console.warn(
+          `\n[BOOTSTRAP] Created superadmin username="admin" with one-time password: ${initialPassword}\n[BOOTSTRAP] Set DEFAULT_ADMIN_PASSWORD env var to pin this, then rotate after first login.\n`,
+        );
+      }
+      const hash = bcrypt.hashSync(initialPassword, 10);
+      await authSessionRepo.createUser({
+        fullName: "Super Admin",
+        address: "VTH",
+        phone: "0000000000",
+        email: "admin@vth.edu.np",
+        designation: "veterinarian",
+        username: "admin",
+        passwordHash: hash,
+        role: "superadmin",
+        approved: true,
+      });
     }
   } else {
     const hasSuperAdmin = existingUsers.some((u) => u.role === "superadmin");
@@ -1200,33 +1260,48 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     const hiddenEmail =
       process.env.HIDDEN_SUPERADMIN_EMAIL?.trim() ||
       "system.superadmin@localhost";
-    const hiddenPassword =
-      process.env.HIDDEN_SUPERADMIN_PASSWORD?.trim() || "ChangeMeNow123!";
+    const hiddenPassword = process.env.HIDDEN_SUPERADMIN_PASSWORD?.trim();
+    const hiddenPasswordStrong = isStrongPassword(hiddenPassword, 16);
 
-    const byUsername = await authSessionRepo.getUserByUsername(hiddenUsername);
-    const byEmail = await authSessionRepo.getUserByEmail(hiddenEmail);
-    const existingHidden = byUsername || byEmail;
+    // Hidden superadmin is a true break-glass account. It must NEVER fall
+    // back to a hardcoded password. Production refuses to start without a
+    // strong password; development logs a warning and skips bootstrap so
+    // local `.env` typos do not brick `npm run dev`.
+    if (!hiddenPasswordStrong) {
+      const message =
+        "HIDDEN_SUPERADMIN_ENABLED=true requires HIDDEN_SUPERADMIN_PASSWORD to be at least 16 characters and contain both letters and digits.";
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(message);
+      }
+      console.warn(
+        `[BOOTSTRAP] ${message} Hidden superadmin bootstrap skipped in development.`,
+      );
+    } else if (hiddenPassword) {
+      const byUsername = await authSessionRepo.getUserByUsername(hiddenUsername);
+      const byEmail = await authSessionRepo.getUserByEmail(hiddenEmail);
+      const existingHidden = byUsername || byEmail;
 
-    if (!existingHidden) {
-      await authSessionRepo.createUser({
-        fullName: "System Super Admin",
-        address: "System",
-        phone: "0000000000",
-        email: hiddenEmail,
-        designation: "veterinarian",
-        username: hiddenUsername,
-        passwordHash: bcrypt.hashSync(hiddenPassword, 10),
-        role: "superadmin",
-        approved: true,
-      });
-    } else if (
-      existingHidden.role !== "superadmin" ||
-      existingHidden.approved !== true
-    ) {
-      await authSessionRepo.updateUser(existingHidden.id, {
-        role: "superadmin",
-        approved: true,
-      });
+      if (!existingHidden) {
+        await authSessionRepo.createUser({
+          fullName: "System Super Admin",
+          address: "System",
+          phone: "0000000000",
+          email: hiddenEmail,
+          designation: "veterinarian",
+          username: hiddenUsername,
+          passwordHash: bcrypt.hashSync(hiddenPassword, 10),
+          role: "superadmin",
+          approved: true,
+        });
+      } else if (
+        existingHidden.role !== "superadmin" ||
+        existingHidden.approved !== true
+      ) {
+        await authSessionRepo.updateUser(existingHidden.id, {
+          role: "superadmin",
+          approved: true,
+        });
+      }
     }
   }
 

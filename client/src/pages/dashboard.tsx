@@ -21,9 +21,11 @@ import {
 import { ArrowLeft, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 type KV = { name: string; value: number };
 type DashboardPayload = {
@@ -101,6 +103,23 @@ type DashboardPayload = {
 const COLORS = ["#16a34a", "#0ea5e9", "#8b5cf6", "#f59e0b", "#ef4444", "#14b8a6"];
 type DashboardScope = "ast" | "hospital";
 
+const PRESET_LABELS: Record<string, string> = {
+  today: "Today",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "3m": "Last 3 months",
+  "6m": "Last 6 months",
+  "12m": "Last 12 months",
+  all: "All time",
+};
+
+const GROUP_LABELS: Record<string, string> = {
+  day: "Day",
+  week: "Week",
+  month: "Month",
+  year: "Year",
+};
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
     <Card>
@@ -156,9 +175,52 @@ export default function DashboardPage({
     return rows.filter((r) => [r.caseNumber, r.ownerName, r.phoneNumber, r.address, r.animalName, r.species, r.breed, r.sex, r.sampleType, r.organismIsolated, r.antibiotic, r.resultCategory].join(" ").toLowerCase().includes(q));
   }, [data, search]);
 
+  const dashboardActiveFilterChips = useMemo(() => {
+    const chips: string[] = [];
+    if (preset !== "all") chips.push(`Time: ${PRESET_LABELS[preset] ?? preset}`);
+    if (groupBy !== "month") chips.push(`Group: ${GROUP_LABELS[groupBy] ?? groupBy}`);
+    if (species !== "all") chips.push(`Species: ${species}`);
+    if (breed !== "all") chips.push(`Breed: ${breed}`);
+    if (sex !== "all") chips.push(`Sex: ${sex}`);
+    if (sampleType !== "all") chips.push(`Sample: ${sampleType}`);
+    if (organism !== "all") chips.push(`Organism: ${organism}`);
+    if (antibiotic !== "all") chips.push(`Antibiotic: ${antibiotic}`);
+    if (result !== "all") {
+      const r =
+        result === "S" ? "Susceptible" : result === "I" ? "Intermediate" : result === "R" ? "Resistant" : result;
+      chips.push(`Result: ${r}`);
+    }
+    if (dateFrom) chips.push(`From: ${dateFrom}`);
+    if (dateTo) chips.push(`To: ${dateTo}`);
+    if (minTested !== "5") chips.push(`Min tested: ${minTested}`);
+    if (matrixMode !== "resistantPct") {
+      chips.push(
+        matrixMode === "susceptiblePct" ? "Matrix: % susceptible" : "Matrix: number tested",
+      );
+    }
+    return chips;
+  }, [
+    preset,
+    groupBy,
+    species,
+    breed,
+    sex,
+    sampleType,
+    organism,
+    antibiotic,
+    result,
+    dateFrom,
+    dateTo,
+    minTested,
+    matrixMode,
+  ]);
+
   return (
-    <div className="max-w-[1300px] mx-auto px-4 py-6 space-y-6">
-      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b pb-3">
+    <StickyScrollPage
+      maxWidthClass="max-w-[1300px]"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-3">
         <div className="flex items-start sm:items-center gap-3 mb-3">
           <Link href={backHref}><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
@@ -186,7 +248,21 @@ export default function DashboardPage({
             <Select value={matrixMode} onValueChange={(v) => setMatrixMode(v as "susceptiblePct" | "resistantPct" | "tested")}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Antibiogram mode" /></SelectTrigger><SelectContent><SelectItem value="susceptiblePct">% susceptible</SelectItem><SelectItem value="resistantPct">% resistant</SelectItem><SelectItem value="tested">Number tested</SelectItem></SelectContent></Select>
           </div>
         </div>
-      </div>
+        {dashboardActiveFilterChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-border/60">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide shrink-0">
+              Filters applied
+            </span>
+            {dashboardActiveFilterChips.map((label, i) => (
+              <Badge key={`${i}-${label}`} variant="secondary" className="text-[10px] font-normal max-w-[14rem] truncate">
+                {label}
+              </Badge>
+            ))}
+          </div>
+        )}
+        </div>
+      }
+    >
 
       {isLoading ? (
         <Card><CardContent className="p-6 text-sm text-muted-foreground">Loading dashboard...</CardContent></Card>
@@ -282,6 +358,6 @@ export default function DashboardPage({
           </Card>
         </>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }

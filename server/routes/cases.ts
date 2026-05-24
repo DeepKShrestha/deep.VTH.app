@@ -2,12 +2,15 @@ import type { Express, Request, Response } from "express";
 import { insertCaseSchema, patchCaseSchema } from "@shared/schema";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
+import { allocateCaseIdentifiers, peekCaseIdentifiers } from "../case-counters";
 import { caseRepo, type CaseListFilters, type CaseViewerAccess } from "../case-repo";
+import { consumeApprovedDownloadRequest } from "../download-request-auth";
+import { adYmdToBsYmd, isLikelyBsYmd } from "../nepali-date-utils";
 import { authSessionRepo } from "../auth-session-repo";
 import fs from "fs";
 import path from "path";
 import multer from "multer";
-import PDFDocument from "pdfkit";
+import { buildCasePdfBuffer } from "../case-pdf";
 import {
   signAttachmentDownloadUrl,
   verifyAttachmentSignature,
@@ -35,6 +38,10 @@ import {
   ensureHospitalVeterinarianDefinition,
   mergeOrphanFormSections,
 } from "../hospital-form-definition";
+import {
+  isTestsSuggestedSectionKey,
+  shouldIncludeTestsSuggestedFormQuestion,
+} from "@shared/hospital-tests-suggested";
 import {
   astLongExportColumnOrder,
   astWideExportColumnOrder,
@@ -110,8 +117,8 @@ type CaseAttachmentRow = {
  * Callers (the case-attachment list endpoints) must already have done the
  * scope/permission check for the parent case before calling this.
  */
-function toAttachmentPublicUrl(attachmentId: number): string {
-  return signAttachmentDownloadUrl(attachmentId);
+function toAttachmentPublicUrl(attachmentId: number, userId: number): string {
+  return signAttachmentDownloadUrl(attachmentId, userId);
 }
 
 type DownloadRequestRow = {
@@ -249,7 +256,8 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     }
     const tParam = String(req.query.t ?? "");
     const sigParam = String(req.query.sig ?? "");
-    if (!verifyAttachmentSignature(id, tParam, sigParam)) {
+    const uid = Number.parseInt(String(req.query.uid ?? ""), 10);
+    if (!verifyAttachmentSignature(id, uid, tParam, sigParam)) {
       return res
         .status(403)
         .json({ message: "Attachment link is invalid or expired" });
@@ -411,37 +419,37 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return y;
     };
 
-    const allCases = await caseRepo.getCases(dashboardScope, caseViewerAccess(currentUser));
-    const speciesSet = new Set<string>();
-    const breedSet = new Set<string>();
-    const sexSet = new Set<string>();
-    const sampleTypeSet = new Set<string>();
-    const organismSet = new Set<string>();
+    const toAdDate = (ts: number | null) =>
+      ts != null ? new Date(ts).toISOString().slice(0, 10) : undefined;
+    let dateFromBs = isLikelyBsYmd(dateFromRaw) ? dateFromRaw : undefined;
+    let dateToBs = isLikelyBsYmd(dateToRaw) ? dateToRaw : undefined;
+    const dateFromAd = dateFromBs ? undefined : dateFromRaw || toAdDate(effectiveStartTs);
+    const dateToAd = dateToBs ? undefined : dateToRaw || toAdDate(effectiveEndTs);
+    if (!dateFromBs && dateFromAd) dateFromBs = adYmdToBsYmd(dateFromAd);
+    if (!dateToBs && dateToAd) dateToBs = adYmdToBsYmd(dateToAd);
+
+    const filterOptions = await caseRepo.getDashboardFilterOptions(
+      dashboardScope,
+      caseViewerAccess(currentUser),
+    );
+    const speciesSet = new Set(filterOptions.species);
+    const breedSet = new Set(filterOptions.breeds);
+    const sexSet = new Set(filterOptions.sexes);
+    const sampleTypeSet = new Set(filterOptions.sampleTypes);
+    const organismSet = new Set(filterOptions.organisms);
     const antibioticSet = new Set<string>();
 
-    const caseBase = allCases.filter((c) => {
-      const species = String(c.species || "Unknown").trim() || "Unknown";
-      const breed = String(c.breed || "Unknown").trim() || "Unknown";
-      const sex = String(c.sex || "Unknown").trim() || "Unknown";
-      const sampleType = String(c.sampleType || "Unknown").trim() || "Unknown";
-      const organism = String(c.cultureResult || "").trim();
-      speciesSet.add(species);
-      breedSet.add(breed);
-      sexSet.add(sex);
-      sampleTypeSet.add(sampleType);
-      if (organism) organismSet.add(organism);
-
-      const sampleDate = String(c.sampleDateAd || c.sampleDate || c.dateAd || "").trim();
-      const sampleTs = dateToTs(sampleDate);
-      if (effectiveStartTs != null && sampleTs != null && sampleTs < effectiveStartTs)
-        return false;
-      if (effectiveEndTs != null && sampleTs != null && sampleTs > effectiveEndTs) return false;
-      if (speciesFilter !== "all" && species !== speciesFilter) return false;
-      if (breedFilter !== "all" && breed !== breedFilter) return false;
-      if (sexFilter !== "all" && sex !== sexFilter) return false;
-      if (sampleTypeFilter !== "all" && sampleType !== sampleTypeFilter) return false;
-      if (organismFilter !== "all" && organism !== organismFilter) return false;
-      return true;
+    const caseBase = await caseRepo.getCasesForDashboard(dashboardScope, {
+      viewer: caseViewerAccess(currentUser),
+      dateFromAd,
+      dateToAd,
+      dateFromBs,
+      dateToBs,
+      species: speciesFilter,
+      breed: breedFilter,
+      sex: sexFilter,
+      sampleType: sampleTypeFilter,
+      organism: organismFilter,
     });
 
     const astRows = caseBase.flatMap((c) => {
@@ -1019,18 +1027,27 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         key: s.key,
         title: s.title,
         displayOrder: s.display_order,
-        questions: (bySection.get(s.key) ?? []).map((q) => ({
-          id: q.id,
-          key: q.key,
-          label: q.label,
-          inputType: q.input_type,
-          options: q.options_json ? JSON.parse(q.options_json) : [],
-          enabled: Boolean(q.enabled),
-          required: Boolean(q.required),
-          hideLabel: Boolean(q.hide_label),
-          displayOrder: q.display_order,
-          isBuiltin: Boolean(q.is_builtin),
-        })),
+        questions: (bySection.get(s.key) ?? [])
+          .filter((q) => {
+            if (!isTestsSuggestedSectionKey(s.key, s.title)) return true;
+            return shouldIncludeTestsSuggestedFormQuestion({
+              key: q.key,
+              label: q.label,
+              inputType: q.input_type,
+            });
+          })
+          .map((q) => ({
+            id: q.id,
+            key: q.key,
+            label: q.label,
+            inputType: q.input_type,
+            options: q.options_json ? JSON.parse(q.options_json) : [],
+            enabled: Boolean(q.enabled),
+            required: Boolean(q.required),
+            hideLabel: Boolean(q.hide_label),
+            displayOrder: q.display_order,
+            isBuiltin: Boolean(q.is_builtin),
+          })),
       })),
     });
   });
@@ -1188,7 +1205,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
             fileName: row.file_name,
             mimeType: row.mime_type,
             fileSize: row.file_size,
-            url: toAttachmentPublicUrl(row.id),
+            url: toAttachmentPublicUrl(row.id, currentUser.id),
             createdAt: row.created_at,
           });
         }
@@ -1260,9 +1277,6 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       return res.json([]);
     }
 
-    // We pull a generous candidate window then dedupe in JS. Owner phone is
-    // the only well-indexed signal; doing the fuzzy name/address comparison
-    // in SQL across both providers (LOWER/REPLACE) would balloon the query.
     type CaseLite = {
       id: number;
       case_number: string;
@@ -1276,22 +1290,26 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       created_at: string;
       registered_by: number | null;
     };
-    const candidates = await dbAll<CaseLite>(
+
+    const phoneNormSql = sql`REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(owner_phone, ''), ' ', ''), '-', ''), '(', ''), ')', '')`;
+    const matchWhere =
+      phoneDigits.length > 0 && nameNorm
+        ? sql`(
+            ${phoneNormSql} = ${phoneDigits}
+            OR (LOWER(TRIM(owner_name)) = ${nameNorm} AND LOWER(TRIM(owner_address)) = ${addrNorm})
+          )`
+        : phoneDigits.length > 0
+          ? sql`${phoneNormSql} = ${phoneDigits}`
+          : sql`(LOWER(TRIM(owner_name)) = ${nameNorm} AND LOWER(TRIM(owner_address)) = ${addrNorm})`;
+
+    const matches = await dbAll<CaseLite>(
       sql`SELECT id, case_number, date, owner_name, owner_address, owner_phone,
                  species, breed, animal_name, created_at, registered_by
           FROM cases
-          WHERE id != ${caseId}
+          WHERE id != ${caseId} AND ${matchWhere}
           ORDER BY created_at DESC
-          LIMIT 2000`,
+          LIMIT 50`,
     );
-
-    const matches = candidates.filter((row) => {
-      const rowPhone = String(row.owner_phone || "").replace(/\D/g, "");
-      if (phoneDigits && rowPhone && rowPhone === phoneDigits) return true;
-      const rowName = String(row.owner_name || "").trim().toLowerCase();
-      const rowAddr = String(row.owner_address || "").trim().toLowerCase();
-      return Boolean(nameNorm) && rowName === nameNorm && rowAddr === addrNorm;
-    });
 
     // Scope-filter by what the user can view — never leak hospital data to
     // someone with only AST view rights, even though we matched on owner.
@@ -1389,7 +1407,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         fileName: row.file_name,
         mimeType: row.mime_type,
         fileSize: row.file_size,
-        url: toAttachmentPublicUrl(row.id),
+        url: toAttachmentPublicUrl(row.id, currentUser.id),
         createdAt: row.created_at,
       })),
     );
@@ -1452,109 +1470,16 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
 
     const safeName = String(caseData.caseNumber || "case").replace(/[^\w.-]+/g, "_");
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
-
-    const doc = new PDFDocument({ margin: 48, size: "LETTER" });
-    doc.on("error", (err) => {
-      console.error({ type: "case_pdf_error", err: String(err) });
-      if (!res.headersSent) {
-        res.status(500).json({ message: "Failed to generate PDF" });
-      } else {
-        res.end();
-      }
-    });
-    doc.pipe(res);
-
-    doc.fontSize(18).text(`Case report — ${caseData.caseNumber}`, { underline: true });
-    doc.moveDown(0.5);
-    doc.fontSize(10).fillColor("#444").text(`Generated ${new Date().toISOString()}`);
-    doc.fillColor("#000");
-    doc.moveDown();
-
-    doc.fontSize(12).text("Registration", { underline: true });
-    doc.fontSize(10);
-    doc.text(`Date (BS): ${caseData.date}`);
-    if (caseData.dateAd) doc.text(`Date (AD): ${caseData.dateAd}`);
-    if (caseData.billNumber) doc.text(`Bill #: ${caseData.billNumber}`);
-    doc.moveDown();
-
-    doc.fontSize(12).text("Owner", { underline: true });
-    doc.fontSize(10);
-    doc.text(`Name: ${caseData.ownerName}`);
-    doc.text(`Address: ${caseData.ownerAddress}`);
-    doc.text(`Phone: ${caseData.ownerPhone}`);
-    doc.moveDown();
-
-    doc.fontSize(12).text("Animal", { underline: true });
-    doc.fontSize(10);
-    doc.text(`Species: ${caseData.species}`);
-    doc.text(`Breed: ${caseData.breed}`);
-    if (caseData.animalName) doc.text(`Name: ${caseData.animalName}`);
-    if (caseData.age) doc.text(`Age: ${caseData.age}`);
-    if (caseData.sex) doc.text(`Sex: ${caseData.sex}`);
-    doc.moveDown();
-
-    if (caseData.sampleType || caseData.cultureResult) {
-      doc.fontSize(12).text("Sample / culture", { underline: true });
-      doc.fontSize(10);
-      if (caseData.sampleType) doc.text(`Sample type: ${caseData.sampleType}`);
-      if (caseData.sampleDate) doc.text(`Sample date (BS): ${caseData.sampleDate}`);
-      if (caseData.cultureResult) doc.text(`Culture: ${caseData.cultureResult}`);
-      doc.moveDown();
-    }
-
-    let astRows: { antibiotic?: string; symbol?: string; zone?: string | number }[] = [];
     try {
-      const parsed = JSON.parse(caseData.astResults || "[]") as unknown;
-      if (Array.isArray(parsed)) astRows = parsed as typeof astRows;
-    } catch {
-      astRows = [];
+      const pdf = await buildCasePdfBuffer(caseData);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
+      res.setHeader("Content-Length", String(pdf.length));
+      res.send(pdf);
+    } catch (err) {
+      console.error({ type: "case_pdf_error", err: String(err) });
+      return res.status(500).json({ message: "Failed to generate PDF" });
     }
-    if (astRows.length > 0) {
-      doc.addPage();
-      doc.fontSize(12).text("Antibiotic susceptibility (AST)", { underline: true });
-      doc.moveDown(0.3);
-      doc.fontSize(9);
-      const colDrug = 160;
-      const colCode = 80;
-      const colZone = 70;
-      let y = doc.y;
-      doc.text("Antibiotic", 48, y, { width: colDrug });
-      doc.text("Code", 48 + colDrug, y, { width: colCode });
-      doc.text("Zone (mm)", 48 + colDrug + colCode, y, { width: colZone });
-      y = doc.y + 4;
-      doc.moveTo(48, y).lineTo(520, y).stroke();
-      y += 6;
-      for (const row of astRows) {
-        if (y > 720) {
-          doc.addPage();
-          y = 48;
-        }
-        const drug = String(row.antibiotic ?? row.symbol ?? "—");
-        const code = String(row.symbol ?? "—");
-        const zone = row.zone != null ? String(row.zone) : "—";
-        doc.text(drug, 48, y, { width: colDrug });
-        doc.text(code, 48 + colDrug, y, { width: colCode });
-        doc.text(zone, 48 + colDrug + colCode, y, { width: colZone });
-        y += 14;
-      }
-      doc.y = y + 8;
-    }
-
-    if (caseData.remarks) {
-      doc.moveDown();
-      doc.fontSize(12).text("Remarks", { underline: true });
-      doc.fontSize(10).text(caseData.remarks, { width: 520 });
-    }
-
-    if (caseData.treatmentDetails) {
-      doc.moveDown();
-      doc.fontSize(12).text("Treatment", { underline: true });
-      doc.fontSize(10).text(caseData.treatmentDetails, { width: 520 });
-    }
-
-    doc.end();
   });
 
   app.get(
@@ -1563,15 +1488,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     requireAnyCapability("ast.case.create", "hospital.case.create"),
     async (req, res) => {
     const todayBs = getTodayBs();
-    const bsYearMonth = todayBs.substring(0, 7);
-    const bsYear = todayBs.substring(0, 4);
     const scopeRaw = String(req.query.scope ?? "ast").toLowerCase();
     const scope: "ast" | "hospital" = scopeRaw === "hospital" ? "hospital" : "ast";
+    const peek = await peekCaseIdentifiers(scope, todayBs);
     res.json({
-      caseNumber: await caseRepo.getNextCaseNumber(scope),
-      dailyNumber: await caseRepo.getDailyNumber(todayBs, scope),
-      monthlyNumber: await caseRepo.getMonthlyNumber(bsYearMonth, scope),
-      yearlyNumber: await caseRepo.getYearlyNumber(bsYear, scope),
+      caseNumber: peek.caseNumber,
+      dailyNumber: peek.dailyNumber,
+      monthlyNumber: peek.monthlyNumber,
+      yearlyNumber: peek.yearlyNumber,
       todayBs,
       todayAd: new Date().toISOString().split("T")[0],
     });
@@ -1606,17 +1530,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
 
     const dateValue = parsed.data.date;
     const scope: "hospital" = "hospital";
-    const canonicalCaseNumber = await caseRepo.getNextCaseNumber(scope);
-    const canonicalDailyNumber = await caseRepo.getDailyNumber(dateValue, scope);
-    const canonicalMonthlyNumber = await caseRepo.getMonthlyNumber(dateValue.substring(0, 7), scope);
-    const canonicalYearlyNumber = await caseRepo.getYearlyNumber(dateValue.substring(0, 4), scope);
+    const ids = await allocateCaseIdentifiers(scope, dateValue);
 
     const newCase = await caseRepo.createCase({
       ...parsed.data,
-      caseNumber: canonicalCaseNumber,
-      dailyNumber: canonicalDailyNumber,
-      monthlyNumber: canonicalMonthlyNumber,
-      yearlyNumber: canonicalYearlyNumber,
+      caseNumber: ids.caseNumber,
+      dailyNumber: ids.dailyNumber,
+      monthlyNumber: ids.monthlyNumber,
+      yearlyNumber: ids.yearlyNumber,
       astResults: "[]",
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
@@ -1680,17 +1601,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
 
     const dateValue = parsed.data.date;
     const scope: "ast" = "ast";
-    const canonicalCaseNumber = await caseRepo.getNextCaseNumber(scope);
-    const canonicalDailyNumber = await caseRepo.getDailyNumber(dateValue, scope);
-    const canonicalMonthlyNumber = await caseRepo.getMonthlyNumber(dateValue.substring(0, 7), scope);
-    const canonicalYearlyNumber = await caseRepo.getYearlyNumber(dateValue.substring(0, 4), scope);
+    const ids = await allocateCaseIdentifiers(scope, dateValue);
 
     const newCase = await caseRepo.createCase({
       ...parsed.data,
-      caseNumber: canonicalCaseNumber,
-      dailyNumber: canonicalDailyNumber,
-      monthlyNumber: canonicalMonthlyNumber,
-      yearlyNumber: canonicalYearlyNumber,
+      caseNumber: ids.caseNumber,
+      dailyNumber: ids.dailyNumber,
+      monthlyNumber: ids.monthlyNumber,
+      yearlyNumber: ids.yearlyNumber,
       lastUpdatedBy: user.id,
       lastUpdatedByName: fullUser?.fullName || `User ${user.id}`,
       updatedAt: now,
@@ -1851,16 +1769,30 @@ export function registerCaseAndDownloadRoutes(app: Express) {
 }
 
 export function registerExportRoutes(app: Express) {
-  const markDownloadUsedIfNeeded = async (req: Request) => {
-    const approvedReq = (req as AuthenticatedRequest).approvedDownloadRequest;
-    if (!approvedReq) return;
-    await dbRun(
-      sql`UPDATE download_requests
-          SET status = ${"downloaded"},
-              admin_note = ${"Download used"},
-              resolved_at = ${new Date().toISOString()}
-          WHERE id = ${approvedReq.id}`,
-    );
+  /** Students: atomically consume approval before generating export (prevents parallel double-spend). */
+  const consumeStudentExportApproval = async (
+    req: Request,
+    res: Response,
+  ): Promise<boolean> => {
+    const user = (req as AuthenticatedRequest).currentUser;
+    if (!user || user.role !== "student") return true;
+    const approved = (req as AuthenticatedRequest).approvedDownloadRequest;
+    if (!approved) {
+      res.status(403).json({
+        message:
+          "Download access not approved for this date range. Please submit a new download request.",
+      });
+      return false;
+    }
+    const consumed = await consumeApprovedDownloadRequest(approved.id, user.id);
+    if (!consumed) {
+      res.status(403).json({
+        message:
+          "This download approval was already used (or is no longer valid). Please submit a new request.",
+      });
+      return false;
+    }
+    return true;
   };
 
   app.get("/api/export/cases", requireAuth, canDownload, async (req: Request, res: Response) => {
@@ -1868,13 +1800,18 @@ export function registerExportRoutes(app: Express) {
     if (!output) {
       return res.status(400).json({ message: "Invalid output (use csv or xlsx)" });
     }
+    if (!(await consumeStudentExportApproval(req, res))) return;
 
     const { dateFrom, dateTo } = req.query as {
       dateFrom?: string;
       dateTo?: string;
     };
-    const viewer = caseViewerAccess((req as AuthenticatedRequest).currentUser);
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const viewer = caseViewerAccess(currentUser);
     const casesData = await caseRepo.getCasesByDateRangeAndScope("ast", dateFrom, dateTo, viewer);
+    console.info(
+      `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} matched=${casesData.length}`,
+    );
     const format =
       typeof (req.query as { format?: string }).format === "string"
         ? String((req.query as { format?: string }).format).toLowerCase()
@@ -1905,14 +1842,12 @@ export function registerExportRoutes(app: Express) {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       );
       res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
-      await markDownloadUsedIfNeeded(req);
       return res.send(buf);
     }
 
     const csvContent = rowsToCsv(rows, columnOrder);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
-    await markDownloadUsedIfNeeded(req);
     return res.send(csvContent);
   });
 
@@ -1925,17 +1860,22 @@ export function registerExportRoutes(app: Express) {
       if (!output) {
         return res.status(400).json({ message: "Invalid output (use csv or xlsx)" });
       }
+      if (!(await consumeStudentExportApproval(req, res))) return;
 
       const { dateFrom, dateTo } = req.query as {
         dateFrom?: string;
         dateTo?: string;
       };
-      const viewer = caseViewerAccess((req as AuthenticatedRequest).currentUser);
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const viewer = caseViewerAccess(currentUser);
       const casesData = await caseRepo.getCasesByDateRangeAndScope(
         "hospital",
         dateFrom,
         dateTo,
         viewer,
+      );
+      console.info(
+        `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} matched=${casesData.length}`,
       );
       const rows = toHospitalExportRows(casesData);
       const columnOrder = hospitalExportColumnOrder(rows);
@@ -1955,14 +1895,12 @@ export function registerExportRoutes(app: Express) {
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         );
         res.setHeader("Content-Disposition", `attachment; filename="${baseName}.xlsx"`);
-        await markDownloadUsedIfNeeded(req);
         return res.send(buf);
       }
 
       const csvContent = rowsToCsv(rows, columnOrder);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${baseName}.csv"`);
-      await markDownloadUsedIfNeeded(req);
       return res.send(csvContent);
     },
   );

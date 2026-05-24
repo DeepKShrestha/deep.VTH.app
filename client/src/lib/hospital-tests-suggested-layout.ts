@@ -6,6 +6,14 @@
  * Always use raw customFields keys (e.g. testsSuggested), not display labels — labels can be customized in the form editor.
  */
 
+import {
+  isDetailSubQuestionKey,
+  normalizeHospitalKey,
+  parseStringList,
+  resolvePanelDefinitions,
+  shortenPanelTestName,
+} from "@shared/hospital-tests-suggested";
+
 type HospitalTestsLayoutRow =
   | { kind: "simple-row"; cells: [string, string, string] }
   | { kind: "detail"; label: string; value: string };
@@ -13,30 +21,7 @@ type HospitalTestsLayoutRow =
 type HospitalTestCustomEntry = [string, string | string[] | number];
 
 function normalizeKey(input: string): string {
-  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function parseStringList(raw: string | string[] | number | undefined): string[] {
-  if (raw == null) return [];
-  if (Array.isArray(raw)) {
-    return raw.map((v) => String(v).trim()).filter(Boolean);
-  }
-  const s = String(raw).trim();
-  if (!s) return [];
-  if (s.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(s) as unknown;
-      if (Array.isArray(parsed)) {
-        return parsed.map((v) => String(v).trim()).filter(Boolean);
-      }
-    } catch {
-      /* fall through */
-    }
-  }
-  return s
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+  return normalizeHospitalKey(input);
 }
 
 function getEntryValue(
@@ -65,16 +50,6 @@ function classifyMainTest(option: string):
   if (n.includes("ultrasound")) return "ultrasound";
   if (/\bculture\b/i.test(option) && !/cytology/i.test(option)) return "culture";
   return "simple";
-}
-
-function shortenPanelTestName(name: string): string {
-  const paren = name.match(/\(([A-Za-z0-9]+)\)/);
-  if (paren) return paren[1]!.toUpperCase();
-  const n = name.trim();
-  if (/liver function/i.test(n)) return "LFT";
-  if (/kidney function/i.test(n)) return "KFT";
-  if (/thyroid/i.test(n)) return "Thyroid";
-  return n;
 }
 
 function flushSimpleBatch(batch: string[], out: HospitalTestsLayoutRow[]) {
@@ -110,12 +85,11 @@ export function buildHospitalTestsSuggestedLayout(
 ): HospitalTestsLayoutRow[] {
   const mainList = parseStringList(resolveMainTestsRaw(entries));
 
-  const enzymeSubs = parseStringList(
-    getEntryValue(entries, (k) => k.includes("enzymepanel")),
-  );
-  const rapidSubs = parseStringList(
-    getEntryValue(entries, (k) => k.includes("rapiddiagnostic")),
-  );
+  const subQuestions = entries
+    .filter(([key]) => !isDetailSubQuestionKey(key))
+    .filter(([key]) => !normalizeKey(key).includes("testssuggested"))
+    .map(([key]) => ({ key, label: key, inputType: "multiSelect" as const }));
+  const panelDefs = resolvePanelDefinitions(mainList, subQuestions);
 
   const xrayText = String(
     getEntryValue(entries, (k) => k.includes("xray") && k.includes("detail")) ?? "",
@@ -138,6 +112,22 @@ export function buildHospitalTestsSuggestedLayout(
 
   for (const test of mainList) {
     const kind = classifyMainTest(test);
+    const panelDef = panelDefs.find((d) =>
+      normalizeKey(test).includes(d.mainKeyword),
+    );
+    if (panelDef) {
+      const subs = parseStringList(
+        getEntryValue(entries, (k) => normalizeKey(k) === normalizeKey(panelDef.panelKey)),
+      );
+      flushSimpleBatch(simpleBatch, out);
+      simpleBatch = [];
+      out.push({
+        kind: "detail",
+        label: panelDef.mainLabel,
+        value: subs.map(shortenPanelTestName).join(", ") || "—",
+      });
+      continue;
+    }
     if (kind === "simple") {
       simpleBatch.push(test);
       continue;
@@ -146,23 +136,6 @@ export function buildHospitalTestsSuggestedLayout(
     simpleBatch = [];
 
     switch (kind) {
-      case "enzyme": {
-        const sub = enzymeSubs.map(shortenPanelTestName).join(", ");
-        out.push({
-          kind: "detail",
-          label: "Enzyme panel test",
-          value: sub || "—",
-        });
-        break;
-      }
-      case "rapid": {
-        out.push({
-          kind: "detail",
-          label: "Rapid diagnostic test",
-          value: rapidSubs.join(", ") || "—",
-        });
-        break;
-      }
       case "xray":
         out.push({ kind: "detail", label: "X-Ray", value: xrayText || "—" });
         break;

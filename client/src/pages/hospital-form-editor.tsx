@@ -15,6 +15,21 @@ import {
 } from "@/components/ui/select";
 import { ArrowLeft, ArrowDown, ArrowUp, Plus, Settings2, Trash2 } from "lucide-react";
 import { adToBs, formatAdDate, formatBsDate } from "@/lib/nepali-date";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
+import {
+  getSimpleTestLabels,
+  isBuiltinTestsSuggestedQuestionKey,
+  isTestsSuggestedPanelSubQuestion,
+  parseTestsSuggestedOptions,
+  resolvePanelDefinitions,
+} from "@shared/hospital-tests-suggested";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
 
 type AdminFormDefinition = {
   sections: Array<{
@@ -73,11 +88,66 @@ function isHospitalBuiltinSection(section: { key: string; title: string }): bool
   );
 }
 
+const PROTECTED_PANEL_KEYS = new Set(["enzymePanelTests", "rapidDiagnosticTests"]);
+
+function formatTestsSuggestedOptionLabel(opt: unknown): string {
+  if (typeof opt === "string") return opt;
+  if (opt && typeof opt === "object" && "label" in opt) {
+    return String((opt as { label: string }).label);
+  }
+  return String(opt ?? "");
+}
+
+const STANDARD_QUESTION_INPUT_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "singleSelect",
+  "multiSelect",
+  "yesNo",
+  "date",
+] as const;
+
+const QUESTION_TYPE_LABELS: Record<(typeof STANDARD_QUESTION_INPUT_TYPES)[number], string> = {
+  text: "Text",
+  textarea: "Long text",
+  number: "Number",
+  singleSelect: "Dropdown (single)",
+  multiSelect: "Multiple choice",
+  yesNo: "Yes / No",
+  date: "Date",
+};
+
+function questionTypesForSection(_section: { key: string; title: string }): string[] {
+  return [...STANDARD_QUESTION_INPUT_TYPES];
+}
+
 function isTestsSuggestedBuiltinSection(section: { key: string; title: string }): boolean {
   const normalizedTitle = normalizeQuestionId(section.title);
   return (
     normalizedTitle.includes("testsuggested") ||
     normalizedTitle.includes("testssuggested")
+  );
+}
+
+function isLegacyTestsSuggestedDuplicateQuestion(question: {
+  key: string;
+  label: string;
+  inputType: string;
+  sectionKey?: string;
+}): boolean {
+  const normalizedLabel = normalizeQuestionId(question.label || "");
+  const normalizedKey = normalizeQuestionId(question.key || "");
+  if (normalizedKey === "testssuggested" && question.inputType !== "multiSelect") {
+    return true;
+  }
+  if (question.inputType !== "text" && question.inputType !== "textarea") {
+    return false;
+  }
+  return (
+    normalizedLabel === "testssuggested" ||
+    normalizedLabel.includes("testsuggested") ||
+    normalizedKey.includes("testssuggested")
   );
 }
 
@@ -87,11 +157,8 @@ function isLegacyTestsSuggestedTextareaQuestion(question: {
   inputType: string;
   sectionKey?: string;
 }): boolean {
-  const normalizedLabel = normalizeQuestionId(question.label || "");
-  const normalizedKey = normalizeQuestionId(question.key || "");
   return (
-    question.inputType === "textarea" &&
-    (normalizedLabel === "testssuggested" || normalizedKey.includes("testssuggested"))
+    question.inputType === "textarea" && isLegacyTestsSuggestedDuplicateQuestion(question)
   );
 }
 
@@ -100,9 +167,15 @@ function isHospitalBuiltinQuestion(
   section?: { key: string; title: string },
   sectionKey?: string,
 ): boolean {
-  if (question.isBuiltin) return true;
+  if (isBuiltinTestsSuggestedQuestionKey(question.key)) return true;
   if (question.inputType === "hospital_veterinarian") return true;
   if ((sectionKey || "").toLowerCase() === "vitals") return true;
+  if (
+    question.isBuiltin &&
+    !(section && isTestsSuggestedBuiltinSection(section))
+  ) {
+    return true;
+  }
   const normalizedKey = normalizeQuestionId(question.key);
   const normalizedLabel = normalizeQuestionId(question.label);
   return (
@@ -121,14 +194,6 @@ function isHospitalBuiltinQuestion(
     normalizedKey === "crt" ||
     normalizedKey.includes("capillaryrefilltime") ||
     normalizedKey.includes("dehydration") ||
-    normalizedKey.includes("testssuggested") ||
-    normalizedKey.includes("enzymepaneltests") ||
-    normalizedKey.includes("rapiddiagnostictests") ||
-    normalizedKey.includes("xraydetails") ||
-    normalizedKey.includes("ultrasounddetails") ||
-    normalizedKey.includes("biopsydetails") ||
-    normalizedKey.includes("cytologydetails") ||
-    normalizedKey.includes("culturedetails") ||
     normalizedKey.includes("treatmentprescription") ||
     normalizedKey.includes("attendingveterinarian") ||
     normalizedLabel.includes("heartrate") ||
@@ -156,6 +221,7 @@ function isHospitalBuiltinQuestion(
 }
 
 export default function HospitalFormEditorPage() {
+  const { toast } = useToast();
   const formScope = "hospital";
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newQuestionLabelBySection, setNewQuestionLabelBySection] = useState<Record<string, string>>({});
@@ -171,6 +237,10 @@ export default function HospitalFormEditorPage() {
   const [openLayoutSectionKey, setOpenLayoutSectionKey] = useState<string | null>(null);
   const [openFieldSectionKey, setOpenFieldSectionKey] = useState<string | null>(null);
   const [openCatalogPanel, setOpenCatalogPanel] = useState<"species" | "breeds" | null>(null);
+  const [panelDialogOpen, setPanelDialogOpen] = useState(false);
+  const [panelDialogSectionKey, setPanelDialogSectionKey] = useState("tests_suggested");
+  const [panelMainLabel, setPanelMainLabel] = useState("");
+  const [panelSubOptionsText, setPanelSubOptionsText] = useState("");
   const editorRootRef = useRef<HTMLDivElement | null>(null);
 
   const { data: formDefinition } = useQuery<AdminFormDefinition>({
@@ -207,7 +277,7 @@ export default function HospitalFormEditorPage() {
       .map((section) => ({
         ...section,
         questions: (section.questions ?? []).filter(
-          (q) => !isLegacyTestsSuggestedTextareaQuestion({ ...q, sectionKey: section.key }),
+          (q) => !isLegacyTestsSuggestedDuplicateQuestion({ ...q, sectionKey: section.key }),
         ),
       }));
     return [...sections].sort(
@@ -319,11 +389,74 @@ export default function HospitalFormEditorPage() {
   });
 
   const deleteQuestionMutation = useMutation({
-    mutationFn: async (questionId: number) => apiRequest("DELETE", `/api/admin/form-questions/${questionId}?scope=${formScope}`),
+    mutationFn: async (questionId: number) =>
+      apiRequest("DELETE", `/api/admin/form-questions/${questionId}?scope=${formScope}`),
     onSuccess: async () => {
       await syncFormDefinitionViews();
+      toast({ title: "Question deleted" });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not delete question",
+        description: err.message,
+        variant: "destructive",
+      });
     },
   });
+
+  const addTestsPanelMutation = useMutation({
+    mutationFn: async (payload: { sectionKey: string; mainLabel: string; subOptions: string[] }) =>
+      apiRequest("POST", "/api/admin/tests-suggested-panels", { ...payload, scope: formScope }),
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
+      setPanelDialogOpen(false);
+      setPanelMainLabel("");
+      setPanelSubOptionsText("");
+      toast({ title: "Test with suboptions added" });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not add test with suboptions",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteTestsPanelMutation = useMutation({
+    mutationFn: async (payload: { panelKey: string; sectionKey: string }) =>
+      apiRequest(
+        "DELETE",
+        `/api/admin/tests-suggested-panels/${encodeURIComponent(payload.panelKey)}?scope=${formScope}&sectionKey=${encodeURIComponent(payload.sectionKey)}`,
+      ),
+    onSuccess: async () => {
+      await syncFormDefinitionViews();
+      toast({ title: "Test with suboptions removed" });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not remove test with suboptions",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteFormQuestion = (
+    q: { id: number; key: string; inputType: string },
+    section: { key: string; title: string },
+  ) => {
+    if (
+      isTestsSuggestedBuiltinSection(section) &&
+      isTestsSuggestedPanelSubQuestion(q) &&
+      !PROTECTED_PANEL_KEYS.has(q.key) &&
+      !isBuiltinTestsSuggestedQuestionKey(q.key)
+    ) {
+      deleteTestsPanelMutation.mutate({ panelKey: q.key, sectionKey: section.key });
+      return;
+    }
+    deleteQuestionMutation.mutate(q.id);
+  };
 
   const addSpeciesMutation = useMutation({
     mutationFn: async (name: string) => apiRequest("POST", "/api/admin/species-options", { name }),
@@ -377,7 +510,11 @@ export default function HospitalFormEditorPage() {
   }, []);
 
   return (
-    <div ref={editorRootRef} className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+    <StickyScrollPage
+      ref={editorRootRef}
+      maxWidthClass="max-w-6xl"
+      bodyClassName="space-y-6"
+      sticky={
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href="/new-case/settings">
@@ -404,18 +541,20 @@ export default function HospitalFormEditorPage() {
           {showLogTable ? "Hide Edit Log" : "Edit Log"}
         </Button>
       </div>
+      }
+    >
       {showLogTable && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Edit Log</CardTitle>
           </CardHeader>
-          <CardContent className="max-h-64 overflow-y-auto">
+          <CardContent className="max-h-64 overflow-y-auto relative">
             {formEditLogs.length === 0 ? (
               <p className="text-xs text-muted-foreground">No edits logged yet.</p>
             ) : (
               <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b text-left">
+                <thead className="sticky top-0 z-10 bg-card border-b shadow-sm">
+                  <tr className="border-b text-left bg-muted/40">
                     <th className="py-2 pr-3 font-medium">Date (AD / BS) & Time</th>
                     <th className="py-2 pr-3 font-medium">Changed By</th>
                     <th className="py-2 font-medium">Change</th>
@@ -566,15 +705,11 @@ export default function HospitalFormEditorPage() {
                   >
                     <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="text">Text</SelectItem>
-                      <SelectItem value="textarea">Long text</SelectItem>
-                      <SelectItem value="number">Number</SelectItem>
-                      <SelectItem value="singleSelect">Dropdown (single)</SelectItem>
-                      <SelectItem value="multiSelect">Multiple choice</SelectItem>
-                      <SelectItem value="yesNo">Yes / No</SelectItem>
-                      <SelectItem value="date">Date</SelectItem>
-                      <SelectItem value="treatment_prescription">Treatment / Prescription</SelectItem>
-                      <SelectItem value="hospital_veterinarian">Attending veterinarian</SelectItem>
+                      {questionTypesForSection(section).map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {QUESTION_TYPE_LABELS[type as keyof typeof QUESTION_TYPE_LABELS] ?? type}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -617,25 +752,41 @@ export default function HospitalFormEditorPage() {
                         {(q.inputType === "singleSelect" || q.inputType === "multiSelect") && (
                           <div className="space-y-2 pt-1">
                             <div className="flex flex-wrap gap-2">
-                              {(q.options ?? []).map((opt) => (
-                                <Button
-                                  key={`${q.id}-layout-${opt}`}
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7"
-                                  onClick={() =>
-                                    updateQuestionMutation.mutate({
-                                      id: q.id,
-                                      enabled: q.enabled,
-                                      required: q.required,
-                                      options: (q.options ?? []).filter((v) => v !== opt),
-                                    })
-                                  }
-                                >
-                                  {opt} ×
-                                </Button>
-                              ))}
+                              {(q.options ?? []).map((opt, optIdx) => {
+                                const label = formatTestsSuggestedOptionLabel(opt);
+                                const parsedOpt = parseTestsSuggestedOptions([opt])[0];
+                                const isPanelOpt =
+                                  typeof parsedOpt !== "string" && parsedOpt?.type === "panel";
+                                if (isPanelOpt) {
+                                  return (
+                                    <span
+                                      key={`${q.id}-layout-panel-${optIdx}`}
+                                      className="inline-flex h-7 items-center rounded border px-2 text-xs text-muted-foreground"
+                                    >
+                                      {label} (with suboptions)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <Button
+                                    key={`${q.id}-layout-${optIdx}`}
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7"
+                                    onClick={() =>
+                                      updateQuestionMutation.mutate({
+                                        id: q.id,
+                                        enabled: q.enabled,
+                                        required: q.required,
+                                        options: (q.options ?? []).filter((v) => v !== opt),
+                                      })
+                                    }
+                                  >
+                                    {label} ×
+                                  </Button>
+                                );
+                              })}
                             </div>
                             <div className="flex gap-2">
                               <Input
@@ -700,7 +851,15 @@ export default function HospitalFormEditorPage() {
                           <ArrowDown className="w-3.5 h-3.5" />
                         </Button>
                         {!isHospitalBuiltinQuestion(q, section, section.key) && (
-                          <Button size="sm" variant="outline" className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50" onClick={() => deleteQuestionMutation.mutate(q.id)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                            disabled={
+                              deleteQuestionMutation.isPending || deleteTestsPanelMutation.isPending
+                            }
+                            onClick={() => deleteFormQuestion(q, section)}
+                          >
                             <Trash2 className="w-3.5 h-3.5" />
                             Delete
                           </Button>
@@ -709,6 +868,85 @@ export default function HospitalFormEditorPage() {
                     </div>
                   ))}
                 </div>
+
+                {isTestsSuggestedBuiltinSection(section) && (() => {
+                  const testsMain = (section.questions ?? []).find(
+                    (q) => normalizeQuestionId(q.key) === "testssuggested",
+                  );
+                  const panelDefs = resolvePanelDefinitions(
+                    testsMain?.options ?? [],
+                    (section.questions ?? [])
+                      .filter((q) => q.inputType === "multiSelect")
+                      .map((q) => ({
+                        key: q.key,
+                        label: q.label,
+                        inputType: q.inputType,
+                        enabled: q.enabled,
+                      })),
+                  );
+                  return (
+                    <div className="rounded border border-dashed p-3 space-y-2 bg-muted/20">
+                      <p className="text-xs font-medium">Tests with suboptions</p>
+                      <p className="text-xs text-muted-foreground">
+                        Adds a main test to the list above; when selected on the register form, a
+                        sub-multi-select appears (like Enzyme Panel → LFT, KFT).
+                      </p>
+                      {panelDefs.length > 0 ? (
+                        <div className="space-y-1">
+                          {panelDefs.map((def) => {
+                            const subQ = (section.questions ?? []).find((q) => q.key === def.panelKey);
+                            return (
+                              <div
+                                key={def.panelKey}
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded border bg-background px-2 py-1.5 text-xs"
+                              >
+                                <span>
+                                  <span className="font-medium">{def.mainLabel}</span>
+                                  <span className="text-muted-foreground">
+                                    {" "}
+                                    · {(subQ?.options ?? []).length} sub-options
+                                  </span>
+                                </span>
+                                {!PROTECTED_PANEL_KEYS.has(def.panelKey) && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 border-red-200 text-red-600 hover:bg-red-50"
+                                    disabled={deleteTestsPanelMutation.isPending}
+                                    onClick={() =>
+                                      deleteTestsPanelMutation.mutate({
+                                        panelKey: def.panelKey,
+                                        sectionKey: section.key,
+                                      })
+                                    }
+                                  >
+                                    Remove
+                                  </Button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No custom panels yet.</p>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 gap-1.5"
+                        onClick={() => {
+                          setPanelDialogSectionKey(section.key);
+                          setPanelDialogOpen(true);
+                        }}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add test with suboptions
+                      </Button>
+                    </div>
+                  );
+                })()}
               </div>
               )}
             </div>
@@ -1158,6 +1396,63 @@ export default function HospitalFormEditorPage() {
       </>
       )}
 
-    </div>
+      <Dialog open={panelDialogOpen} onOpenChange={setPanelDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add test with suboptions</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="panel-main-label">Main test name</Label>
+              <Input
+                id="panel-main-label"
+                value={panelMainLabel}
+                onChange={(e) => setPanelMainLabel(e.target.value)}
+                placeholder="e.g. Hormone Panel Test"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="panel-sub-options">Sub-options (comma separated)</Label>
+              <Input
+                id="panel-sub-options"
+                value={panelSubOptionsText}
+                onChange={(e) => setPanelSubOptionsText(e.target.value)}
+                placeholder="e.g. T4, TSH, Cortisol"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setPanelDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={addTestsPanelMutation.isPending || !panelMainLabel.trim()}
+                onClick={() => {
+                  const subOptions = panelSubOptionsText
+                    .split(",")
+                    .map((v) => v.trim())
+                    .filter(Boolean);
+                  if (subOptions.length < 1) {
+                    toast({
+                      title: "Add at least one sub-option",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  addTestsPanelMutation.mutate({
+                    sectionKey: panelDialogSectionKey,
+                    mainLabel: panelMainLabel.trim(),
+                    subOptions,
+                  });
+                }}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+    </StickyScrollPage>
   );
 }

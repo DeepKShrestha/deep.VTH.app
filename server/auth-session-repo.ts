@@ -4,11 +4,19 @@ import { sql } from "drizzle-orm";
 import { storage } from "./storage";
 import { dbAll, dbRun } from "./db-query";
 import { getPgPool } from "./pg-pool";
+import {
+  invalidateAll as invalidateAllCachedUsers,
+  invalidateToken as invalidateCachedToken,
+  invalidateUserId as invalidateCachedUserId,
+} from "./current-user-cache";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
 /** Sessions with no API activity for this long count as offline in admin presence. */
 const ACTIVE_PRESENCE_MAX_IDLE_MS = 3 * 60 * 1000;
+
+/** Throttle `last_seen_at` writes — one update per session per interval. */
+export const SESSION_LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
 
 type Provider = "sqlite" | "postgres";
 
@@ -98,14 +106,54 @@ export const authSessionRepo = {
       return undefined;
     }
     const seen = new Date().toISOString();
+    const throttleBefore = new Date(Date.now() - SESSION_LAST_SEEN_THROTTLE_MS).toISOString();
     await getPgPool().query(
-      `UPDATE sessions SET last_seen_at = $1 WHERE token = $2 AND expires_at > NOW()`,
-      [seen, token],
+      `UPDATE sessions SET last_seen_at = $1
+       WHERE token = $2
+         AND expires_at > NOW()
+         AND (last_seen_at IS NULL OR last_seen_at < $3)`,
+      [seen, token, throttleBefore],
     );
     return Number(row.user_id);
   },
 
+  async getUserDisplayByIds(
+    ids: number[],
+  ): Promise<
+    Map<
+      number,
+      { fullName: string; username: string; designation: string; role: string }
+    >
+  > {
+    const unique = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
+    if (unique.length === 0) return new Map();
+    const rows = await dbAll<{
+      id: number;
+      full_name: string;
+      username: string;
+      designation: string;
+      role: string;
+    }>(
+      sql`SELECT id, full_name, username, designation, role FROM users WHERE id IN (${sql.join(
+        unique.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        {
+          fullName: r.full_name,
+          username: r.username,
+          designation: r.designation,
+          role: r.role,
+        },
+      ]),
+    );
+  },
+
   async deleteSession(token: string): Promise<void> {
+    invalidateCachedToken(token);
     if (getProvider() === "sqlite") {
       await sessionsSqlite.delete(token);
       return;
@@ -114,6 +162,7 @@ export const authSessionRepo = {
   },
 
   async clearSessions(): Promise<void> {
+    invalidateAllCachedUsers();
     if (getProvider() === "sqlite") {
       await sessionsSqlite.clear();
       return;
@@ -122,6 +171,7 @@ export const authSessionRepo = {
   },
 
   async deleteSessionsByUserId(userId: number): Promise<void> {
+    invalidateCachedUserId(userId);
     if (getProvider() === "sqlite") {
       await sessionsSqlite.deleteByUserId(userId);
       return;
@@ -239,6 +289,7 @@ export const authSessionRepo = {
   },
 
   async updateUser(id: number, data: Partial<User>): Promise<User | undefined> {
+    invalidateCachedUserId(id);
     if (getProvider() === "sqlite") {
       return storage.updateUser(id, data);
     }
@@ -333,8 +384,14 @@ const sessionsSqlite = {
       return undefined;
     }
     try {
+      const seen = new Date().toISOString();
+      const throttleBefore = new Date(
+        Date.now() - SESSION_LAST_SEEN_THROTTLE_MS,
+      ).toISOString();
       db.run(
-        sql`UPDATE sessions SET last_seen_at = ${new Date().toISOString()} WHERE token = ${token}`,
+        sql`UPDATE sessions SET last_seen_at = ${seen}
+            WHERE token = ${token}
+              AND (last_seen_at IS NULL OR last_seen_at < ${throttleBefore})`,
       );
     } catch {
       // Pre-migration DB without last_seen_at — presence falls back until migrations run.

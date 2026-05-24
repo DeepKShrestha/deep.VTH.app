@@ -41,7 +41,9 @@ The **bundled** server (`npm run build` → `npm start` / `node dist/index.cjs`)
 | Variable | Why |
 |----------|-----|
 | **`ALLOW_DEFAULT_ADMIN=false`** | After the first real admin exists, keep this **false** so the emergency bootstrap account is not recreated. |
-| **`LOG_RESPONSE_BODIES=false`** | If `true` in production, API **response bodies may be logged** (risk of **PHI** in logs). Only enable briefly for debugging. |
+| **`DEFAULT_ADMIN_PASSWORD`** | Used only when the bootstrap admin is created (empty DB or `ALLOW_DEFAULT_ADMIN=true`). Must be **12+ chars** with letters and digits. If unset, the server generates a one-time random password and logs it once at startup — capture it from the log and rotate immediately. The legacy `admin123` default has been removed. |
+| **`LOG_RESPONSE_BODIES`** | Ignored in production (response bodies are **never** logged when `NODE_ENV=production`). Useful only for local debugging. |
+| **`WIPE_SESSIONS_ON_BOOT`** | Defaults to **`false`** — only expired sessions are pruned on restart, so users stay signed in across deploys. Set to `true` only if you need the old behavior (force-logout everyone on restart). |
 
 ### Paths (recommended absolute paths in production)
 
@@ -54,10 +56,10 @@ The **bundled** server (`npm run build` → `npm start` / `node dist/index.cjs`)
 
 | Variable | Purpose |
 |----------|---------|
-| **`ATTACHMENT_SIGNING_TTL_MS`** | Lifetime of signed image URLs in milliseconds (allowed range **60000–86400000**). Default **1800000** (30 minutes). |
+| **`ATTACHMENT_SIGNING_TTL_MS`** | Lifetime of signed image URLs in milliseconds (allowed range **60000–86400000**). Default **900000** (15 minutes). Signed URLs are now **user‑bound** — a URL issued to one user will not authorize another. |
 | **S3 backup** | `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — only if you use remote backup upload from the Admin → Backup UI. |
 | **`PG_BIN`** | Directory containing `pg_dump` / `psql` if they are not on `PATH` (Postgres site backup). |
-| **Hidden superadmin** | `HIDDEN_SUPERADMIN_*` — optional break‑glass account; see `.env.example`. If enabled, use a **strong** password and document access control. |
+| **Hidden superadmin** | `HIDDEN_SUPERADMIN_USERNAME` / `HIDDEN_SUPERADMIN_EMAIL` enable an optional break‑glass account. If enabled, **`HIDDEN_SUPERADMIN_PASSWORD` is required** and must be **16+ chars** with letters and digits — the server refuses to start otherwise. Document access control. |
 
 ---
 
@@ -90,9 +92,21 @@ Run the process under **systemd**, **PM2**, Kubernetes, or your platform’s sup
 
 ## 6) Security and product notes (read once)
 
-- **Sessions (SQLite):** On SQLite, a **server restart clears all sessions**; users must log in again. Plan maintenance windows accordingly.
+- **Sessions:** On restart, only **expired** sessions are pruned (set `WIPE_SESSIONS_ON_BOOT=true` to force-logout everyone). Session `last_seen_at` is throttled to one write every 5 minutes per session.
+- **Student exports:** Download approvals are **single‑use** and **range‑bound**. A student must pass `dateFrom`/`dateTo` that fall inside the approved BS window; the UI auto‑fills the picker with the approved range. The server consumes the approval atomically on the first successful export.
+- **Attachment URLs:** Signed download URLs are bound to the issuing user (`uid` claim) and expire after 15 minutes by default (`ATTACHMENT_SIGNING_TTL_MS`).
 - **Students:** The API restricts **student** users to cases they **registered** (`registered_by`). If your institution expects students to see **all** cases in a module, that is a product change—coordinate with development before go‑live.
-- **Bootstrap admin:** Empty DB + non‑production (or `ALLOW_DEFAULT_ADMIN=true`) can create a default admin; **rotate credentials** before production use. See `README.md` §1.
+- **Bootstrap admin:** Empty DB + non‑production (or `ALLOW_DEFAULT_ADMIN=true`) can create a default admin. If `DEFAULT_ADMIN_PASSWORD` is unset, a random password is printed once in the boot log — copy it and rotate. The old `admin123` default is gone.
+
+### Migrations introduced in this release
+
+| File | Purpose |
+|------|---------|
+| `migrations*/0014_medications_class.sql` | Adds `medication_class` column for the medication bulk import. |
+| `migrations*/0015_case_counters.sql` | Adds the `case_counters` table and seeds it from existing cases. **Atomic** allocation of case numbers replaces the old `COUNT(*) + 1` race. |
+| `migrations*/0016_foreign_keys.sql` | Cleans orphaned rows and adds FK constraints (Postgres) or triggers (SQLite) for `sessions`, `download_requests`, `password_reset_requests`, `case_change_logs`, and `case_attachments`. |
+
+Run these against the production database **before** starting the new build (the startup migration runner applies them automatically, but verify with `npm run check:db` if you have it). Take a backup first.
 
 ---
 

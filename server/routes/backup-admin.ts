@@ -145,9 +145,11 @@ export function registerBackupAdminRoutes(app: Express) {
       const filename = file.originalname || "backup.zip";
       const sizeBytes = file.size ?? 0;
       try {
-        const buf = await fsp.readFile(file.path);
+        // Pass the on-disk path; restoreSiteFromZip no longer loads the
+        // archive into memory before validating entries. This keeps a 200 MB
+        // restore from ballooning the heap during the destructive window.
+        const result = await restoreSiteFromZip({ zipPath: file.path, confirmPhrase });
         await fsp.unlink(file.path).catch(() => {});
-        const result = await restoreSiteFromZip({ zipBuffer: buf, confirmPhrase });
         // Audit log: site restore is the single most destructive admin op
         // (wipes & replaces every table). Always record who did it, when,
         // and what archive was used — even if the request fails.

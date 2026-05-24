@@ -1,6 +1,6 @@
 export function DeepASTAttribution() {
   return (
-    <footer className="w-full py-4 text-center text-xs text-muted-foreground">
+    <footer className="w-full py-2 text-center text-[11px] text-muted-foreground/70">
       Developed by Deep Kumar Shrestha
     </footer>
   );

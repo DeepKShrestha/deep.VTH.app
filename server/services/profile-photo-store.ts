@@ -10,7 +10,7 @@ const ALLOWED = new Map<string, string>([
 
 export function profilePhotoMimeError(mimetype: string | undefined): string | null {
   if (!mimetype || !ALLOWED.has(mimetype)) {
-    return "Only JPEG, PNG, or WebP images are allowed (max 2 MB).";
+    return "Only JPEG, PNG, or WebP images are allowed (max 1 MB).";
   }
   return null;
 }

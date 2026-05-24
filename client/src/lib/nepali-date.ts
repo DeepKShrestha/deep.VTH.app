@@ -20,6 +20,37 @@ export function getTodayBsAd(): { bs: string; ad: string; bsYear: number; bsMont
   };
 }
 
+/** Today's case date in BS (YYYY-MM-DD). */
+export function getTodayBs(): string {
+  return getTodayBsAd().bs;
+}
+
+/** Add or subtract calendar days from a BS date string. */
+export function addBsDays(bsDate: string, days: number): string {
+  const ad = bsToAd(bsDate);
+  if (!ad) return "";
+  const [y, m, d] = ad.split("-").map(Number);
+  const js = new Date(y, m - 1, d);
+  js.setDate(js.getDate() + days);
+  const year = js.getFullYear();
+  const month = String(js.getMonth() + 1).padStart(2, "0");
+  const day = String(js.getDate()).padStart(2, "0");
+  return adToBs(`${year}-${month}-${day}`);
+}
+
+/** First and last valid day of a BS month (month is 1–12). */
+export function getBsMonthRange(
+  year: number,
+  month: number,
+): { from: string; to: string } {
+  const mm = String(month).padStart(2, "0");
+  const lastDay = getDaysInBsMonth(year, month);
+  return {
+    from: `${year}-${mm}-01`,
+    to: `${year}-${mm}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 /**
  * Convert AD date string (YYYY-MM-DD) to BS date string (YYYY-MM-DD)
  */

@@ -47,15 +47,75 @@ async function runPsqlFile(dumpPath: string): Promise<void> {
   });
 }
 
+/**
+ * Resolve a zip entry path safely under `root`. Rejects:
+ *   - absolute paths ("/foo", "C:\foo")
+ *   - paths whose resolved location escapes `root` via "..", embedded
+ *     null bytes, or platform-specific tricks ("\\?\")
+ *   - paths that resolve to `root` itself
+ *
+ * Returns the resolved absolute target path on success.
+ * Throws on any zip-slip attempt — the audit flagged this as critical.
+ */
+function safeJoin(root: string, entryName: string): string {
+  if (typeof entryName !== "string" || entryName.includes("\0")) {
+    throw new Error(`Backup archive contains an invalid entry name`);
+  }
+  // AdmZip normalizes to forward slashes; we still defend against backslash
+  // sneaking in (Windows-built zips occasionally carry them).
+  const normalized = entryName.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (path.isAbsolute(entryName) || /^[a-zA-Z]:[\\/]/.test(entryName)) {
+    throw new Error(`Backup archive rejected absolute entry: ${entryName}`);
+  }
+  const target = path.resolve(root, normalized);
+  const rootResolved = path.resolve(root) + path.sep;
+  if (!target.startsWith(rootResolved) && target !== path.resolve(root)) {
+    throw new Error(`Backup archive contains unsafe path: ${entryName}`);
+  }
+  return target;
+}
+
+async function writeTempBuffer(buf: Buffer, destRoot: string): Promise<string> {
+  const tmpPath = path.join(destRoot, "__incoming.zip");
+  await fsp.writeFile(tmpPath, buf);
+  return tmpPath;
+}
+
+async function extractZipSafely(zipPath: string, destRoot: string): Promise<void> {
+  const zip = new AdmZip(zipPath);
+  const entries = zip.getEntries();
+  for (const entry of entries) {
+    // AdmZip flags directory entries with `isDirectory`. We still validate
+    // them through safeJoin so a malicious "../" directory entry can't be
+    // created above destRoot.
+    const target = safeJoin(destRoot, entry.entryName);
+    if (entry.isDirectory) {
+      await fsp.mkdir(target, { recursive: true });
+      continue;
+    }
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    const data = entry.getData();
+    await fsp.writeFile(target, data);
+  }
+}
+
 export async function restoreSiteFromZip(params: {
-  zipBuffer: Buffer;
+  /** Full path to the uploaded zip on disk. Prefer this over an in-memory buffer. */
+  zipPath?: string;
+  /** Deprecated: in-memory buffer (kept for back-compat with older callers). */
+  zipBuffer?: Buffer;
   confirmPhrase: string;
 }): Promise<{ detail: string }> {
   if (params.confirmPhrase !== RESTORE_CONFIRM_PHRASE) {
     throw new Error(`Type the confirmation phrase exactly: ${RESTORE_CONFIRM_PHRASE}`);
   }
 
-  const zip = new AdmZip(params.zipBuffer);
+  const zipSource: Buffer | string | undefined = params.zipPath ?? params.zipBuffer;
+  if (!zipSource) {
+    throw new Error("restoreSiteFromZip requires zipPath or zipBuffer");
+  }
+
+  const zip = new AdmZip(zipSource as never);
   const metaEntry = zip.getEntry("meta.json");
   if (!metaEntry) throw new Error("Invalid backup archive: missing meta.json");
 
@@ -75,7 +135,10 @@ export async function restoreSiteFromZip(params: {
 
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "vth-restore-"));
   try {
-    zip.extractAllTo(tmpRoot, true);
+    await extractZipSafely(
+      typeof zipSource === "string" ? zipSource : await writeTempBuffer(zipSource, tmpRoot),
+      tmpRoot,
+    );
 
     const dbDir = path.join(tmpRoot, "db");
 

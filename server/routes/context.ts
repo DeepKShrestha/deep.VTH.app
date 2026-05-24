@@ -8,6 +8,11 @@ import { DB_PROVIDER } from "../db";
 import { sql } from "drizzle-orm";
 import crypto from "crypto";
 import { authSessionRepo } from "../auth-session-repo";
+import {
+  getCachedCurrentUser,
+  rememberCurrentUser,
+} from "../current-user-cache";
+import { findApprovedDownloadRequest } from "../download-request-auth";
 import { getPgPool } from "../pg-pool";
 import { dbAll, dbGet } from "../db-query";
 
@@ -46,16 +51,29 @@ async function getCurrentUser(req: Request) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   const token = authHeader.substring(7);
+
+  // Fast path: cached snapshot avoids re-querying users on every request.
+  // We still validate the session in the DB so revocation (logout, ban,
+  // password rotation) takes effect within `last_seen_at` throttle.
+  const cached = getCachedCurrentUser(token);
+  if (cached) {
+    const userId = await sessions.get(token);
+    if (userId === cached.id) return cached;
+    // Session was invalidated or rebound — fall through to slow path.
+  }
+
   const userId = await sessions.get(token);
   if (!userId) return null;
   const user = await authSessionRepo.getUserById(userId);
   if (!user) return null;
-  return {
+  const snapshot: CurrentUser = {
     id: user.id,
     role: user.role,
     approved: user.approved,
     designation: user.designation,
   };
+  rememberCurrentUser(token, snapshot);
+  return snapshot;
 }
 
 export async function requireAuth(
@@ -218,17 +236,20 @@ function canDownloadBySource(source: "ast_report" | "hospital_case") {
     }
 
     void (async () => {
-      const requests = await dbAll<{ id: number; status: string }>(
-        sql`SELECT id, status FROM download_requests
-          WHERE user_id = ${user.id}
-            AND request_source = ${source}
-          ORDER BY created_at DESC`,
-      );
-      const approved = requests.find((r) => r.status === "approved");
+      const exportFrom =
+        typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
+      const exportTo =
+        typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
+      const approved = await findApprovedDownloadRequest({
+        userId: user.id,
+        source,
+        exportDateFrom: exportFrom || null,
+        exportDateTo: exportTo || null,
+      });
       if (!approved) {
         return res.status(403).json({
           message:
-            "Download access not approved or already used. Please submit a new download request.",
+            "Download access not approved for this date range, or approval was already used. Submit a new download request.",
         });
       }
       (req as AuthenticatedRequest).approvedDownloadRequest = {

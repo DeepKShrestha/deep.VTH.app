@@ -308,9 +308,13 @@ export const caseRepo = {
   },
 
   async getCasesByDateRange(dateFrom?: string, dateTo?: string): Promise<Case[]> {
-    let rows = await dbAll<CaseRow>(sql`${CASE_SELECT} ORDER BY created_at DESC`);
-    if (dateFrom) rows = rows.filter((c) => c.date >= dateFrom);
-    if (dateTo) rows = rows.filter((c) => c.date <= dateTo);
+    const parts: SQL[] = [];
+    if (dateFrom?.trim()) parts.push(sql`date >= ${dateFrom.trim()}`);
+    if (dateTo?.trim()) parts.push(sql`date <= ${dateTo.trim()}`);
+    const where = parts.length ? sql.join(parts, sql` AND `) : sql`1=1`;
+    const rows = await dbAll<CaseRow>(
+      sql`${CASE_SELECT} WHERE ${where} ORDER BY created_at DESC`,
+    );
     return rows.map(toCase);
   },
 
@@ -320,50 +324,160 @@ export const caseRepo = {
     dateTo?: string,
     viewer?: CaseViewerAccess,
   ): Promise<Case[]> {
-    const scopePrefix = `${getScopePrefix(scope)}-`;
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
     const v = viewerRowSql(viewer);
-    let rows = await dbAll<CaseRow>(
-      sql`${CASE_SELECT} WHERE case_number LIKE ${`${scopePrefix}%`} AND ${v} ORDER BY created_at DESC`,
+    const parts: SQL[] = [
+      sql`case_number LIKE ${`${scopePrefix}%`}`,
+      v,
+    ];
+    if (dateFrom?.trim()) parts.push(sql`date >= ${dateFrom.trim()}`);
+    if (dateTo?.trim()) parts.push(sql`date <= ${dateTo.trim()}`);
+    const where = sql.join(parts, sql` AND `);
+    const rows = await dbAll<CaseRow>(
+      sql`${CASE_SELECT} WHERE ${where} ORDER BY created_at DESC`,
     );
-    if (dateFrom) rows = rows.filter((c) => c.date >= dateFrom);
-    if (dateTo) rows = rows.filter((c) => c.date <= dateTo);
     return rows.map(toCase);
   },
 
+  /**
+   * Cases for the AST/hospital dashboard — filtered in SQL instead of loading
+   * the full table into memory. Antibiotic/result filters still run in JS on
+   * the reduced row set.
+   */
+  async getCasesForDashboard(
+    scope: CaseScope,
+    filters: {
+      viewer?: CaseViewerAccess;
+      dateFromAd?: string;
+      dateToAd?: string;
+      dateFromBs?: string;
+      dateToBs?: string;
+      species?: string;
+      breed?: string;
+      sex?: string;
+      sampleType?: string;
+      organism?: string;
+    },
+  ): Promise<Case[]> {
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
+    const parts: SQL[] = [sql`case_number LIKE ${`${scopePrefix}%`}`, viewerRowSql(filters.viewer)];
+
+    const sampleDateAdExpr = sql`COALESCE(NULLIF(TRIM(sample_date_ad), ''), NULLIF(TRIM(date_ad), ''))`;
+    const sampleDateBsExpr = sql`COALESCE(NULLIF(TRIM(sample_date), ''), NULLIF(TRIM(date), ''))`;
+    const dateBranches: SQL[] = [];
+    if (filters.dateFromAd?.trim() || filters.dateToAd?.trim()) {
+      const adParts: SQL[] = [];
+      if (filters.dateFromAd?.trim()) {
+        adParts.push(sql`${sampleDateAdExpr} >= ${filters.dateFromAd.trim()}`);
+      }
+      if (filters.dateToAd?.trim()) {
+        adParts.push(sql`${sampleDateAdExpr} <= ${filters.dateToAd.trim()}`);
+      }
+      if (adParts.length) dateBranches.push(sql`(${sql.join(adParts, sql` AND `)})`);
+    }
+    if (filters.dateFromBs?.trim() || filters.dateToBs?.trim()) {
+      const bsParts: SQL[] = [];
+      if (filters.dateFromBs?.trim()) {
+        bsParts.push(sql`${sampleDateBsExpr} >= ${filters.dateFromBs.trim()}`);
+      }
+      if (filters.dateToBs?.trim()) {
+        bsParts.push(sql`${sampleDateBsExpr} <= ${filters.dateToBs.trim()}`);
+      }
+      if (bsParts.length) dateBranches.push(sql`(${sql.join(bsParts, sql` AND `)})`);
+    }
+    if (dateBranches.length === 1) {
+      parts.push(dateBranches[0]!);
+    } else if (dateBranches.length > 1) {
+      parts.push(sql`(${sql.join(dateBranches, sql` OR `)})`);
+    }
+    if (filters.species && filters.species !== "all") {
+      parts.push(sql`species = ${filters.species}`);
+    }
+    if (filters.breed && filters.breed !== "all") {
+      parts.push(sql`breed = ${filters.breed}`);
+    }
+    if (filters.sex && filters.sex !== "all") {
+      parts.push(sql`COALESCE(sex, 'Unknown') = ${filters.sex}`);
+    }
+    if (filters.sampleType && filters.sampleType !== "all") {
+      parts.push(sql`COALESCE(sample_type, 'Unknown') = ${filters.sampleType}`);
+    }
+    if (filters.organism && filters.organism !== "all") {
+      parts.push(sql`TRIM(COALESCE(culture_result, '')) = ${filters.organism}`);
+    }
+
+    const where = sql.join(parts, sql` AND `);
+    const rows = await dbAll<CaseRow>(
+      sql`${CASE_SELECT} WHERE ${where} ORDER BY created_at DESC LIMIT 15000`,
+    );
+    return rows.map(toCase);
+  },
+
+  /** Distinct filter option values for dashboard dropdowns (scoped, viewer-safe). */
+  async getDashboardFilterOptions(
+    scope: CaseScope,
+    viewer?: CaseViewerAccess,
+  ): Promise<{
+    species: string[];
+    breeds: string[];
+    sexes: string[];
+    sampleTypes: string[];
+    organisms: string[];
+  }> {
+    const scopePrefix = `${getScopePrefix(scope)}-%`;
+    const base = sql`case_number LIKE ${`${scopePrefix}%`} AND ${viewerRowSql(viewer)}`;
+    const [speciesRows, breedRows, sexRows, sampleRows, orgRows] = await Promise.all([
+      dbAll<{ v: string }>(
+        sql`SELECT DISTINCT TRIM(species) as v FROM cases WHERE ${base} AND TRIM(species) != '' ORDER BY v`,
+      ),
+      dbAll<{ v: string }>(
+        sql`SELECT DISTINCT TRIM(breed) as v FROM cases WHERE ${base} AND TRIM(breed) != '' ORDER BY v`,
+      ),
+      dbAll<{ v: string }>(
+        sql`SELECT DISTINCT TRIM(COALESCE(sex, 'Unknown')) as v FROM cases WHERE ${base} ORDER BY v`,
+      ),
+      dbAll<{ v: string }>(
+        sql`SELECT DISTINCT TRIM(COALESCE(sample_type, 'Unknown')) as v FROM cases WHERE ${base} ORDER BY v`,
+      ),
+      dbAll<{ v: string }>(
+        sql`SELECT DISTINCT TRIM(culture_result) as v FROM cases WHERE ${base} AND TRIM(COALESCE(culture_result, '')) != '' ORDER BY v`,
+      ),
+    ]);
+    return {
+      species: speciesRows.map((r) => r.v),
+      breeds: breedRows.map((r) => r.v),
+      sexes: sexRows.map((r) => r.v),
+      sampleTypes: sampleRows.map((r) => r.v),
+      organisms: orgRows.map((r) => r.v),
+    };
+  },
+
   async getNextCaseNumber(scope: CaseScope = "ast"): Promise<string> {
+    const { peekCaseIdentifiers } = await import("./case-counters");
     const NepaliDate = getNepaliDateClass();
     const nd = new NepaliDate();
-    const bsYear = nd.getYear();
     const bsMonth = String(nd.getMonth() + 1).padStart(2, "0");
-    const prefix = `${getScopePrefix(scope)}-${bsYear}${bsMonth}`;
-    const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE case_number LIKE ${`${prefix}%`}`,
-    );
-    const count = Number(row?.count ?? 0);
-    return `${prefix}-${String(count + 1).padStart(3, "0")}`;
+    const bsDay = String(nd.getDate()).padStart(2, "0");
+    const todayBs = `${nd.getYear()}-${bsMonth}-${bsDay}`;
+    const peek = await peekCaseIdentifiers(scope, todayBs);
+    return peek.caseNumber;
   },
 
   async getDailyNumber(date: string, scope: CaseScope = "ast"): Promise<number> {
-    const scopePrefix = `${getScopePrefix(scope)}-%`;
-    const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE date = ${date} AND case_number LIKE ${scopePrefix}`,
-    );
-    return Number(row?.count ?? 0) + 1;
+    const { peekCaseIdentifiers } = await import("./case-counters");
+    const peek = await peekCaseIdentifiers(scope, date);
+    return peek.dailyNumber;
   },
 
   async getMonthlyNumber(yearMonth: string, scope: CaseScope = "ast"): Promise<number> {
-    const scopePrefix = `${getScopePrefix(scope)}-%`;
-    const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${yearMonth}%`} AND case_number LIKE ${scopePrefix}`,
-    );
-    return Number(row?.count ?? 0) + 1;
+    const { peekCaseIdentifiers } = await import("./case-counters");
+    const peek = await peekCaseIdentifiers(scope, `${yearMonth}-01`);
+    return peek.monthlyNumber;
   },
 
   async getYearlyNumber(year: string, scope: CaseScope = "ast"): Promise<number> {
-    const scopePrefix = `${getScopePrefix(scope)}-%`;
-    const row = await dbGet<{ count: number | string }>(
-      sql`SELECT COUNT(*) as count FROM cases WHERE date LIKE ${`${year}%`} AND case_number LIKE ${scopePrefix}`,
-    );
-    return Number(row?.count ?? 0) + 1;
+    const { peekCaseIdentifiers } = await import("./case-counters");
+    const peek = await peekCaseIdentifiers(scope, `${year}-01-01`);
+    return peek.yearlyNumber;
   },
 };

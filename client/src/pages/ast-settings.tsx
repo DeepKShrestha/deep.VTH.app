@@ -16,11 +16,15 @@ import {
   type AstToggleDefaults,
 } from "@/lib/module-toggle-defaults";
 import { getAuthToken } from "@/lib/auth";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 export default function AstSettingsPage() {
   const { canManageAstAdmin } = useAuth();
   const [toggleOpen, setToggleOpen] = useState(false);
   const togglePanelRef = useRef<HTMLDivElement | null>(null);
+  const skipFirstPrefsSavedBanner = useRef(true);
+  const [prefsSavedBanner, setPrefsSavedBanner] = useState(false);
   const [toggleDefaults, setToggleDefaults] = useState<AstToggleDefaults>(
     getAstToggleDefaults(),
   );
@@ -61,7 +65,17 @@ export default function AstSettingsPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ astToggleDefaults: toggleDefaults }),
-      }).catch(() => {});
+      })
+        .then((res) => {
+          if (!res.ok) return;
+          if (skipFirstPrefsSavedBanner.current) {
+            skipFirstPrefsSavedBanner.current = false;
+            return;
+          }
+          setPrefsSavedBanner(true);
+          window.setTimeout(() => setPrefsSavedBanner(false), 2200);
+        })
+        .catch(() => {});
     }, 700);
     return () => window.clearTimeout(tmr);
   }, [toggleDefaults]);
@@ -77,27 +91,46 @@ export default function AstSettingsPage() {
   }, []);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="rounded-2xl border bg-card px-5 py-5 sm:px-7 sm:py-6">
-        <div className="flex items-center gap-3">
-          <Link href="/ast-report">
-            <Button variant="ghost" size="icon" data-testid="button-back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">AST Settings</h1>
-            <p className="text-sm text-muted-foreground">Manage AST form, toggles, and breakpoint settings.</p>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-1">
+          <PageBreadcrumbs
+            items={[
+              { label: "AST module", href: "/ast-report" },
+              { label: "Settings" },
+            ]}
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <Link href="/ast-report">
+              <Button variant="ghost" size="icon" data-testid="button-back">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight">AST Settings</h1>
+              <p className="text-sm text-muted-foreground">Manage AST form, toggles, and breakpoint settings.</p>
+            </div>
           </div>
         </div>
-      </div>
-
+      }
+    >
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Default Toggle Behavior</h2>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Default toggle behavior</h2>
+          {prefsSavedBanner && (
+            <span className="text-xs font-medium text-primary" role="status">
+              Defaults saved
+            </span>
+          )}
+        </div>
         <Collapsible open={toggleOpen} onOpenChange={setToggleOpen}>
           <Card
             ref={togglePanelRef}
-            className="border-border/80 shadow-sm cursor-pointer"
+            tabIndex={0}
+            className="border-border/80 shadow-sm cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onClick={() => setToggleOpen(true)}
           >
             <CardHeader className="pb-2">
@@ -163,11 +196,11 @@ export default function AstSettingsPage() {
       </div>
 
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Form Settings</h2>
+        <h2 className="text-sm font-medium text-muted-foreground">Form settings</h2>
         <div className="grid gap-3 sm:grid-cols-2">
 
         {canManageAstAdmin && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Settings2 className="w-4 h-4 text-primary shrink-0" />
@@ -179,7 +212,7 @@ export default function AstSettingsPage() {
                 Configure field visibility, requirement status, form behavior, and species/breed catalogs (third tab in the editor).
               </p>
               <Link href="/ast-report/form-editor" className="mt-auto">
-                <Button className="w-full bg-slate-700 hover:bg-slate-800 text-white">
+                <Button className="w-full">
                   Open Register Form Settings
                 </Button>
               </Link>
@@ -188,7 +221,7 @@ export default function AstSettingsPage() {
         )}
 
         {canManageAstAdmin && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <SlidersHorizontal className="w-4 h-4 text-primary shrink-0" />
@@ -200,7 +233,7 @@ export default function AstSettingsPage() {
                 Manage antibiotic breakpoint references used in AST reports.
               </p>
               <Link href="/breakpoints" className="mt-auto">
-                <Button className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white">
+                <Button className="w-full">
                   Open Breakpoints
                 </Button>
               </Link>
@@ -209,6 +242,6 @@ export default function AstSettingsPage() {
         )}
         </div>
       </div>
-    </div>
+    </StickyScrollPage>
   );
 }

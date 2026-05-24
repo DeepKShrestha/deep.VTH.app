@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -30,10 +30,38 @@ export const users = sqliteTable("users", {
   profilePhotoPath: text("profile_photo_path"),
 });
 
+// ---- Sessions (auth tokens) ----
+export const sessions = sqliteTable("sessions", {
+  token: text("token").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+});
+
+// ---- Case counters (atomic case / daily / monthly / yearly sequences) ----
+export const caseCounters = sqliteTable(
+  "case_counters",
+  {
+    scope: text("scope").notNull(),
+    counterType: text("counter_type").notNull(),
+    periodKey: text("period_key").notNull(),
+    lastValue: integer("last_value").notNull().default(0),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.scope, t.counterType, t.periodKey] }),
+  }),
+);
+
 // ---- Download Requests (for students) ----
 export const downloadRequests = sqliteTable("download_requests", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   requestSource: text("request_source").notNull().default("ast_report"), // ast_report, hospital_case
   status: text("status").notNull().default("pending"), // pending, approved, rejected, 
   dateFrom: text("date_from"), // BS date filter
@@ -47,7 +75,9 @@ export const downloadRequests = sqliteTable("download_requests", {
 
 export const passwordResetRequests = sqliteTable("password_reset_requests", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   requestedByRole: text("requested_by_role").notNull(),
   passwordHash: text("password_hash").notNull(),
   reason: text("reason"),
@@ -64,7 +94,9 @@ const caseChangeLogs = sqliteTable("case_change_logs", {
   caseNumber: text("case_number").notNull(),
   caseScope: text("case_scope").notNull(), // ast, hospital
   action: text("action").notNull(), // created, deleted
-  actorUserId: integer("actor_user_id").notNull(),
+  actorUserId: integer("actor_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
   actorRole: text("actor_role").notNull(),
   actorName: text("actor_name").notNull(),
   actorUsername: text("actor_username").notNull(),
@@ -146,6 +178,8 @@ export const medications = sqliteTable("medications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
   description: text("description"),
+  /** Therapeutic category (e.g. Antibiotic); distinct from free-text description. */
+  medicationClass: text("medication_class"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -178,7 +212,7 @@ export const durations = sqliteTable("durations", {
 
 export const caseAttachments = sqliteTable("case_attachments", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  caseId: integer("case_id"),
+  caseId: integer("case_id").references(() => cases.id, { onDelete: "cascade" }),
   tempToken: text("temp_token"),
   sectionKey: text("section_key").notNull().default("treatment"),
   category: text("category").notNull().default("diagnostic"),
@@ -323,6 +357,19 @@ export const patchCaseSchema = insertCaseSchema
 export const insertBreakpointSchema = createInsertSchema(breakpoints).omit({
   id: true,
 });
+
+/**
+ * Partial update schema for breakpoints. The previous PATCH endpoint
+ * accepted arbitrary `req.body` and forwarded it straight to the DB; the
+ * audit flagged this as a privilege-escalation surface (a caller could
+ * flip `isPreset`, write giant strings, or NaN numbers). This narrows it
+ * down to the same shape as the insert schema, all fields optional, with
+ * `isPreset` deliberately omitted so it can never be toggled via PATCH.
+ */
+export const updateBreakpointSchema = insertBreakpointSchema
+  .omit({ isPreset: true })
+  .partial();
+export type UpdateBreakpoint = z.infer<typeof updateBreakpointSchema>;
 
 // ---- Insert Schemas for new master data ----
 export const insertMedicationSchema = createInsertSchema(medications).omit({

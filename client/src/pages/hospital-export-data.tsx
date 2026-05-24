@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { getAuthToken } from "@/lib/auth";
 import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,13 @@ import { Badge } from "@/components/ui/badge";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd } from "@/lib/nepali-date";
 import {
+  describeApprovalWindow,
+  evaluateExportRange,
+  findActiveApproval,
+} from "@/lib/export-approval";
+import { useEffect } from "react";
+import {
+  AlertTriangle,
   ArrowLeft,
   Download,
   FileText,
@@ -44,7 +52,26 @@ export default function HospitalExportDataPage() {
   const myHospitalRequests = myRequests.filter(
     (r) => (r.requestSource || "ast_report") === "hospital_case",
   );
-  const hasApprovedRequest = myHospitalRequests.some((r) => r.status === "approved");
+  const activeApproval = isStudent
+    ? findActiveApproval(myRequests, "hospital_case")
+    : undefined;
+  const hasApprovedRequest = Boolean(activeApproval);
+
+  useEffect(() => {
+    if (!activeApproval) return;
+    if (activeApproval.dateFrom) setDateFrom(activeApproval.dateFrom);
+    if (activeApproval.dateTo) setDateTo(activeApproval.dateTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeApproval?.id]);
+
+  const rangeCheck = evaluateExportRange(
+    activeApproval
+      ? { dateFrom: activeApproval.dateFrom, dateTo: activeApproval.dateTo }
+      : undefined,
+    dateFrom,
+    dateTo,
+  );
+  const exportDisabled = isStudent && (!hasApprovedRequest || !rangeCheck.ok);
 
   const requestMutation = useMutation({
     mutationFn: async () => {
@@ -73,6 +100,13 @@ export default function HospitalExportDataPage() {
   });
 
   const handleDownload = (kind: "csv" | "xlsx") => {
+    if (exportDisabled) {
+      toast({
+        title: rangeCheck.reason || "Download access is not available.",
+        variant: "destructive",
+      });
+      return;
+    }
     const params = new URLSearchParams();
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
@@ -122,23 +156,27 @@ export default function HospitalExportDataPage() {
   const showDownloadButtons = !isStudent || hasApprovedRequest;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex items-center gap-3">
-        <Link href="/new-case">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-lg font-semibold" data-testid="text-export-title">
-            Hospital Export Data
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Download hospital case registration data for research and analysis
-          </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-3xl"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="flex items-center gap-3">
+          <Link href="/new-case">
+            <Button variant="ghost" size="icon" data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-lg font-semibold" data-testid="text-export-title">
+              Hospital Export Data
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Pick a Bikram Sambat date range, then download CSV for offline analysis.
+            </p>
+          </div>
         </div>
-      </div>
-
+      }
+    >
       <Card>
         <CardHeader className="pb-4">
           <CardTitle className="text-base">Date Range (BS)</CardTitle>
@@ -180,12 +218,37 @@ export default function HospitalExportDataPage() {
               a frozen header row and filters. Nested values stay as JSON in the cell.
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {isStudent && activeApproval && (
+              <div
+                className="rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200"
+                data-testid="text-approval-window"
+              >
+                <span className="font-medium">Approved window: </span>
+                {describeApprovalWindow({
+                  dateFrom: activeApproval.dateFrom,
+                  dateTo: activeApproval.dateTo,
+                })}
+                <span className="text-emerald-700 dark:text-emerald-300">
+                  {" "}— single use; the approval is consumed when you download.
+                </span>
+              </div>
+            )}
+            {isStudent && !rangeCheck.ok && rangeCheck.reason && (
+              <div
+                className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2"
+                data-testid="text-range-warning"
+              >
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{rangeCheck.reason}</span>
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row gap-3">
               <Button
                 onClick={() => handleDownload("csv")}
                 className="gap-2 w-full sm:flex-1"
                 data-testid="button-download-csv"
+                disabled={exportDisabled}
               >
                 <FileText className="w-4 h-4" />
                 Download CSV
@@ -195,6 +258,7 @@ export default function HospitalExportDataPage() {
                 variant="secondary"
                 className="gap-2 w-full sm:flex-1"
                 data-testid="button-download-xlsx"
+                disabled={exportDisabled}
               >
                 <FileSpreadsheet className="w-4 h-4" />
                 Download Excel
@@ -287,6 +351,6 @@ export default function HospitalExportDataPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }

@@ -16,11 +16,15 @@ import {
   type HospitalToggleDefaults,
 } from "@/lib/module-toggle-defaults";
 import { getAuthToken } from "@/lib/auth";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 export default function HospitalSettingsPage() {
   const { canManageAstAdmin } = useAuth();
   const [toggleOpen, setToggleOpen] = useState(false);
   const togglePanelRef = useRef<HTMLDivElement | null>(null);
+  const skipFirstPrefsSavedBanner = useRef(true);
+  const [prefsSavedBanner, setPrefsSavedBanner] = useState(false);
   const [toggleDefaults, setToggleDefaults] = useState<HospitalToggleDefaults>(
     getHospitalToggleDefaults(),
   );
@@ -61,7 +65,17 @@ export default function HospitalSettingsPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ hospitalToggleDefaults: toggleDefaults }),
-      }).catch(() => {});
+      })
+        .then((res) => {
+          if (!res.ok) return;
+          if (skipFirstPrefsSavedBanner.current) {
+            skipFirstPrefsSavedBanner.current = false;
+            return;
+          }
+          setPrefsSavedBanner(true);
+          window.setTimeout(() => setPrefsSavedBanner(false), 2200);
+        })
+        .catch(() => {});
     }, 700);
     return () => window.clearTimeout(tmr);
   }, [toggleDefaults]);
@@ -77,29 +91,48 @@ export default function HospitalSettingsPage() {
   }, []);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="rounded-2xl border bg-card px-5 py-5 sm:px-7 sm:py-6">
-        <div className="flex items-center gap-3">
-          <Link href="/new-case">
-            <Button variant="ghost" size="icon" data-testid="button-back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">Hospital Settings</h1>
-            <p className="text-sm text-muted-foreground">
-              Manage hospital form, catalogs, and register-form toggle defaults.
-            </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-1">
+          <PageBreadcrumbs
+            items={[
+              { label: "Hospital", href: "/new-case" },
+              { label: "Settings" },
+            ]}
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <Link href="/new-case">
+              <Button variant="ghost" size="icon" data-testid="button-back">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight">Hospital Settings</h1>
+              <p className="text-sm text-muted-foreground">
+                Manage hospital form, catalogs, and register-form toggle defaults.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
-
+      }
+    >
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Default Toggle Behavior</h2>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Default toggle behavior</h2>
+          {prefsSavedBanner && (
+            <span className="text-xs font-medium text-primary" role="status">
+              Defaults saved
+            </span>
+          )}
+        </div>
         <Collapsible open={toggleOpen} onOpenChange={setToggleOpen}>
           <Card
             ref={togglePanelRef}
-            className="border-border/80 shadow-sm cursor-pointer"
+            tabIndex={0}
+            className="border-border/80 shadow-sm cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onClick={() => setToggleOpen(true)}
           >
             <CardHeader className="pb-2">
@@ -190,9 +223,9 @@ export default function HospitalSettingsPage() {
 
       {canManageAstAdmin && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Form Settings</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Form settings</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Settings2 className="w-4 h-4 text-primary shrink-0" />
@@ -204,14 +237,14 @@ export default function HospitalSettingsPage() {
                   Control field visibility, requirements, built-in questions, and species/breed catalogs (third tab in the editor).
                 </p>
                 <Link href="/new-case/form-editor" className="mt-auto">
-                  <Button className="w-full bg-slate-700 hover:bg-slate-800 text-white">
+                  <Button className="w-full">
                     Open Register Form Settings
                   </Button>
                 </Link>
               </CardContent>
             </Card>
 
-            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Pill className="w-4 h-4 text-primary shrink-0" />
@@ -223,14 +256,14 @@ export default function HospitalSettingsPage() {
                   Manage medications, administration routes, frequency options, and duration/day options.
                 </p>
                 <Link href="/new-case/settings/treatment" className="mt-auto">
-                  <Button className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white">
+                  <Button className="w-full">
                     Open Treatment Settings
                   </Button>
                 </Link>
               </CardContent>
             </Card>
 
-            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+            <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Stethoscope className="w-4 h-4 text-primary shrink-0" />
@@ -242,7 +275,7 @@ export default function HospitalSettingsPage() {
                   Add or remove attending veterinarians (name, NVC registration no., department) for case registration.
                 </p>
                 <Link href="/new-case/settings/veterinarians" className="mt-auto">
-                  <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
+                  <Button className="w-full">
                     Open Veterinarians
                   </Button>
                 </Link>
@@ -251,6 +284,6 @@ export default function HospitalSettingsPage() {
           </div>
         </div>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }

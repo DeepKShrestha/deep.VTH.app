@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
@@ -343,8 +344,13 @@ export default function Welcome() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-60px)] px-4 py-6">
-      <div className="mx-auto w-full max-w-3xl space-y-6">
+    <StickyScrollPage
+      maxWidthClass="max-w-3xl w-full"
+      className="min-h-[calc(100vh-60px)]"
+      contentPaddingClass="py-6"
+      bodyClassName="space-y-6"
+      sticky={
+        <>
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-sm">
             <User className="w-4 h-4 text-muted-foreground" />
@@ -524,8 +530,21 @@ export default function Welcome() {
                   )}
                   <DropdownMenuSeparator />
                   {notificationItems.length === 0 ? (
-                    <div className="px-2 py-4 text-sm text-muted-foreground text-center">
-                      No pending notifications.
+                    <div className="px-2 py-6 text-center space-y-3">
+                      <p className="text-sm text-muted-foreground">No pending notifications.</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setLocation("/admin?tab=pending");
+                        }}
+                      >
+                        Open admin — Pending
+                      </Button>
                     </div>
                   ) : (
                     notificationItems.slice(0, 12).map((item) => (
@@ -575,8 +594,10 @@ export default function Welcome() {
             Choose one of the core modules to continue.
           </p>
         </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
           <Card className="h-full flex flex-col">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -590,7 +611,7 @@ export default function Welcome() {
               </p>
               {canRegisterHospitalCase ? (
                 <Link href="/new-case" className="mt-auto">
-                  <Button className="w-full" data-testid="button-register-case">
+                  <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-register-case">
                     Open Case Registration
                   </Button>
                 </Link>
@@ -614,10 +635,7 @@ export default function Welcome() {
                 Open the AST module with case registration, previous cases, downloads, and related tools.
               </p>
               <Link href="/ast-report" className="mt-auto">
-                <Button
-                  className="w-full bg-cyan-600 hover:bg-cyan-700 text-white"
-                  data-testid="button-view-cases"
-                >
+                <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-view-cases">
                   Open AST Reports
                 </Button>
               </Link>
@@ -637,10 +655,7 @@ export default function Welcome() {
                   Manage pending approvals, users, password resets, and pending download requests.
                 </p>
                 <Link href="/admin" className="mt-auto">
-                  <Button
-                    className="w-full bg-red-600 hover:bg-red-700 text-white"
-                    data-testid="button-admin-panel"
-                  >
+                  <Button variant="destructive" className="w-full min-h-10 sm:min-h-9" data-testid="button-admin-panel">
                     Open Admin Panel
                   </Button>
                 </Link>
@@ -648,7 +663,6 @@ export default function Welcome() {
             </Card>
           )}
         </div>
-      </div>
-    </div>
+    </StickyScrollPage>
   );
 }

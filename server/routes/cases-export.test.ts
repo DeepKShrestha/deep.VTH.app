@@ -112,8 +112,15 @@ describe("cases export helpers", () => {
     expect(buildExportCsvFilename({ scope: "hospital" })).toBe("hospital-export_any_to_any.csv");
   });
 
-  it("returns fallback text for empty rows", () => {
+  it("returns fallback text for empty rows when no column order is supplied", () => {
     expect(rowsToCsv([])).toBe("No data");
+  });
+
+  it("emits a header-only CSV when rows are empty but a column order is given", () => {
+    const csv = rowsToCsv([], ["case_number", "owner_name"]);
+    expect(csv.startsWith("\uFEFF")).toBe(true);
+    expect(csv).toContain('"case_number","owner_name"');
+    expect(csv.endsWith("\r\n")).toBe(true);
   });
 
   it("hospital export uses form labels as headers (no custom_ prefix)", () => {

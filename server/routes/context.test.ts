@@ -12,6 +12,13 @@ vi.mock("../db-query", () => ({
   dbAll: vi.fn(),
   dbGet: vi.fn(),
 }));
+vi.mock("../download-request-auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../download-request-auth")>();
+  return {
+    ...actual,
+    findApprovedDownloadRequest: vi.fn(),
+  };
+});
 vi.mock("../auth-session-repo", () => ({
   authSessionRepo: {
     setSession: vi.fn(),
@@ -21,11 +28,14 @@ vi.mock("../auth-session-repo", () => ({
     getUserById: vi.fn(),
   },
 }));
-import { dbAll } from "../db-query";
+import { authSessionRepo } from "../auth-session-repo";
+import { invalidateAll as invalidateCurrentUserCache } from "../current-user-cache";
+import { findApprovedDownloadRequest } from "../download-request-auth";
 import {
   canDownload,
   canRegister,
   getIdParam,
+  requireAuth,
   requireRole,
   sessions,
 } from "./context";
@@ -83,8 +93,9 @@ function makeDownloadRequest(
 }
 
 afterEach(async () => {
+  invalidateCurrentUserCache();
   await sessions.clear();
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe("route context middleware", () => {
@@ -141,10 +152,11 @@ describe("route context middleware", () => {
   });
 
   it("canDownload denies student without approved request", async () => {
-    vi.mocked(dbAll).mockResolvedValue([{ id: 1, status: "pending" }]);
+    vi.mocked(findApprovedDownloadRequest).mockResolvedValue(undefined);
 
     const req = {
       currentUser: { id: 9, role: "student", approved: true, designation: "student" },
+      query: {},
     } as unknown as Request;
     const res = makeRes();
     const next = vi.fn();
@@ -158,11 +170,11 @@ describe("route context middleware", () => {
   });
 
   it("canDownload attaches approved request for student", async () => {
-    const approved = makeDownloadRequest({ id: 11, status: "approved" });
-    vi.mocked(dbAll).mockResolvedValue([{ id: approved.id, status: approved.status }]);
+    vi.mocked(findApprovedDownloadRequest).mockResolvedValue({ id: 11, status: "approved" });
 
     const req = {
       currentUser: { id: 9, role: "student", approved: true, designation: "student" },
+      query: { dateFrom: "2082-05-01", dateTo: "2082-05-31" },
     } as unknown as AuthenticatedRequest;
     const res = makeRes();
     const next = vi.fn();
@@ -173,6 +185,84 @@ describe("route context middleware", () => {
 
     expect(next).toHaveBeenCalled();
     expect(req.approvedDownloadRequest?.id).toBe(11);
+  });
+
+  it("requireAuth caches the user snapshot across repeated requests", async () => {
+    const token = "cache-test-token";
+    const user = makeUser({ id: 42, role: "staff" });
+    vi.mocked(authSessionRepo.getSessionUserId).mockResolvedValue(user.id);
+    vi.mocked(authSessionRepo.getUserById).mockResolvedValue(user);
+
+    const req = {
+      headers: { authorization: `Bearer ${token}` },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    await requireAuth(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(authSessionRepo.getUserById).toHaveBeenCalledTimes(1);
+
+    const req2 = {
+      headers: { authorization: `Bearer ${token}` },
+    } as unknown as Request;
+    const res2 = makeRes();
+    const next2 = vi.fn();
+
+    await requireAuth(req2, res2, next2);
+    expect(next2).toHaveBeenCalledTimes(1);
+    expect(authSessionRepo.getUserById).toHaveBeenCalledTimes(1);
+    expect(authSessionRepo.getSessionUserId).toHaveBeenCalledTimes(2);
+  });
+
+  it("requireAuth bypasses cache when session user id no longer matches", async () => {
+    const token = "cache-mismatch-token";
+    const user = makeUser({ id: 7, role: "admin" });
+    vi.mocked(authSessionRepo.getSessionUserId)
+      .mockResolvedValueOnce(user.id)
+      .mockResolvedValueOnce(99)
+      .mockResolvedValueOnce(99);
+    vi.mocked(authSessionRepo.getUserById)
+      .mockResolvedValueOnce(user)
+      .mockResolvedValueOnce(makeUser({ id: 99, role: "student" }));
+
+    const req = {
+      headers: { authorization: `Bearer ${token}` },
+    } as unknown as Request;
+    await requireAuth(req, makeRes(), vi.fn());
+
+    const req2 = {
+      headers: { authorization: `Bearer ${token}` },
+    } as unknown as Request;
+    await requireAuth(req2, makeRes(), vi.fn());
+
+    expect(authSessionRepo.getUserById).toHaveBeenCalledTimes(2);
+  });
+
+  it("canDownload denies student when export dates are missing for a bounded approval", async () => {
+    vi.mocked(findApprovedDownloadRequest).mockResolvedValue(undefined);
+
+    const req = {
+      currentUser: { id: 9, role: "student", approved: true, designation: "student" },
+      query: {},
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canDownload(req, res, next);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(findApprovedDownloadRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 9,
+        source: "ast_report",
+        exportDateFrom: null,
+        exportDateTo: null,
+      }),
+    );
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
   });
 
 });

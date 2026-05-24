@@ -3,6 +3,11 @@ import { useLocation } from "wouter";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, postFormDataWithProgress, queryClient } from "@/lib/queryClient";
+import {
+  CASE_ATTACHMENT_MAX_INPUT_BYTES,
+  compressCaseAttachmentImages,
+  isAllowedCaseAttachmentImage,
+} from "@/lib/compress-case-attachment-image";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +23,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -43,6 +54,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Breakpoint, Veterinarian } from "@shared/schema";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd, formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import {
@@ -57,6 +69,21 @@ import {
   type AstCsvImportRow,
   type PendingAstCsvImportPayload,
 } from "@/lib/ast-csv-import";
+import {
+  detailFieldParentKeyword,
+  getSimpleTestLabels,
+  hasMainSuggestedTest,
+  isDetailSubQuestionKey,
+  isLegacyTestsSuggestedDuplicateQuestion,
+  isTestsSuggestedPanelSubQuestion,
+  isTestsSuggestedSectionKey,
+  parseStringList,
+  parseTestsSuggestedOptions,
+  resolvePanelDefForKey,
+  resolvePanelDefinitions,
+  shouldIncludeTestsSuggestedFormQuestion,
+  type TestsSuggestedPanelDef,
+} from "@shared/hospital-tests-suggested";
 
 const DEFAULT_SPECIES_LIST = [
   "Bovine",
@@ -627,22 +654,14 @@ function getBirdPerDayUnit(value: string): "bird/day" | "birds/day" {
   return numeric === 1 ? "bird/day" : "birds/day";
 }
 
-function hasMainSuggestedTest(selected: string[], keyword: string): boolean {
-  const normalizedKeyword = normalizeQuestionId(keyword);
-  return selected.some((item) => normalizeQuestionId(item).includes(normalizedKeyword));
-}
-
 function isLegacyTestsSuggestedTextareaQuestion(question: {
   key: string;
   label: string;
   inputType: string;
   sectionKey?: string;
 }): boolean {
-  const normalizedLabel = normalizeQuestionId(question.label || "");
-  const normalizedKey = normalizeQuestionId(question.key || "");
   return (
-    question.inputType === "textarea" &&
-    (normalizedLabel === "testssuggested" || normalizedKey.includes("testssuggested"))
+    question.inputType === "textarea" && isLegacyTestsSuggestedDuplicateQuestion(question)
   );
 }
 
@@ -791,7 +810,9 @@ export default function RegisterCase({
   >({});
   const [treatmentAttachments, setTreatmentAttachments] = useState<TempCaseAttachment[]>([]);
   const [uploadingTreatmentAttachments, setUploadingTreatmentAttachments] = useState(false);
+  const [compressingTreatmentAttachments, setCompressingTreatmentAttachments] = useState(false);
   const [treatmentUploadProgress, setTreatmentUploadProgress] = useState<number | null>(null);
+  const treatmentAttachmentBusy = uploadingTreatmentAttachments || compressingTreatmentAttachments;
   const [treatmentAttachmentPreviewIndex, setTreatmentAttachmentPreviewIndex] = useState<number | null>(
     null,
   );
@@ -830,8 +851,6 @@ export default function RegisterCase({
   const [avianWaterIntake, setAvianWaterIntake] = useState("");
   const [avianMortality, setAvianMortality] = useState("");
   const [testsSuggested, setTestsSuggested] = useState<string[]>([]);
-  const [enzymePanelTests, setEnzymePanelTests] = useState<string[]>([]);
-  const [rapidDiagnosticTests, setRapidDiagnosticTests] = useState<string[]>([]);
   const [biopsyDetails, setBiopsyDetails] = useState("");
   const [cytologyDetails, setCytologyDetails] = useState("");
   const [xrayDetails, setXrayDetails] = useState("");
@@ -961,8 +980,6 @@ export default function RegisterCase({
       avianWaterIntake: string;
       avianMortality: string;
       testsSuggested: string[];
-      enzymePanelTests: string[];
-      rapidDiagnosticTests: string[];
       biopsyDetails: string;
       cytologyDetails: string;
       xrayDetails: string;
@@ -978,6 +995,7 @@ export default function RegisterCase({
   };
 
   const [draftPrompt, setDraftPrompt] = useState<Draft | null>(null);
+  const [draftAutosavedAt, setDraftAutosavedAt] = useState<string | null>(null);
   const draftLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -1038,15 +1056,26 @@ export default function RegisterCase({
     setAvianWaterIntake(f.avianWaterIntake ?? "");
     setAvianMortality(f.avianMortality ?? "");
     setTestsSuggested(f.testsSuggested ?? []);
-    setEnzymePanelTests(f.enzymePanelTests ?? []);
-    setRapidDiagnosticTests(f.rapidDiagnosticTests ?? []);
     setBiopsyDetails(f.biopsyDetails ?? "");
     setCytologyDetails(f.cytologyDetails ?? "");
     setXrayDetails(f.xrayDetails ?? "");
     setUltrasoundDetails(f.ultrasoundDetails ?? "");
     setCultureDetails(f.cultureDetails ?? "");
     setRemarks(f.remarks ?? "");
-    setCustomAnswers(f.customAnswers ?? {});
+    setCustomAnswers(() => {
+      const base = { ...(f.customAnswers ?? {}) };
+      const draft = f as {
+        enzymePanelTests?: string[];
+        rapidDiagnosticTests?: string[];
+      };
+      if (draft.enzymePanelTests?.length && !base.enzymePanelTests) {
+        base.enzymePanelTests = draft.enzymePanelTests;
+      }
+      if (draft.rapidDiagnosticTests?.length && !base.rapidDiagnosticTests) {
+        base.rapidDiagnosticTests = draft.rapidDiagnosticTests;
+      }
+      return base;
+    });
     setTreatmentAnswers(f.treatmentAnswers ?? {});
     setSectionAnswers(f.sectionAnswers ?? {});
     setAttendingVetByQuestion(f.attendingVetByQuestion ?? {});
@@ -1067,6 +1096,7 @@ export default function RegisterCase({
     }
     draftLoadedRef.current = true;
     setDraftPrompt(null);
+    setDraftAutosavedAt(null);
   };
 
   useEffect(() => {
@@ -1110,8 +1140,6 @@ export default function RegisterCase({
             avianWaterIntake,
             avianMortality,
             testsSuggested,
-            enzymePanelTests,
-            rapidDiagnosticTests,
             biopsyDetails,
             cytologyDetails,
             xrayDetails,
@@ -1142,9 +1170,11 @@ export default function RegisterCase({
           astRows.some((r) => r.antibiotic || r.zoneSize);
         if (!hasAnyContent) {
           window.localStorage.removeItem(DRAFT_KEY);
+          setDraftAutosavedAt(null);
           return;
         }
         window.localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+        setDraftAutosavedAt(payload.savedAt);
       } catch {
         // quota or serialization issue — silently skip this save
       }
@@ -1162,7 +1192,7 @@ export default function RegisterCase({
     crtValue, dehydrationPercentage,
     avianFlockSize, avianHatchery, avianFeedSupplier,
     avianFeedIntake, avianWaterIntake, avianMortality,
-    testsSuggested, enzymePanelTests, rapidDiagnosticTests,
+    testsSuggested,
     biopsyDetails, cytologyDetails, xrayDetails, ultrasoundDetails,
     cultureDetails, remarks,
     customAnswers, treatmentAnswers, sectionAnswers,
@@ -1179,6 +1209,42 @@ export default function RegisterCase({
   const questionByKey = useMemo(() => {
     return new Map(allQuestions.map((q) => [q.key, q]));
   }, [allQuestions]);
+  const testsSuggestedSectionKeys = useMemo(() => {
+    return new Set(
+      (formDefinition?.sections ?? [])
+        .filter((s) => isTestsSuggestedSectionTitle(s.title))
+        .map((s) => s.key),
+    );
+  }, [formDefinition]);
+  const testsSuggestedQuestion = useMemo(
+    () => allQuestions.find((q) => normalizeQuestionId(q.key) === "testssuggested"),
+    [allQuestions],
+  );
+  const testsPanelDefs = useMemo((): TestsSuggestedPanelDef[] => {
+    const subQuestions = allQuestions.filter(
+      (q) =>
+        testsSuggestedSectionKeys.has(q.sectionKey) &&
+        q.inputType === "multiSelect" &&
+        normalizeQuestionId(q.key) !== "testssuggested",
+    );
+    return resolvePanelDefinitions(testsSuggestedQuestion?.options ?? [], subQuestions);
+  }, [allQuestions, testsSuggestedQuestion, testsSuggestedSectionKeys]);
+  const testsPanelDefsByKey = useMemo(
+    () => new Map(testsPanelDefs.map((d) => [d.panelKey, d])),
+    [testsPanelDefs],
+  );
+  const getPanelAnswerList = (panelKey: string): string[] => {
+    const v = customAnswers[panelKey];
+    return parseStringList(Array.isArray(v) ? v : typeof v === "string" ? v : undefined);
+  };
+  const setPanelAnswerList = (panelKey: string, values: string[]) => {
+    setCustomAnswers((prev) => ({ ...prev, [panelKey]: values }));
+  };
+  const getTestsSuggestedMainOptions = (fallback: string[]) => {
+    const raw = testsSuggestedQuestion?.options ?? [];
+    if (raw.length === 0) return fallback;
+    return getSimpleTestLabels(parseTestsSuggestedOptions(raw));
+  };
   const getQuestionOptions = (key: string, fallback: string[] = []) => {
     const options = questionByKey.get(key)?.options ?? [];
     return options.length > 0 ? options : fallback;
@@ -1375,6 +1441,7 @@ export default function RegisterCase({
       } catch {
         /* ignore */
       }
+      setDraftAutosavedAt(null);
       toast({ title: "Case registered successfully" });
       setLocation(onSuccessRedirect);
     },
@@ -1424,15 +1491,7 @@ export default function RegisterCase({
     }
     const selected = Array.from(files);
     for (const file of selected) {
-      const mime = (file.type || "").toLowerCase();
-      const ext = file.name.match(/\.[^.]+$/);
-      const extLower = (ext?.[0] || "").toLowerCase();
-      const extOk = [".jpg", ".jpeg", ".png"].includes(extLower);
-      const mimeOk =
-        ["image/jpeg", "image/jpg", "image/png", "image/pjpeg", "image/x-png"].includes(mime) ||
-        mime === "" || // some Windows pickers leave type empty
-        mime === "application/octet-stream"; // some systems use this for .jpg
-      if (!mimeOk || !extOk) {
+      if (!isAllowedCaseAttachmentImage(file)) {
         toast({
           title: "Invalid file type",
           description: "Only JPG, JPEG, and PNG images are allowed.",
@@ -1440,17 +1499,39 @@ export default function RegisterCase({
         });
         return;
       }
-      if (file.size > 1024 * 1024) {
+      if (file.size > CASE_ATTACHMENT_MAX_INPUT_BYTES) {
         toast({
           title: "File too large",
-          description: `${file.name} is over 1MB. Please compress and retry.`,
+          description: `${file.name} is over 5MB.`,
           variant: "destructive",
         });
         return;
       }
     }
+
+    let prepared: File[];
+    setCompressingTreatmentAttachments(true);
+    setTreatmentUploadProgress(-1);
+    try {
+      prepared = await compressCaseAttachmentImages(selected);
+    } catch (error) {
+      setCompressingTreatmentAttachments(false);
+      setTreatmentUploadProgress(null);
+      toast({
+        title: "Could not prepare image(s)",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+      return;
+    }
+    setCompressingTreatmentAttachments(false);
+
+    const compressedCount = prepared.filter(
+      (f, i) => f.size < selected[i]!.size || f.name !== selected[i]!.name,
+    ).length;
+
     const category = source === "handwritten" ? "handwritten" : "diagnostic";
-    const optimistic: TempCaseAttachment[] = selected.map((file) => {
+    const optimistic: TempCaseAttachment[] = prepared.map((file) => {
       treatmentOptimisticIdRef.current -= 1;
       return {
         id: treatmentOptimisticIdRef.current,
@@ -1468,7 +1549,7 @@ export default function RegisterCase({
     const optimisticIds = new Set(optimistic.map((o) => o.id));
     try {
       const formData = new FormData();
-      for (const file of selected) formData.append("files", file);
+      for (const file of prepared) formData.append("files", file);
       formData.append("sectionKey", "treatment");
       formData.append("category", category);
       const payload = await postFormDataWithProgress<{ files: TempCaseAttachment[] }>(
@@ -1481,7 +1562,13 @@ export default function RegisterCase({
         const without = prev.filter((a) => !optimisticIds.has(a.id));
         return [...without, ...(payload.files ?? [])];
       });
-      toast({ title: "Image(s) uploaded" });
+      toast({
+        title: "Image(s) uploaded",
+        description:
+          compressedCount > 0
+            ? `${compressedCount} image${compressedCount === 1 ? "" : "s"} optimized for upload.`
+            : undefined,
+      });
       if (treatmentFileInputRef.current) treatmentFileInputRef.current.value = "";
       if (treatmentCaptureInputRef.current) treatmentCaptureInputRef.current.value = "";
     } catch (error) {
@@ -1680,11 +1767,9 @@ export default function RegisterCase({
           if (normalized === "mortality") return !avianMortality.trim();
         }
         if (normalized === "testssuggested") return testsSuggested.length === 0;
-        if (normalized === "enzymepaneltests" && hasMainSuggestedTest(testsSuggested, "enzymepanel")) {
-          return enzymePanelTests.length === 0;
-        }
-        if (normalized === "rapiddiagnostictests" && hasMainSuggestedTest(testsSuggested, "rapiddiagnostictest")) {
-          return rapidDiagnosticTests.length === 0;
+        const panelDef = testsPanelDefsByKey.get(q.key);
+        if (panelDef && hasMainSuggestedTest(testsSuggested, panelDef.mainKeyword)) {
+          return getPanelAnswerList(q.key).length === 0;
         }
         if (normalized === "xraydetails" && hasMainSuggestedTest(testsSuggested, "xray")) {
           return !xrayDetails.trim();
@@ -1831,16 +1916,15 @@ export default function RegisterCase({
     if (isQuestionEnabled("testsSuggested") && testsSuggested.length > 0) {
       normalizedCustomAnswers.testsSuggested = testsSuggested.map((v) => toEnglishSentence(v));
     }
-    if (hasMainSuggestedTest(testsSuggested, "enzymepanel") && isQuestionEnabled("enzymePanelTests")) {
-      if (enzymePanelTests.length > 0) {
-        normalizedCustomAnswers.enzymePanelTests = enzymePanelTests.map((v) => toEnglishSentence(v));
-      }
-    }
-    if (hasMainSuggestedTest(testsSuggested, "rapiddiagnostictest") && isQuestionEnabled("rapidDiagnosticTests")) {
-      if (rapidDiagnosticTests.length > 0) {
-        normalizedCustomAnswers.rapidDiagnosticTests = rapidDiagnosticTests.map((v) =>
-          toEnglishSentence(v),
-        );
+    for (const def of testsPanelDefs) {
+      if (
+        hasMainSuggestedTest(testsSuggested, def.mainKeyword) &&
+        isQuestionEnabled(def.panelKey)
+      ) {
+        const vals = getPanelAnswerList(def.panelKey);
+        if (vals.length > 0) {
+          normalizedCustomAnswers[def.panelKey] = vals.map((v) => toEnglishSentence(v));
+        }
       }
     }
     if (hasMainSuggestedTest(testsSuggested, "xray") && isQuestionEnabled("xrayDetails") && xrayDetails.trim()) {
@@ -1876,12 +1960,18 @@ export default function RegisterCase({
         : toEnglishSentence(raw.trim());
     }
 
-    if (treatmentAttachments.some((a) => a.pending) || uploadingTreatmentAttachments) {
+    if (
+      treatmentAttachments.some((a) => a.pending) ||
+      uploadingTreatmentAttachments ||
+      compressingTreatmentAttachments
+    ) {
       toast({
         title: "Please wait for images to finish uploading",
-        description: treatmentAttachments.some((a) => a.pending)
-          ? "One or more attachments are still being saved to the server."
-          : undefined,
+        description: compressingTreatmentAttachments
+          ? "Images are being optimized for upload."
+          : treatmentAttachments.some((a) => a.pending)
+            ? "One or more attachments are still being saved to the server."
+            : undefined,
         variant: "destructive",
       });
       return;
@@ -2144,8 +2234,8 @@ export default function RegisterCase({
     });
     if (testsSuggestedSectionIndex >= 0) {
       const targetSection = nextSections[testsSuggestedSectionIndex];
-      const filteredExisting = (targetSection.questions ?? []).filter(
-        (q) => !isLegacyTestsSuggestedTextareaQuestion({ ...q, sectionKey: targetSection.key }),
+      const filteredExisting = (targetSection.questions ?? []).filter((q) =>
+        shouldIncludeTestsSuggestedFormQuestion(q),
       );
       const existingKeys = new Set(filteredExisting.map((q) => normalizeQuestionId(q.key)));
       const missingQuestions = testsSuggestedQuestionBlueprint.filter(
@@ -2240,6 +2330,27 @@ export default function RegisterCase({
     }
     return map;
   }, [enabledSections]);
+
+  const registerJumpSections = useMemo(() => {
+    const items: { id: string; label: string }[] = [
+      { id: "register-section-registration", label: "Registration" },
+    ];
+    for (const s of enabledSections) {
+      if (mode === "hospital" && s.key === "sample") continue;
+      if (mode === "hospital" && s.key === "avian" && !isAvianSpecies) continue;
+      items.push({ id: `register-section-${s.key}`, label: s.title });
+    }
+    return items;
+  }, [enabledSections, mode, isAvianSpecies]);
+
+  const scrollToRegisterSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+  };
 
   const renderCustomQuestion = (q: NonNullable<FormDefinition["sections"]>[number]["questions"][number]) => {
     const value = customAnswers[q.key] ?? "";
@@ -2787,7 +2898,8 @@ export default function RegisterCase({
               <div>
                 <p className="text-sm font-medium">Treatment attachments</p>
                 <p className="text-xs text-muted-foreground">
-                  Add up to 10 images (JPG/JPEG/PNG, max 1MB each).
+                  Add up to 10 images (JPG/JPEG/PNG, up to 5MB each). Larger photos are
+                  automatically optimized to under 1MB before upload.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -2798,7 +2910,7 @@ export default function RegisterCase({
                   multiple
                   className="sr-only"
                   onChange={(e) => uploadTreatmentAttachments(e.target.files, "diagnostic")}
-                  disabled={uploadingTreatmentAttachments}
+                  disabled={treatmentAttachmentBusy}
                 />
                 <input
                   ref={treatmentCaptureInputRef}
@@ -2808,14 +2920,14 @@ export default function RegisterCase({
                   multiple
                   className="sr-only"
                   onChange={(e) => uploadTreatmentAttachments(e.target.files, "handwritten")}
-                  disabled={uploadingTreatmentAttachments}
+                  disabled={treatmentAttachmentBusy}
                 />
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  disabled={uploadingTreatmentAttachments}
+                  disabled={treatmentAttachmentBusy}
                   onClick={() => treatmentFileInputRef.current?.click()}
                 >
                   <Upload className="w-3.5 h-3.5" />
@@ -2826,7 +2938,7 @@ export default function RegisterCase({
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  disabled={uploadingTreatmentAttachments}
+                  disabled={treatmentAttachmentBusy}
                   onClick={() => treatmentCaptureInputRef.current?.click()}
                 >
                   <Camera className="w-3.5 h-3.5" />
@@ -2846,7 +2958,11 @@ export default function RegisterCase({
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {treatmentUploadProgress < 0 ? "Uploading…" : `${treatmentUploadProgress}% uploaded`}
+                    {compressingTreatmentAttachments
+                      ? "Optimizing image(s)…"
+                      : treatmentUploadProgress < 0
+                        ? "Uploading…"
+                        : `${treatmentUploadProgress}% uploaded`}
                   </p>
                 </div>
               )}
@@ -2884,7 +3000,7 @@ export default function RegisterCase({
                           aria-label={`Remove ${attachment.fileName}`}
                           disabled={
                             removingTreatmentAttachmentId === attachment.id ||
-                            uploadingTreatmentAttachments
+                            treatmentAttachmentBusy
                           }
                           onClick={(e) => {
                             e.stopPropagation();
@@ -3174,63 +3290,101 @@ export default function RegisterCase({
   }, [mode, hospitalToggleDefaults]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Restore-draft banner — only shown when localStorage has a recent
-          autosaved form for this scope (autosave fires every ~750ms while
-          typing; cleared on successful submit). */}
-      {draftPrompt && (
-        <div
-          className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-          role="status"
-        >
-          <span className="font-medium">Unsaved draft from</span>
-          <span title={new Date(draftPrompt.savedAt).toLocaleString()}>
-            {new Date(draftPrompt.savedAt).toLocaleString()}
-          </span>
-          <span className="text-amber-700">
-            Continue where you left off, or discard it.
-          </span>
-          <div className="ml-auto flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => applyDraft(draftPrompt)}
-              data-testid="button-restore-draft"
+    <StickyScrollPage
+      sticky={
+        <div className="space-y-3">
+          {/* Restore-draft banner — only shown when localStorage has a recent
+              autosaved form for this scope (autosave fires every ~750ms while
+              typing; cleared on successful submit). */}
+          {draftPrompt && (
+            <div
+              className="flex flex-wrap items-center gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              role="status"
             >
-              Restore
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={discardDraft}
-              data-testid="button-discard-draft"
-            >
-              Discard
-            </Button>
+              <span className="font-medium">Unsaved draft from</span>
+              <span title={new Date(draftPrompt.savedAt).toLocaleString()}>
+                {new Date(draftPrompt.savedAt).toLocaleString()}
+              </span>
+              <span className="text-amber-700">
+                Continue where you left off, or discard it.
+              </span>
+              <div className="ml-auto flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => applyDraft(draftPrompt)}
+                  data-testid="button-restore-draft"
+                >
+                  Restore
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={discardDraft}
+                  data-testid="button-discard-draft"
+                >
+                  Discard
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <Link href={backHref}>
+              <Button variant="ghost" size="icon" data-testid="button-back">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg font-semibold" data-testid="text-page-title">
+                {pageTitle}
+              </h1>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
+                <span>Case #{displayCaseNumber}</span>
+                <span>Day #{caseInfo?.dailyNumber || "..."}</span>
+                <span>Month #{caseInfo?.monthlyNumber || "..."}</span>
+                <span>Year #{caseInfo?.yearlyNumber || "..."}</span>
+              </div>
+            </div>
+          </div>
+          {!draftPrompt && draftAutosavedAt && (
+            <p className="text-[11px] text-muted-foreground" role="status">
+              Draft saved locally {new Date(draftAutosavedAt).toLocaleTimeString()}.
+            </p>
+          )}
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  data-testid="button-jump-to-section"
+                >
+                  Jump to section
+                  <ChevronDown className="w-4 h-4 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="max-h-[min(70vh,24rem)] w-[min(20rem,calc(100vw-2rem))]"
+              >
+                {registerJumpSections.map((j) => (
+                  <DropdownMenuItem
+                    key={j.id}
+                    className="cursor-pointer"
+                    onSelect={() => scrollToRegisterSection(j.id)}
+                  >
+                    {j.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-      )}
-
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href={backHref}>
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-lg font-semibold" data-testid="text-page-title">
-            {pageTitle}
-          </h1>
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
-            <span>Case #{displayCaseNumber}</span>
-            <span>Day #{caseInfo?.dailyNumber || "..."}</span>
-            <span>Month #{caseInfo?.monthlyNumber || "..."}</span>
-            <span>Year #{caseInfo?.yearlyNumber || "..."}</span>
-          </div>
-        </div>
-      </div>
-
+      }
+    >
       <form onSubmit={handleSubmit} className="space-y-6">
         <Card>
           <CardContent className="pt-4 pb-3 space-y-3">
@@ -3261,7 +3415,7 @@ export default function RegisterCase({
         </Card>
 
         {/* Registration / Bill Number */}
-        <Card>
+        <Card id="register-section-registration" className="scroll-mt-28">
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Registration</CardTitle>
           </CardHeader>
@@ -3301,8 +3455,12 @@ export default function RegisterCase({
           const hasTestsSuggestedMultiSelect = configuredQuestions.some(
             (q) => normalizeQuestionId(q.key) === "testssuggested" && q.inputType === "multiSelect",
           );
+          const isTestsSuggestedSection =
+            isTestsSuggestedSectionTitle(section.title) ||
+            testsSuggestedSectionKeys.has(section.key) ||
+            isTestsSuggestedSectionKey(section.key, section.title);
           const visibleQuestions = configuredQuestions.filter((q) => {
-            if (isLegacyTestsSuggestedTextareaQuestion({ ...q, sectionKey: section.key })) {
+            if (isTestsSuggestedSection && !shouldIncludeTestsSuggestedFormQuestion(q)) {
               return false;
             }
             if (
@@ -3311,6 +3469,18 @@ export default function RegisterCase({
               q.inputType === "textarea"
             ) {
               return false;
+            }
+            if (isTestsSuggestedSection && isDetailSubQuestionKey(q.key)) {
+              const parentKeyword = detailFieldParentKeyword(q.key);
+              if (parentKeyword && !hasMainSuggestedTest(testsSuggested, parentKeyword)) {
+                return false;
+              }
+            }
+            if (isTestsSuggestedSection && isTestsSuggestedPanelSubQuestion(q)) {
+              const panelDef = resolvePanelDefForKey(q.key, testsPanelDefsByKey);
+              if (!panelDef || !hasMainSuggestedTest(testsSuggested, panelDef.mainKeyword)) {
+                return false;
+              }
             }
             return (
               (q.inputType === "treatment_prescription" ||
@@ -3333,7 +3503,7 @@ export default function RegisterCase({
             const astQuestion = visibleQuestions.find((q) => q.key === "astResults");
             const astIsRequired = Boolean(astQuestion?.required);
             return (
-              <div key={section.key} className="space-y-6">
+              <div key={section.key} id={`register-section-${section.key}`} className="space-y-6 scroll-mt-28">
         <Card>
           <CardHeader className="pb-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -3535,7 +3705,7 @@ export default function RegisterCase({
           }
 
           return (
-            <Card key={section.key}>
+            <Card key={section.key} id={`register-section-${section.key}`} className="scroll-mt-28">
           <CardHeader className="pb-4">
                 <CardTitle className="text-base">{section.title}</CardTitle>
           </CardHeader>
@@ -3593,6 +3763,32 @@ export default function RegisterCase({
                   {visibleQuestions.map((q) => {
                     const required = q.required;
                     const showLabel = !q.hideLabel;
+                    if (isTestsSuggestedSection && isTestsSuggestedPanelSubQuestion(q)) {
+                      const panelDef = resolvePanelDefForKey(q.key, testsPanelDefsByKey);
+                      if (!panelDef || !hasMainSuggestedTest(testsSuggested, panelDef.mainKeyword)) {
+                        return null;
+                      }
+                      const options = getQuestionOptions(q.key, []);
+                      const selected = getPanelAnswerList(q.key);
+                      return (
+                        <div className="space-y-1.5 sm:col-span-2" key={q.key}>
+                          <Label>
+                            {panelDef.mainLabel}
+                            {required && <span className="text-destructive">*</span>}
+                          </Label>
+                          <ToggleGrid
+                            options={options}
+                            selected={selected}
+                            onToggle={(opt, checked) => {
+                              const next = checked
+                                ? [...selected, opt]
+                                : selected.filter((v) => v !== opt);
+                              setPanelAnswerList(q.key, next);
+                            }}
+                          />
+                        </div>
+                      );
+                    }
                     if (q.inputType === "treatment_prescription" || q.inputType === "hospital_veterinarian") {
                       return renderCustomQuestion(q);
                     }
@@ -4104,7 +4300,7 @@ export default function RegisterCase({
                         );
                       case "testsSuggested": {
                         const testsPromptLabel = "Please select the required tests";
-                        const options = getQuestionOptions("testsSuggested", [
+                        const options = getTestsSuggestedMainOptions([
                           "Complete Blood Count (CBC)",
                           "Enzyme Panel Test",
                           "Fecal Test",
@@ -4133,63 +4329,6 @@ export default function RegisterCase({
                                   ? [...testsSuggested, opt]
                                   : testsSuggested.filter((v) => v !== opt);
                                 setTestsSuggested(next);
-                              }}
-                            />
-                          </div>
-                        );
-                      }
-                      case "enzymePanelTests": {
-                        if (!hasMainSuggestedTest(testsSuggested, "enzymepanel")) return null;
-                        const options = getQuestionOptions("enzymePanelTests", [
-                          "Liver Function Test (LFT)",
-                          "Kidney Function Test (KFT)",
-                          "Thyroid Test",
-                        ]);
-                        return (
-                          <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            {showLabel && (
-                              <Label>
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
-                            )}
-                            <ToggleGrid
-                              options={options}
-                              selected={enzymePanelTests}
-                              onToggle={(opt, checked) => {
-                                const next = checked
-                                  ? [...enzymePanelTests, opt]
-                                  : enzymePanelTests.filter((v) => v !== opt);
-                                setEnzymePanelTests(next);
-                              }}
-                            />
-                          </div>
-                        );
-                      }
-                      case "rapidDiagnosticTests": {
-                        if (!hasMainSuggestedTest(testsSuggested, "rapiddiagnostictest")) return null;
-                        const options = getQuestionOptions("rapidDiagnosticTests", [
-                          "Parvo",
-                          "Distemper",
-                          "Rabies",
-                          "Anaplasma",
-                          "Babesia",
-                          "Ehrlichia",
-                        ]);
-                        return (
-                          <div className="space-y-1.5 sm:col-span-2" key={q.key}>
-                            {showLabel && (
-                              <Label>
-                                {q.label} {required && <span className="text-destructive">*</span>}
-                              </Label>
-                            )}
-                            <ToggleGrid
-                              options={options}
-                              selected={rapidDiagnosticTests}
-                              onToggle={(opt, checked) => {
-                                const next = checked
-                                  ? [...rapidDiagnosticTests, opt]
-                                  : rapidDiagnosticTests.filter((v) => v !== opt);
-                                setRapidDiagnosticTests(next);
                               }}
                             />
                           </div>
@@ -4322,6 +4461,15 @@ export default function RegisterCase({
                           </div>
                         );
                       default:
+                        if (
+                          mode === "hospital" &&
+                          isTestsSuggestedSection &&
+                          (isDetailSubQuestionKey(q.key) ||
+                            isTestsSuggestedPanelSubQuestion(q) ||
+                            resolvePanelDefForKey(q.key, testsPanelDefsByKey) !== null)
+                        ) {
+                          return null;
+                        }
                         if (mode === "hospital" && isHospitalBuiltinQuestionKeyOrLabel(q.key, q.label, section.key)) {
                           const normalized = normalizeQuestionId(q.key || q.label || "");
                           if (normalized.includes("temperature")) {
@@ -4695,6 +4843,6 @@ export default function RegisterCase({
           </Button>
         </div>
       </form>
-    </div>
+    </StickyScrollPage>
   );
 }

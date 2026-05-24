@@ -37,12 +37,17 @@ function resolveDbFileForSecretLocation(): string {
  *   `assertProductionAttachmentSigningConfigured`).
  *
  * TTL:
- *   Override with `ATTACHMENT_SIGNING_TTL_MS` (60000–86400000). Default 30 minutes.
+ *   Override with `ATTACHMENT_SIGNING_TTL_MS` (60000–86400000). Default 15 minutes.
+ *
+ * Audience (`uid`):
+ *   Signatures include the user id that was authorized to view the attachment.
+ *   The download handler rejects URLs when `uid` does not match the HMAC payload,
+ *   so a link minted for user A cannot be retargeted to user B by changing the query.
  */
 
 const SECRET_FILENAME = ".attachment-signing-secret";
 
-const DEFAULT_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_TTL_MS = 15 * 60 * 1000;
 const MIN_TTL_MS = 60 * 1000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -112,32 +117,37 @@ function loadOrCreateSecret(): Buffer {
   return cachedSecret;
 }
 
-function computeSignature(id: number, expiresAtIso: string): string {
+function computeSignature(id: number, userId: number, expiresAtIso: string): string {
   const secret = loadOrCreateSecret();
   return crypto
     .createHmac("sha256", secret)
-    .update(`${id}:${expiresAtIso}`)
+    .update(`${id}:${userId}:${expiresAtIso}`)
     .digest("hex");
 }
 
-/** Returns a relative signed URL like `/api/case-attachments/123?t=...&sig=...`. */
-export function signAttachmentDownloadUrl(attachmentId: number): string {
+/** Returns a relative signed URL like `/api/case-attachments/123?uid=…&t=…&sig=…`. */
+export function signAttachmentDownloadUrl(attachmentId: number, userId: number): string {
   const expiresAt = new Date(Date.now() + getSigningTtlMs()).toISOString();
-  const sig = computeSignature(attachmentId, expiresAt);
-  const params = new URLSearchParams({ t: expiresAt, sig });
+  const sig = computeSignature(attachmentId, userId, expiresAt);
+  const params = new URLSearchParams({
+    uid: String(userId),
+    t: expiresAt,
+    sig,
+  });
   return `/api/case-attachments/${attachmentId}?${params.toString()}`;
 }
 
-/** Verifies (id, t, sig) — returns true iff signature matches and t is not in the past. */
+/** Verifies (id, uid, t, sig) — returns true iff signature matches and t is not in the past. */
 export function verifyAttachmentSignature(
   attachmentId: number,
+  userId: number,
   expiresAtIso: string,
   signature: string,
 ): boolean {
-  if (!expiresAtIso || !signature) return false;
+  if (!expiresAtIso || !signature || !Number.isInteger(userId) || userId < 1) return false;
   const ts = Date.parse(expiresAtIso);
   if (!Number.isFinite(ts) || ts < Date.now()) return false;
-  const expected = computeSignature(attachmentId, expiresAtIso);
+  const expected = computeSignature(attachmentId, userId, expiresAtIso);
   const a = Buffer.from(signature, "hex");
   const b = Buffer.from(expected, "hex");
   if (a.length !== b.length) return false;

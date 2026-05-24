@@ -1,4 +1,5 @@
-import type { Express } from "express";
+import type { Express, RequestHandler } from "express";
+import multer from "multer";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
 import {
@@ -26,6 +27,40 @@ import {
   ensureHospitalVeterinarianDefinition,
   mergeOrphanFormSections,
 } from "../hospital-form-definition";
+import { parseMedicationImportFile } from "../medication-import-parse";
+import type { ParsedMedicationRow } from "../medication-import-parse";
+import {
+  isBuiltinTestsSuggestedQuestionKey,
+  isTestsSuggestedSectionKey,
+  mainKeywordFromLabel,
+  panelSubQuestionKeyFromLabel,
+  parseTestsSuggestedOptions,
+  serializeTestsSuggestedOptions,
+  shouldIncludeTestsSuggestedFormQuestion,
+} from "@shared/hospital-tests-suggested";
+
+const PROTECTED_PANEL_KEYS = new Set(["enzymePanelTests", "rapidDiagnosticTests"]);
+
+function dedupeMedicationImportRows(rows: ParsedMedicationRow[]): ParsedMedicationRow[] {
+  const m = new Map<string, ParsedMedicationRow>();
+  for (const r of rows) {
+    m.set(r.name.toLowerCase(), r);
+  }
+  return Array.from(m.values());
+}
+
+const medicationImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const n = file.originalname.toLowerCase();
+    if (n.endsWith(".csv") || n.endsWith(".xlsx")) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Only .csv and .xlsx files are allowed"));
+  },
+});
 
 function slugifyKey(input: string) {
   return input
@@ -193,41 +228,43 @@ export function registerAdminRoutes(app: Express) {
           WHERE status = ${"pending"}
           ORDER BY created_at DESC`,
     );
-    const pendingDownloads = await Promise.all(
-      pendingDownloadRows.map(async (row) => {
-        const requester = await authSessionRepo.getUserById(row.user_id);
-        return {
-          baseKey: `download-request:${row.id}`,
-          type: "download-request" as const,
-          title: "Pending download request",
-          message: `${requester?.fullName || "Unknown user"} requested ${
-            row.request_source === "hospital_case" ? "hospital" : "AST"
-          } data download.`,
-          href: `/admin?tab=downloads&focus=download-${row.id}`,
-          createdAt: row.created_at,
-        };
-      }),
-    );
-
     const pendingResetRows = await dbAll<PasswordResetRequestRow>(
       sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
           FROM password_reset_requests
           WHERE status = ${"pending"}
           ORDER BY created_at DESC`,
     );
-    const pendingResets = await Promise.all(
-      pendingResetRows.map(async (row) => {
-        const requester = await authSessionRepo.getUserById(row.user_id);
-        return {
-          baseKey: `password-reset:${row.id}`,
-          type: "password-reset" as const,
-          title: "Pending password reset request",
-          message: `${requester?.fullName || "Unknown user"} requested password reset.`,
-          href: `/admin?tab=password-resets&focus=reset-${row.id}`,
-          createdAt: row.created_at,
-        };
-      }),
-    );
+    const notifyUserIds = [
+      ...pendingDownloadRows.map((r) => r.user_id),
+      ...pendingResetRows.map((r) => r.user_id),
+    ];
+    const userDisplayMap = await authSessionRepo.getUserDisplayByIds(notifyUserIds);
+
+    const pendingDownloads = pendingDownloadRows.map((row) => {
+      const requester = userDisplayMap.get(row.user_id);
+      return {
+        baseKey: `download-request:${row.id}`,
+        type: "download-request" as const,
+        title: "Pending download request",
+        message: `${requester?.fullName || "Unknown user"} requested ${
+          row.request_source === "hospital_case" ? "hospital" : "AST"
+        } data download.`,
+        href: `/admin?tab=downloads&focus=download-${row.id}`,
+        createdAt: row.created_at,
+      };
+    });
+
+    const pendingResets = pendingResetRows.map((row) => {
+      const requester = userDisplayMap.get(row.user_id);
+      return {
+        baseKey: `password-reset:${row.id}`,
+        type: "password-reset" as const,
+        title: "Pending password reset request",
+        message: `${requester?.fullName || "Unknown user"} requested password reset.`,
+        href: `/admin?tab=password-resets&focus=reset-${row.id}`,
+        createdAt: row.created_at,
+      };
+    });
 
     const baseItems = [...pendingUsers, ...pendingDownloads, ...pendingResets].sort((a, b) =>
       String(b.createdAt).localeCompare(String(a.createdAt)),
@@ -404,6 +441,14 @@ export function registerAdminRoutes(app: Express) {
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
       }
+      // Only a Super Admin can change Super Admin visibility. Otherwise a
+      // regular admin could hide the Super Admin dashboard and lock the
+      // owner out (the audit flagged this as H-11).
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin dashboard visibility" });
+      }
       await dbRun(
         sql`INSERT INTO role_feature_visibility (role, dashboard_visible, updated_at)
             VALUES (${role}, ${dashboardVisible ? 1 : 0}, ${new Date().toISOString()})
@@ -439,6 +484,11 @@ export function registerAdminRoutes(app: Express) {
       const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
       if (!allowedRoles.includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin dashboard visibility" });
       }
       try {
         await dbGet(sql`SELECT vth_dashboard_visible FROM role_feature_visibility LIMIT 1`);
@@ -516,18 +566,27 @@ export function registerAdminRoutes(app: Express) {
           key: s.key,
           title: s.title,
           displayOrder: s.display_order,
-          questions: (bySection.get(s.key) ?? []).map((q) => ({
-            id: q.id,
-            key: q.key,
-            label: q.label,
-            inputType: q.input_type,
-            options: q.options_json ? JSON.parse(q.options_json) : [],
-            enabled: Boolean(q.enabled),
-            required: Boolean(q.required),
-            hideLabel: Boolean(q.hide_label),
-            displayOrder: q.display_order,
-            isBuiltin: Boolean(q.is_builtin),
-          })),
+          questions: (bySection.get(s.key) ?? [])
+            .filter((q) => {
+              if (!isTestsSuggestedSectionKey(s.key, s.title)) return true;
+              return shouldIncludeTestsSuggestedFormQuestion({
+                key: q.key,
+                label: q.label,
+                inputType: q.input_type,
+              });
+            })
+            .map((q) => ({
+              id: q.id,
+              key: q.key,
+              label: q.label,
+              inputType: q.input_type,
+              options: q.options_json ? JSON.parse(q.options_json) : [],
+              enabled: Boolean(q.enabled),
+              required: Boolean(q.required),
+              hideLabel: Boolean(q.hide_label),
+              displayOrder: q.display_order,
+              isBuiltin: Boolean(q.is_builtin),
+            })),
         })),
       });
     },
@@ -713,20 +772,22 @@ export function registerAdminRoutes(app: Express) {
       if (!sectionKey || !label) {
         return res.status(400).json({ message: "sectionKey and label are required" });
       }
-      if (
-        ![
-          "text",
-          "textarea",
-          "number",
-          "singleSelect",
-          "multiSelect",
-          "yesNo",
-          "date",
-          "treatment_prescription",
-          "hospital_veterinarian",
-        ].includes(inputType)
-      ) {
-        return res.status(400).json({ message: "Unsupported inputType" });
+      const standardInputTypes = [
+        "text",
+        "textarea",
+        "number",
+        "singleSelect",
+        "multiSelect",
+        "yesNo",
+        "date",
+      ];
+      if (!standardInputTypes.includes(inputType)) {
+        return res.status(400).json({
+          message:
+            inputType === "treatment_prescription" || inputType === "hospital_veterinarian"
+              ? "Treatment/Prescription and Attending veterinarian are built-in section widgets, not addable question types."
+              : "Unsupported inputType",
+        });
       }
       if ((inputType === "singleSelect" || inputType === "multiSelect") && options.length < 2) {
         return res.status(400).json({ message: "At least 2 options are required" });
@@ -939,10 +1000,14 @@ export function registerAdminRoutes(app: Express) {
         sql`SELECT id, key, label, section_key, is_builtin FROM form_questions WHERE id = ${id} AND (form_scope = 'shared' OR form_scope = ${scope})`,
       );
       if (!question) return res.status(404).json({ message: "Question not found" });
-      if (Boolean(question.is_builtin)) {
+      if (isBuiltinTestsSuggestedQuestionKey(question.key) || question.is_builtin === 1) {
         return res.status(403).json({ message: "Built-in questions cannot be deleted" });
       }
-      const deleteQuestionResult = await dbRun(sql`DELETE FROM form_questions WHERE id = ${id} AND form_scope = ${scope}`);
+      const deleteQuestionResult = await dbRun(
+        sql`DELETE FROM form_questions
+            WHERE id = ${id}
+              AND (form_scope = 'shared' OR form_scope = ${scope})`,
+      );
       if (Number(deleteQuestionResult.changes ?? 0) === 0) {
         return res.status(404).json({ message: "Question not found" });
       }
@@ -1080,22 +1145,24 @@ export function registerAdminRoutes(app: Express) {
             ORDER BY created_at DESC
             LIMIT 100`,
           );
-      const enriched = await Promise.all(
-        rows.map(async (row) => {
-          const actor = await authSessionRepo.getUserById(row.actor_user_id);
-          return {
-            id: row.id,
-            actorUserId: row.actor_user_id,
-            actorRole: row.actor_role,
-            actorName: actor?.fullName || `User ${row.actor_user_id}`,
-            action: row.action,
-            targetKey: row.target_key,
-            oldValue: row.old_value,
-            newValue: row.new_value,
-            createdAt: row.created_at,
-          };
-        }),
+      const actorIds = Array.from(
+        new Set(rows.map((r) => r.actor_user_id).filter((id) => Number.isInteger(id) && id > 0)),
       );
+      const actorDisplay = await authSessionRepo.getUserDisplayByIds(actorIds);
+      const enriched = rows.map((row) => {
+        const actor = actorDisplay.get(row.actor_user_id);
+        return {
+          id: row.id,
+          actorUserId: row.actor_user_id,
+          actorRole: row.actor_role,
+          actorName: actor?.fullName || `User ${row.actor_user_id}`,
+          action: row.action,
+          targetKey: row.target_key,
+          oldValue: row.old_value,
+          newValue: row.new_value,
+          createdAt: row.created_at,
+        };
+      });
       res.json(enriched);
     },
   );
@@ -1110,6 +1177,138 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  const medicationImportMulter: RequestHandler = (req, res, next) => {
+    medicationImportUpload.single("file")(req, res, (err: unknown) => {
+      if (err) {
+        const msg = err instanceof Error ? err.message : "Invalid upload";
+        return res.status(400).json({ message: msg });
+      }
+      next();
+    });
+  };
+
+  const medicationImportHandler: RequestHandler = async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const file = (req as AuthenticatedRequest & { file?: Express.Multer.File }).file;
+    if (!file?.buffer) {
+      return res.status(400).json({ message: 'Missing file (multipart field "file")' });
+    }
+    const dryRun =
+      String((req.body as Record<string, unknown>)?.dryRun ?? "").toLowerCase() === "true" ||
+      (req.body as Record<string, unknown>)?.dryRun === true;
+    const onDuplicate =
+      String((req.body as Record<string, unknown>)?.onDuplicate ?? "skip") === "update"
+        ? "update"
+        : "skip";
+
+    const parsed = await parseMedicationImportFile(file.buffer, file.originalname);
+    const parseErrors = parsed.errors.filter((e) => e.row > 0);
+    const fileErrors = parsed.errors.filter((e) => e.row === 0);
+    const deduped = dedupeMedicationImportRows(parsed.rows);
+    const consolidated = parsed.rows.length - deduped.length;
+
+    const existing = await medicationRepo.getMedications();
+    const byLower = new Map(existing.map((e) => [e.name.toLowerCase(), e] as const));
+
+    let wouldCreate = 0;
+    let wouldUpdate = 0;
+    let wouldSkip = 0;
+    for (const r of deduped) {
+      const ex = byLower.get(r.name.toLowerCase());
+      if (!ex) wouldCreate++;
+      else if (onDuplicate === "update") wouldUpdate++;
+      else wouldSkip++;
+    }
+
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        fileErrors,
+        parseErrors,
+        consolidatedDuplicateRows: consolidated,
+        rowCount: deduped.length,
+        wouldCreate,
+        wouldUpdate,
+        wouldSkip,
+        sample: deduped.slice(0, 25),
+      });
+    }
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const applyErrors: Array<{ row: number; message: string }> = [];
+
+    for (const r of deduped) {
+      const ex = byLower.get(r.name.toLowerCase());
+      try {
+        if (!ex) {
+          const row = await medicationRepo.createMedication({
+            name: r.name,
+            description: null,
+            medicationClass: r.medicationClass,
+          });
+          byLower.set(r.name.toLowerCase(), row);
+          created++;
+        } else if (onDuplicate === "update") {
+          const sameClass = (ex.medicationClass ?? null) === (r.medicationClass ?? null);
+          if (sameClass) {
+            skipped++;
+            continue;
+          }
+          await medicationRepo.updateMedication(ex.id, {
+            name: ex.name,
+            description: ex.description ?? null,
+            medicationClass: r.medicationClass,
+          });
+          const next = await medicationRepo.getMedication(ex.id);
+          if (next) byLower.set(r.name.toLowerCase(), next);
+          updated++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        applyErrors.push({
+          row: r.rowNumber,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    await dbRun(
+      sql`INSERT INTO form_edit_audit_logs
+          (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+          VALUES (
+            ${currentUser.id},
+            ${currentUser.role},
+            ${"import_treatment_medications"},
+            ${"bulk"},
+            ${null},
+            ${JSON.stringify({ created, updated, skipped, applyErrors: applyErrors.slice(0, 50) })},
+            ${new Date().toISOString()}
+          )`,
+    );
+
+    return res.json({
+      dryRun: false,
+      created,
+      updated,
+      skipped,
+      fileErrors,
+      parseErrors,
+      consolidatedDuplicateRows: consolidated,
+      applyErrors,
+    });
+  };
+
+  app.post(
+    ["/api/admin/medications/import", "/api/admin/medications/bulk-import"],
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    medicationImportMulter,
+    medicationImportHandler,
+  );
+
   app.post(
     "/api/admin/medications",
     requireAuth,
@@ -1118,11 +1317,13 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const name = String(req.body?.name ?? "").trim();
       const description = String(req.body?.description ?? "").trim();
+      const medicationClass = String(req.body?.medicationClass ?? "").trim();
       if (!name) return res.status(400).json({ message: "Medication name is required" });
       try {
         const created = await medicationRepo.createMedication({
           name,
           description: description || null,
+          medicationClass: medicationClass || null,
         });
         await dbRun(
           sql`INSERT INTO form_edit_audit_logs
@@ -1154,14 +1355,24 @@ export function registerAdminRoutes(app: Express) {
     async (req, res) => {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const id = getIdParam(req);
-      const name = String(req.body?.name ?? "").trim();
-      const description = String(req.body?.description ?? "").trim();
+      const body = req.body as Record<string, unknown>;
+      const name = String(body?.name ?? "").trim();
       if (!name) return res.status(400).json({ message: "Medication name is required" });
       try {
         const before = await medicationRepo.getMedication(id);
+        if (!before) return res.status(404).json({ message: "Medication not found" });
+
+        const description = Object.hasOwn(body, "description")
+          ? String(body.description ?? "").trim() || null
+          : (before.description ?? null);
+        const medicationClass = Object.hasOwn(body, "medicationClass")
+          ? String(body.medicationClass ?? "").trim() || null
+          : (before.medicationClass ?? null);
+
         const updated = await medicationRepo.updateMedication(id, {
           name,
-          description: description || null,
+          description,
+          medicationClass,
         });
         if (!updated) return res.status(404).json({ message: "Medication not found" });
         await dbRun(
@@ -2148,6 +2359,11 @@ export function registerAdminRoutes(app: Express) {
 
       const ids = usersInBatch.map((user) => user.id);
       await dbRun(sql`DELETE FROM users WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+      // Revoke any active sessions held by the deleted users; without
+      // this they could keep using the app until their token expires.
+      for (const id of ids) {
+        await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      }
 
       await logAdminAction({
         actorUserId: currentUser.id,
@@ -2219,6 +2435,9 @@ export function registerAdminRoutes(app: Express) {
           sql`, `,
         )})`,
       );
+      for (const id of toDelete) {
+        await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      }
 
       await logAdminAction({
         actorUserId: currentUser.id,
@@ -2259,6 +2478,7 @@ export function registerAdminRoutes(app: Express) {
           .json({ message: "Only Super Admin can remove admins" });
       }
       await dbRun(sql`DELETE FROM users WHERE id = ${id}`);
+      await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
       res.json({ message: "User removed" });
     },
   );
@@ -2416,21 +2636,21 @@ export function registerAdminRoutes(app: Express) {
       const paged = pagination.shouldPaginate
         ? requests.slice(pagination.offset, pagination.offset + pagination.pageSize)
         : requests;
-      const enriched = await Promise.all(
-        paged.map(async (r) => {
-          const user = await authSessionRepo.getUserById(r.userId);
-          const resolver = r.resolvedBy
-            ? await authSessionRepo.getUserById(r.resolvedBy)
-            : undefined;
-          return {
-            ...r,
-            userName: user?.fullName || "Unknown",
-            userUsername: user?.username || "",
-            userDesignation: user?.designation || "",
-            resolverName: resolver?.fullName || "",
-          };
-        }),
+      const userIds = paged.flatMap((r) =>
+        [r.userId, r.resolvedBy].filter((id): id is number => id != null),
       );
+      const userDisplayMap = await authSessionRepo.getUserDisplayByIds(userIds);
+      const enriched = paged.map((r) => {
+        const user = userDisplayMap.get(r.userId);
+        const resolver = r.resolvedBy ? userDisplayMap.get(r.resolvedBy) : undefined;
+        return {
+          ...r,
+          userName: user?.fullName || "Unknown",
+          userUsername: user?.username || "",
+          userDesignation: user?.designation || "",
+          resolverName: resolver?.fullName || "",
+        };
+      });
       if (!pagination.shouldPaginate) {
         return res.json(enriched);
       }
@@ -2514,21 +2734,25 @@ export function registerAdminRoutes(app: Express) {
       const paged = pagination.shouldPaginate
         ? visible.slice(pagination.offset, pagination.offset + pagination.pageSize)
         : visible;
-      const enriched = await Promise.all(
-        paged.map(async (r) => {
-          const user = await authSessionRepo.getUserById(r.userId);
-          const resolver = r.resolvedBy
-            ? await authSessionRepo.getUserById(r.resolvedBy)
-            : undefined;
-          return {
-            ...r,
-            userName: user?.fullName || "Unknown",
-            userUsername: user?.username || "",
-            userRole: user?.role || r.requestedByRole,
-            resolverName: resolver?.fullName || "",
-          };
-        }),
+      const lookupIds = new Set<number>();
+      for (const r of paged) {
+        lookupIds.add(r.userId);
+        if (r.resolvedBy) lookupIds.add(r.resolvedBy);
+      }
+      const userDisplay = await authSessionRepo.getUserDisplayByIds(
+        Array.from(lookupIds),
       );
+      const enriched = paged.map((r) => {
+        const user = userDisplay.get(r.userId);
+        const resolver = r.resolvedBy ? userDisplay.get(r.resolvedBy) : undefined;
+        return {
+          ...r,
+          userName: user?.fullName || "Unknown",
+          userUsername: user?.username || "",
+          userRole: user?.role || r.requestedByRole,
+          resolverName: resolver?.fullName || "",
+        };
+      });
       if (!pagination.shouldPaginate) {
         return res.json(enriched);
       }
@@ -2682,19 +2906,15 @@ export function registerAdminRoutes(app: Express) {
       const actorIds = Array.from(
         new Set(rows.map((r) => r.actor_user_id).filter((v): v is number => Number.isFinite(v))),
       );
-      const actorMap = new Map<number, { fullName: string; username: string }>();
-      for (const id of actorIds) {
-        const u = await authSessionRepo.getUserById(id);
-        if (u) actorMap.set(id, { fullName: u.fullName, username: u.username });
-      }
+      const actorDisplay = await authSessionRepo.getUserDisplayByIds(actorIds);
 
       res.json(
         rows.map((row) => ({
           id: row.id,
           actorUserId: row.actor_user_id,
           actorRole: row.actor_role,
-          actorName: actorMap.get(row.actor_user_id)?.fullName ?? null,
-          actorUsername: actorMap.get(row.actor_user_id)?.username ?? null,
+          actorName: actorDisplay.get(row.actor_user_id)?.fullName ?? null,
+          actorUsername: actorDisplay.get(row.actor_user_id)?.username ?? null,
           actionType: row.action_type,
           targetType: row.target_type,
           targetId: row.target_id,
@@ -2702,6 +2922,208 @@ export function registerAdminRoutes(app: Express) {
           createdAt: row.created_at,
         })),
       );
+    },
+  );
+
+  app.post(
+    "/api/admin/tests-suggested-panels",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.body?.scope);
+      const sectionKey = String(req.body?.sectionKey ?? "tests_suggested").trim();
+      const mainLabel = String(req.body?.mainLabel ?? "").trim();
+      const subOptionsRaw = Array.isArray(req.body?.subOptions) ? req.body.subOptions : [];
+      const subOptions = subOptionsRaw
+        .map((v: unknown) => String(v ?? "").trim())
+        .filter(Boolean);
+      if (!mainLabel) {
+        return res.status(400).json({ message: "Main test name is required" });
+      }
+      if (subOptions.length < 1) {
+        return res.status(400).json({ message: "At least one sub-option is required" });
+      }
+
+      const mainQuestion = await dbGet<{
+        id: number;
+        key: string;
+        options_json: string | null;
+      }>(
+        sql`SELECT id, key, options_json FROM form_questions
+            WHERE section_key = ${sectionKey}
+              AND LOWER(key) IN ('testssuggested', 'testsuggested')
+              AND (form_scope = 'shared' OR form_scope = ${scope})
+            LIMIT 1`,
+      );
+      if (!mainQuestion) {
+        return res.status(404).json({ message: "Tests Suggested main question not found" });
+      }
+
+      let panelKey = String(req.body?.panelKey ?? "").trim() || panelSubQuestionKeyFromLabel(mainLabel);
+      const existingKeys = await dbAll<{ key: string }>(
+        sql`SELECT key FROM form_questions WHERE section_key = ${sectionKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
+      );
+      const keySet = new Set(existingKeys.map((r) => r.key));
+      if (keySet.has(panelKey)) {
+        panelKey = `${panelKey}_${Math.random().toString(36).slice(2, 6)}`;
+      }
+
+      const parsedOptions = parseTestsSuggestedOptions(
+        mainQuestion.options_json ? JSON.parse(mainQuestion.options_json) : [],
+      );
+      const mainNorm = mainKeywordFromLabel(mainLabel);
+      const alreadyListed = parsedOptions.some(
+        (opt) => mainKeywordFromLabel(typeof opt === "string" ? opt : opt.label) === mainNorm,
+      );
+      const nextOptions = alreadyListed
+        ? parsedOptions
+        : [
+            ...parsedOptions,
+            { type: "panel" as const, label: mainLabel, panelKey },
+          ];
+
+      await dbRun(
+        sql`UPDATE form_questions
+            SET options_json = ${JSON.stringify(serializeTestsSuggestedOptions(nextOptions))}
+            WHERE id = ${mainQuestion.id}`,
+      );
+
+      const existingSub = await dbGet<{ id: number }>(
+        sql`SELECT id FROM form_questions WHERE key = ${panelKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
+      );
+      if (!existingSub) {
+        const maxOrderRow = await dbGet<{ max: number }>(
+          sql`SELECT COALESCE(MAX(display_order), 0) as max FROM form_questions
+              WHERE section_key = ${sectionKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
+        );
+        const displayOrder = Number(maxOrderRow?.max ?? 0) + 1000;
+        await dbRun(
+          sql`INSERT INTO form_questions
+              (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at, form_scope)
+              VALUES (
+                ${panelKey},
+                ${sectionKey},
+                ${mainLabel},
+                ${"multiSelect"},
+                ${JSON.stringify(subOptions)},
+                ${1},
+                ${0},
+                ${0},
+                ${displayOrder},
+                ${0},
+                ${new Date().toISOString()},
+                ${scope}
+              )`,
+        );
+      } else {
+        await dbRun(
+          sql`UPDATE form_questions
+              SET options_json = ${JSON.stringify(subOptions)},
+                  label = ${mainLabel},
+                  hide_label = ${0},
+                  input_type = ${"multiSelect"}
+              WHERE key = ${panelKey} AND (form_scope = 'shared' OR form_scope = ${scope})`,
+        );
+      }
+
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"add_tests_suggested_panel"},
+              ${panelKey},
+              ${null},
+              ${JSON.stringify({ mainLabel, subOptions, sectionKey })},
+              ${new Date().toISOString()}
+            )`,
+      );
+
+      return res.status(201).json({
+        mainLabel,
+        panelKey,
+        subOptions,
+      });
+    },
+  );
+
+  app.delete(
+    "/api/admin/tests-suggested-panels/:panelKey",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scope = resolveFormScope(req.query.scope);
+      const sectionKey = String(req.query.sectionKey ?? "tests_suggested").trim();
+      const panelKey = String(req.params.panelKey ?? "").trim();
+      if (!panelKey) {
+        return res.status(400).json({ message: "panelKey is required" });
+      }
+      if (PROTECTED_PANEL_KEYS.has(panelKey)) {
+        return res.status(403).json({ message: "Built-in panels cannot be removed from here" });
+      }
+
+      const mainQuestion = await dbGet<{ id: number; options_json: string | null }>(
+        sql`SELECT id, options_json FROM form_questions
+            WHERE section_key = ${sectionKey}
+              AND LOWER(key) IN ('testssuggested', 'testsuggested')
+              AND (form_scope = 'shared' OR form_scope = ${scope})
+            LIMIT 1`,
+      );
+      if (!mainQuestion) {
+        return res.status(404).json({ message: "Tests Suggested main question not found" });
+      }
+
+      const parsed = parseTestsSuggestedOptions(
+        mainQuestion.options_json ? JSON.parse(mainQuestion.options_json) : [],
+      );
+      const panelEntry = parsed.find(
+        (opt) => typeof opt !== "string" && opt.type === "panel" && opt.panelKey === panelKey,
+      );
+      const removedMainLabel =
+        panelEntry && typeof panelEntry !== "string" ? panelEntry.label : null;
+      const removedMainKeyword = removedMainLabel
+        ? mainKeywordFromLabel(removedMainLabel)
+        : null;
+      const nextOptions = parsed.filter((opt) => {
+        if (typeof opt === "string") {
+          if (removedMainKeyword && mainKeywordFromLabel(opt) === removedMainKeyword) {
+            return false;
+          }
+          return true;
+        }
+        return opt.type !== "panel" || opt.panelKey !== panelKey;
+      });
+
+      await dbRun(
+        sql`UPDATE form_questions
+            SET options_json = ${JSON.stringify(serializeTestsSuggestedOptions(nextOptions))}
+            WHERE id = ${mainQuestion.id}`,
+      );
+      await dbRun(
+        sql`DELETE FROM form_questions
+            WHERE key = ${panelKey}
+              AND section_key = ${sectionKey}
+              AND (form_scope = 'shared' OR form_scope = ${scope})`,
+      );
+
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"delete_tests_suggested_panel"},
+              ${panelKey},
+              ${null},
+              ${JSON.stringify({ sectionKey })},
+              ${new Date().toISOString()}
+            )`,
+      );
+
+      return res.json({ message: "Panel removed", panelKey });
     },
   );
 }

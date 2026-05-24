@@ -19,6 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 export default function HospitalVeterinariansPage() {
   const { toast } = useToast();
@@ -93,21 +94,26 @@ export default function HospitalVeterinariansPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      <div className="flex items-center gap-3">
-        <Link href="/new-case/settings">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Veterinarians</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage attending veterinarians for hospital case registration (name, NVC no., department).
-          </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-3xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="flex items-center gap-3">
+          <Link href="/new-case/settings">
+            <Button variant="ghost" size="icon" data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Veterinarians</h1>
+            <p className="text-sm text-muted-foreground">
+              Manage attending veterinarians for hospital case registration (name, NVC no., department).
+            </p>
+          </div>
         </div>
-      </div>
-
+      }
+    >
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Add veterinarian</CardTitle>
@@ -214,6 +220,6 @@ export default function HospitalVeterinariansPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </StickyScrollPage>
   );
 }

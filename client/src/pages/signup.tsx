@@ -15,6 +15,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Microscope, UserPlus, CheckCircle, Eye, EyeOff } from "lucide-react";
 import { PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
 
 const DESIGNATIONS = [
   { value: "veterinarian", label: "Veterinarian" },
@@ -119,6 +120,19 @@ export default function SignupPage() {
     }
 
     setLoading(true);
+    let photoForSignup: File | null = profilePhotoFile;
+    if (profilePhotoFile) {
+      try {
+        photoForSignup = await compressProfilePhotoImage(profilePhotoFile);
+      } catch (err: unknown) {
+        setLoading(false);
+        toast({
+          title: err instanceof Error ? err.message : "Could not prepare photo",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     const result = await signup({
       fullName,
       address,
@@ -128,7 +142,7 @@ export default function SignupPage() {
       studentBatch: designation === "student" ? normalizedBatch : null,
       username,
       password,
-      profilePhotoFile,
+      profilePhotoFile: photoForSignup,
     });
     setLoading(false);
 
@@ -300,7 +314,7 @@ export default function SignupPage() {
                     data-testid="input-signup-profile-photo"
                   />
                   <p className="text-xs text-muted-foreground">
-                    JPEG, PNG, or WebP, up to 2 MB. Helps administrators confirm your identity when approving new accounts.
+                    JPEG, PNG, or WebP, up to 5MB each. Larger photos are automatically optimized to under 1MB before upload.
                   </p>
                   {photoPreviewUrl && (
                     <div className="flex items-center gap-3 pt-1">

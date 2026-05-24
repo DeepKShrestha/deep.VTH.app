@@ -1,7 +1,11 @@
 import { Link } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { casesListQueryKey, fetchCasesPage } from "@/lib/cases-list-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import {
   ArrowLeft,
   ClipboardPlus,
@@ -21,29 +25,42 @@ export default function AstReportHome() {
     isStudent,
   } = useAuth();
   const canRegisterAstFromHome = canRegisterAstCase && !isStudent;
+  const queryClient = useQueryClient();
+  const prefetchCaseHistory = () => {
+    void queryClient.prefetchQuery({
+      queryKey: casesListQueryKey("ast", "", "", "", "", 1, 20),
+      queryFn: () => fetchCasesPage("ast", "", "", "", "", 1, 20),
+    });
+  };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="rounded-2xl border bg-card px-5 py-5 sm:px-7 sm:py-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">AST Report Module</h1>
-            <p className="text-sm text-muted-foreground">
-              Access AST case registration, history, and downloads.
-            </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-1">
+          <PageBreadcrumbs items={[{ label: "Home", href: "/" }, { label: "AST module" }]} />
+          <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight">AST Report Module</h1>
+              <p className="text-sm text-muted-foreground">
+                Access AST case registration, history, and downloads.
+              </p>
+            </div>
+            <Link href="/">
+              <Button variant="outline" className="h-9 gap-2 w-full sm:w-auto shrink-0">
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Button>
+            </Link>
           </div>
-          <Link href="/">
-            <Button variant="outline" className="gap-2 w-full sm:w-auto">
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </Button>
-          </Link>
         </div>
-      </div>
-
+      }
+    >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {canRegisterAstFromHome && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <ClipboardPlus className="w-4 h-4 text-primary shrink-0" />
@@ -55,14 +72,14 @@ export default function AstReportHome() {
                 Register a new AST case with culture and sensitivity details.
               </p>
               <Link href="/register" className="mt-auto">
-                <Button className="w-full">Register AST Case</Button>
+                <Button className="w-full min-h-10 sm:min-h-9">Register AST Case</Button>
               </Link>
             </CardContent>
           </Card>
         )}
 
         {canViewAstCases && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <FolderSearch className="w-4 h-4 text-primary shrink-0" />
@@ -73,8 +90,13 @@ export default function AstReportHome() {
               <p className="text-sm text-muted-foreground">
                 Browse previously recorded AST cases and open details.
               </p>
-              <Link href="/ast-report/cases" className="mt-auto">
-                <Button className="w-full bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300">
+              <Link
+                href="/ast-report/cases"
+                className="mt-auto"
+                onMouseEnter={prefetchCaseHistory}
+                onFocus={prefetchCaseHistory}
+              >
+                <Button variant="outline" className="w-full min-h-10 sm:min-h-9">
                   View Previous Cases
                 </Button>
               </Link>
@@ -83,7 +105,7 @@ export default function AstReportHome() {
         )}
 
         {(canDownloadAst || isStudent) && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Download className="w-4 h-4 text-primary shrink-0" />
@@ -95,7 +117,7 @@ export default function AstReportHome() {
                 Export case data and generate downloadable reports.
               </p>
               <Link href="/export" className="mt-auto">
-                <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white">
+                <Button variant="secondary" className="w-full min-h-10 sm:min-h-9">
                   Open Export Tools
                 </Button>
               </Link>
@@ -104,7 +126,7 @@ export default function AstReportHome() {
         )}
 
         {canManageAstAdmin && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Settings2 className="w-4 h-4 text-primary shrink-0" />
@@ -116,7 +138,7 @@ export default function AstReportHome() {
                 Manage downloads and AST form settings in one place.
               </p>
               <Link href="/ast-report/settings" className="mt-auto">
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                <Button variant="secondary" className="w-full min-h-10 sm:min-h-9">
                   Open Settings
                 </Button>
               </Link>
@@ -125,7 +147,7 @@ export default function AstReportHome() {
         )}
 
         {canViewDashboard && (
-          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-primary shrink-0" />
@@ -137,7 +159,7 @@ export default function AstReportHome() {
                 View trends and summary insights from AST data.
               </p>
               <Link href="/dashboard" className="mt-auto">
-                <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
+                <Button variant="secondary" className="w-full min-h-10 sm:min-h-9">
                   Open Dashboard
                 </Button>
               </Link>
@@ -146,6 +168,6 @@ export default function AstReportHome() {
         )}
 
       </div>
-    </div>
+    </StickyScrollPage>
   );
 }

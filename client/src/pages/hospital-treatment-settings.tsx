@@ -5,6 +5,8 @@ import { ArrowLeft, Pill, Syringe, Clock3, Ruler, Timer } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { adToBs, formatAdDate, formatBsDate } from "@/lib/nepali-date";
 
 type FormEditLog = {
@@ -99,34 +101,46 @@ export default function HospitalTreatmentSettingsPage() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="rounded-2xl border bg-card px-5 py-5 sm:px-7 sm:py-6">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Link href="/new-case/settings">
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-            </Link>
-            <div className="space-y-1">
-              <h1 className="text-2xl font-semibold tracking-tight">Treatment Master Data Settings</h1>
-              <p className="text-sm text-muted-foreground">
-                Manage medication and prescription option catalogs used in hospital case registration.
-              </p>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-1">
+          <PageBreadcrumbs
+            items={[
+              { label: "Hospital", href: "/new-case" },
+              { label: "Settings", href: "/new-case/settings" },
+              { label: "Treatment data" },
+            ]}
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <Link href="/new-case/settings">
+                <Button variant="ghost" size="icon">
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </Link>
+              <div className="space-y-1 min-w-0">
+                <h1 className="text-2xl font-semibold tracking-tight">Treatment Master Data Settings</h1>
+                <p className="text-sm text-muted-foreground">
+                  Manage medication and prescription option catalogs used in hospital case registration.
+                </p>
+              </div>
             </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-9 shrink-0"
+              onClick={() => setShowLogTable((v) => !v)}
+            >
+              {showLogTable ? "Hide Edit Log" : "Edit Log"}
+            </Button>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => setShowLogTable((v) => !v)}
-            className="shrink-0"
-          >
-            {showLogTable ? "Hide Edit Log" : "Edit Log"}
-          </Button>
         </div>
-      </div>
-
+      }
+    >
       {showLogTable && (
         <Card>
           <CardHeader className="pb-3">
@@ -136,7 +150,7 @@ export default function HospitalTreatmentSettingsPage() {
               changed, and when.
             </p>
           </CardHeader>
-          <CardContent className="max-h-72 overflow-y-auto">
+          <CardContent className="max-h-72 overflow-y-auto relative">
             {isError ? (
               <p className="text-xs text-destructive">
                 Could not load edit log: {error instanceof Error ? error.message : "Unknown error"}
@@ -150,8 +164,8 @@ export default function HospitalTreatmentSettingsPage() {
               </p>
             ) : (
               <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b text-left">
+                <thead className="sticky top-0 z-10 bg-card border-b shadow-sm">
+                  <tr className="text-left bg-muted/40">
                     <th className="py-2 pr-3 font-medium">Date (AD / BS) & time</th>
                     <th className="py-2 pr-3 font-medium">Changed by</th>
                     <th className="py-2 font-medium">What changed</th>
@@ -189,7 +203,7 @@ export default function HospitalTreatmentSettingsPage() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Pill className="w-4 h-4 text-primary shrink-0" />
@@ -199,14 +213,14 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage medication records only.</p>
             <Link href="/new-case/settings/treatment/medications" className="mt-auto">
-              <Button className="w-full bg-sky-600 hover:bg-sky-700 text-white">
+              <Button className="w-full">
                 Open Medication Database
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Syringe className="w-4 h-4 text-primary shrink-0" />
@@ -216,14 +230,14 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage route records only.</p>
             <Link href="/new-case/settings/treatment/routes" className="mt-auto">
-              <Button className="w-full bg-orange-600 hover:bg-orange-700 text-white">
+              <Button className="w-full">
                 Open Route Options
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Clock3 className="w-4 h-4 text-primary shrink-0" />
@@ -233,14 +247,14 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage frequency records only.</p>
             <Link href="/new-case/settings/treatment/frequencies" className="mt-auto">
-              <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
+              <Button className="w-full">
                 Open Frequency Options
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Ruler className="w-4 h-4 text-primary shrink-0" />
@@ -250,14 +264,14 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage dose unit records only.</p>
             <Link href="/new-case/settings/treatment/dose-units" className="mt-auto">
-              <Button className="w-full bg-lime-600 hover:bg-lime-700 text-white">
+              <Button className="w-full">
                 Open Dose Units
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
+        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Timer className="w-4 h-4 text-primary shrink-0" />
@@ -267,13 +281,13 @@ export default function HospitalTreatmentSettingsPage() {
           <CardContent className="flex flex-1 flex-col gap-3">
             <p className="text-sm text-muted-foreground">Manage duration or day-range options used in prescriptions.</p>
             <Link href="/new-case/settings/treatment/durations" className="mt-auto">
-              <Button className="w-full bg-teal-600 hover:bg-teal-700 text-white">
+              <Button className="w-full">
                 Open Duration Options
               </Button>
             </Link>
           </CardContent>
         </Card>
       </div>
-    </div>
+    </StickyScrollPage>
   );
 }

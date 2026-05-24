@@ -28,6 +28,10 @@ export function buildTotpAuthUrl(params: {
 export function verifyTotpToken(secret: string, token: string): boolean {
   const cleaned = token.replace(/\s/g, "");
   if (!/^\d{6}$/.test(cleaned)) return false;
+  // otplib's `epochTolerance` is in seconds (period defaults to 30s). 30
+  // ≈ accepts the current step plus one on either side, which mirrors
+  // common authenticator-app drift. Tighter than this rejects legitimate
+  // codes near step boundaries; looser raises brute-force odds.
   const result = verifySync({
     secret,
     token: cleaned,

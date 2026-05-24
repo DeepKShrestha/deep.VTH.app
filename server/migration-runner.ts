@@ -3,13 +3,9 @@ import path from "node:path";
 import { sql } from "drizzle-orm";
 import { DB_PROVIDER } from "./db";
 import { dbAll, dbRun } from "./db-query";
+import { splitSqlStatements } from "./sql-statement-splitter";
 
-function splitSqlStatements(script: string): string[] {
-  return script
-    .split(/;\s*(?:\r?\n|$)/g)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+export { splitSqlStatements };
 
 async function ensureMigrationTable() {
   await dbRun(sql`CREATE TABLE IF NOT EXISTS schema_migrations (

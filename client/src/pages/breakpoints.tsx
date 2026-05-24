@@ -22,6 +22,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { ArrowLeft, Plus, Pencil, Trash2, RotateCcw, Upload } from "lucide-react";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 export default function BreakpointsPage() {
   const { toast } = useToast();
@@ -162,55 +163,59 @@ export default function BreakpointsPage() {
 
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Link href="/ast-report/settings"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
-          <div>
-            <h1 className="text-lg font-semibold">Breakpoint Data</h1>
-            <p className="text-sm text-muted-foreground">Manage antibiotic zone diameter interpretive criteria</p>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Link href="/ast-report/settings"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
+            <div>
+              <h1 className="text-lg font-semibold">Breakpoint Data</h1>
+              <p className="text-sm text-muted-foreground">Manage antibiotic zone diameter interpretive criteria</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                setCsvImportReport(null);
+                setCsvImportOpen(true);
+              }}
+              data-testid="button-import-ast-csv"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Import from CSV
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5"><RotateCcw className="w-3.5 h-3.5" />Reset Defaults</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Reset to defaults?</AlertDialogTitle>
+                  <AlertDialogDescription>This will delete all custom entries and restore the original breakpoint data from the PDF.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => resetMutation.mutate()}>Reset</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus className="w-3.5 h-3.5" />Add Entry</Button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => {
-              setCsvImportReport(null);
-              setCsvImportOpen(true);
-            }}
-            data-testid="button-import-ast-csv"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Import from CSV
-          </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5"><RotateCcw className="w-3.5 h-3.5" />Reset Defaults</Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Reset to defaults?</AlertDialogTitle>
-                <AlertDialogDescription>This will delete all custom entries and restore the original breakpoint data from the PDF.</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => resetMutation.mutate()}>Reset</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          <Button size="sm" className="gap-1.5" onClick={openAdd}><Plus className="w-3.5 h-3.5" />Add Entry</Button>
-        </div>
-      </div>
-
+      }
+    >
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[min(75vh,40rem)] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm shadow-sm">
                 <tr className="border-b bg-muted/50">
                   <th className="text-left py-2 px-3 font-medium text-xs">Antibiotic</th>
                   <th className="text-left py-2 px-3 font-medium text-xs">Sym.</th>
@@ -428,6 +433,6 @@ export default function BreakpointsPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </StickyScrollPage>
   );
 }

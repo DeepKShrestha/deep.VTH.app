@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, ArrowUp, Pencil, Plus, Save, Trash2, X } from "lucide-react";
@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 type MasterItem = {
   id: number;
@@ -35,9 +37,11 @@ export function TreatmentMasterDataManager({
   secondaryFieldPlaceholder,
   secondaryFieldSearchKeys,
   nameOptional = false,
+  secondaryFieldOptional = false,
   backHref = "/new-case/settings/treatment",
   createPlaceholder,
   searchPlaceholder,
+  prependBody,
 }: {
   title: string;
   listEndpoint: string;
@@ -50,9 +54,12 @@ export function TreatmentMasterDataManager({
   secondaryFieldPlaceholder?: string;
   secondaryFieldSearchKeys?: string[];
   nameOptional?: boolean;
+  /** When true with a secondary field, class/abbreviation may be left blank. */
+  secondaryFieldOptional?: boolean;
   backHref?: string;
   createPlaceholder: string;
   searchPlaceholder: string;
+  prependBody?: ReactNode;
 }) {
   const { toast } = useToast();
   const [newName, setNewName] = useState("");
@@ -61,6 +68,8 @@ export function TreatmentMasterDataManager({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [editingSecondaryValue, setEditingSecondaryValue] = useState("");
+
+  const secondaryRequired = Boolean(secondaryFieldApiKey) && !secondaryFieldOptional;
 
   const publicListEndpoint = PUBLIC_ENDPOINT_BY_ADMIN_LIST[listEndpoint];
 
@@ -91,6 +100,11 @@ export function TreatmentMasterDataManager({
     if (secondaryFieldApiKey === "shortCode" && typeof item.abbreviation === "string") {
       return item.abbreviation;
     }
+    if (secondaryFieldApiKey === "medicationClass") {
+      const snake = item.medication_class;
+      if (typeof snake === "string" && snake.trim()) return snake;
+      return "";
+    }
     return item.name ?? "";
   };
 
@@ -99,9 +113,11 @@ export function TreatmentMasterDataManager({
     if (!q) return items;
     const keys = secondaryFieldSearchKeys && secondaryFieldSearchKeys.length > 0
       ? secondaryFieldSearchKeys
-      : secondaryFieldApiKey
-        ? [secondaryFieldApiKey]
-        : [];
+      : secondaryFieldApiKey === "medicationClass"
+        ? ["medicationClass", "medication_class"]
+        : secondaryFieldApiKey
+          ? [secondaryFieldApiKey]
+          : [];
     return items.filter((item) => {
       if (item.name.toLowerCase().includes(q)) return true;
       return keys.some((key) => String(item[key] ?? "").toLowerCase().includes(q));
@@ -215,30 +231,66 @@ export function TreatmentMasterDataManager({
   });
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="rounded-2xl border bg-card px-5 py-5 sm:px-7 sm:py-6">
-        <div className="flex items-center gap-3">
-          <Link href={backHref}>
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
+    <StickyScrollPage
+      maxWidthClass="max-w-5xl"
+      contentPaddingClass="py-8"
+      bodyClassName="space-y-6"
+      sticky={
+        <div className="space-y-4">
           <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-            <p className="text-sm text-muted-foreground">Manage records for {title.toLowerCase()}.</p>
+            <PageBreadcrumbs
+              items={[
+                { label: "Hospital", href: "/new-case" },
+                { label: "Settings", href: "/new-case/settings" },
+                { label: "Treatment data", href: backHref },
+                { label: title },
+              ]}
+            />
+            <div className="mt-2 flex items-center gap-3">
+              <Link href={backHref}>
+                <Button variant="ghost" size="icon">
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </Link>
+              <div className="space-y-1 min-w-0">
+                <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+                <p className="text-sm text-muted-foreground">Manage records for {title.toLowerCase()}.</p>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Search</Label>
+            <Input
+              className="h-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={searchPlaceholder}
+            />
+            {searchActive && moveEndpointBase ? (
+              <p className="text-xs text-muted-foreground">
+                Clear search to use reorder arrows (order follows the full list).
+              </p>
+            ) : null}
           </div>
         </div>
-      </div>
-
+      }
+    >
+      {prependBody}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Add New</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={createPlaceholder} />
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+            <Input
+              className="h-9"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={createPlaceholder}
+            />
             {secondaryFieldApiKey && (
               <Input
+                className="h-9"
                 value={newSecondaryValue}
                 onChange={(e) => setNewSecondaryValue(e.target.value)}
                 placeholder={secondaryFieldPlaceholder || secondaryFieldLabel || "Abbreviation"}
@@ -246,7 +298,7 @@ export function TreatmentMasterDataManager({
             )}
             <Button
               size="sm"
-              className="gap-1.5"
+              className="h-9 gap-1.5 shrink-0 sm:self-end"
               onClick={() =>
                 addMutation.mutate({
                   name: newName.trim(),
@@ -255,7 +307,7 @@ export function TreatmentMasterDataManager({
               }
               disabled={
                 (!nameOptional && !newName.trim()) ||
-                (secondaryFieldApiKey ? !newSecondaryValue.trim() : false) ||
+                (secondaryRequired && !newSecondaryValue.trim()) ||
                 addMutation.isPending
               }
             >
@@ -271,19 +323,27 @@ export function TreatmentMasterDataManager({
           <CardTitle className="text-base">Records</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Search</Label>
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={searchPlaceholder} />
-            {searchActive && moveEndpointBase ? (
-              <p className="text-xs text-muted-foreground">Clear search to use reorder arrows (order follows the full list).</p>
-            ) : null}
-          </div>
           {filtered.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No records found.</p>
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/15 px-4 py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                {searchActive ? "No records match your search." : "No records yet."}
+              </p>
+              {searchActive ? (
+                <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setSearch("")}>
+                  Clear search
+                </Button>
+              ) : (
+                <Link href={backHref}>
+                  <Button type="button" variant="outline" size="sm" className="h-9">
+                    Back to treatment settings
+                  </Button>
+                </Link>
+              )}
+            </div>
           ) : (
-            <div className="rounded border overflow-hidden">
+            <div className="max-h-[min(70vh,36rem)] overflow-auto rounded border">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm shadow-sm">
                   <tr className="bg-muted/40 border-b">
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     {secondaryFieldApiKey && (
@@ -334,7 +394,7 @@ export function TreatmentMasterDataManager({
                                 }
                                 disabled={
                                   (!nameOptional && !editingName.trim()) ||
-                                  (secondaryFieldApiKey ? !editingSecondaryValue.trim() : false) ||
+                                  (secondaryRequired && !editingSecondaryValue.trim()) ||
                                   updateMutation.isPending
                                 }
                               >
@@ -418,6 +478,6 @@ export function TreatmentMasterDataManager({
           )}
         </CardContent>
       </Card>
-    </div>
+    </StickyScrollPage>
   );
 }

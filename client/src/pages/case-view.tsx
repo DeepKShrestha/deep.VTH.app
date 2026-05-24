@@ -13,12 +13,13 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Clock, FileDown, Printer, Trash2, Sparkles } from "lucide-react";
+import { ArrowLeft, Printer, Trash2, Sparkles } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
-import { useAuth, getAuthToken } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 interface AstRow {
   antibiotic: string;
@@ -272,38 +273,6 @@ export default function CaseView() {
   const scopedBackHref =
     effectiveScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
 
-  const handleDownloadPdf = async () => {
-    if (!caseData) return;
-    const token = getAuthToken();
-    if (!token) {
-      toast({ title: "Not signed in", variant: "destructive" });
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/api/cases/${caseData.id}/pdf?scope=${encodeURIComponent(effectiveScope)}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        toast({
-          title: errText || "Could not generate PDF",
-          variant: "destructive",
-        });
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${caseData.caseNumber}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast({ title: "PDF download failed", variant: "destructive" });
-    }
-  };
-
   const customFieldEntries = useMemo(() => {
     if (!caseData?.customFields) return [] as CustomEntry[];
     try {
@@ -369,36 +338,6 @@ export default function CaseView() {
   });
 
   /**
-   * Edit history for this case. The backend reads `case_change_logs` filtered
-   * by case_id, which now includes 'updated:<changedFields>' rows because
-   * PATCH /api/cases/:id writes a log entry on every successful patch.
-   */
-  type CaseHistoryEntry = {
-    id: number;
-    action: string;
-    actorUserId: number;
-    actorRole: string;
-    actorName: string;
-    actorUsername: string;
-    createdAt: string;
-  };
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const { data: caseHistory = [], isFetching: historyFetching } = useQuery<
-    CaseHistoryEntry[]
-  >({
-    queryKey: ["/api/cases", params.id, "history", requestedScope ?? "all"],
-    queryFn: async () => {
-      const scopeQuery = requestedScope ? `?scope=${requestedScope}` : "";
-      const res = await apiRequest(
-        "GET",
-        `/api/cases/${params.id}/history${scopeQuery}`,
-      );
-      return res.json();
-    },
-    enabled: Boolean(caseData?.id) && historyOpen,
-  });
-
-  /**
    * Patient history — other cases that look like they belong to the same
    * owner (matched on phone OR name+address). The server already scope-filters
    * to what the current user is allowed to view.
@@ -449,9 +388,41 @@ export default function CaseView() {
 
   if (isLoading) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-        <Skeleton className="h-8 w-48" /><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" />
-      </div>
+      <StickyScrollPage
+        bodyClassName="space-y-6"
+        sticky={
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3 w-full min-w-0">
+              <Skeleton className="h-9 w-9 shrink-0 rounded-md" />
+              <div className="space-y-2 flex-1 min-w-0">
+                <Skeleton className="h-6 w-48 max-w-full" />
+                <Skeleton className="h-4 w-64 max-w-full" />
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+              <Skeleton className="h-9 w-full sm:w-28" />
+            </div>
+          </div>
+        }
+      >
+        <Card>
+          <CardHeader className="pb-2">
+            <Skeleton className="h-5 w-40" />
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-[88%]" />
+            <Skeleton className="h-32 w-full" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 space-y-2">
+            <Skeleton className="h-4 w-36" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-[80%]" />
+          </CardContent>
+        </Card>
+      </StickyScrollPage>
     );
   }
 
@@ -465,8 +436,9 @@ export default function CaseView() {
   }
 
     return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Header */}
+    <StickyScrollPage
+      bodyClassName="space-y-6"
+      sticky={
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href={scopedBackHref}>
@@ -532,31 +504,6 @@ export default function CaseView() {
               </Button>
             </Link>
 
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 w-full sm:w-auto"
-              data-testid="button-download-pdf"
-              onClick={() => void handleDownloadPdf()}
-            >
-              <FileDown className="w-3.5 h-3.5" />
-              Download PDF
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 w-full sm:w-auto"
-              data-testid="button-history"
-              onClick={() => setHistoryOpen((v) => !v)}
-              aria-expanded={historyOpen}
-              aria-controls="case-history-panel"
-            >
-              <Clock className="w-3.5 h-3.5" />
-              {historyOpen ? "Hide history" : "View history"}
-            </Button>
-
             {isAdmin && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -592,6 +539,8 @@ export default function CaseView() {
           </div>
         </div>
       </div>
+      }
+    >
 
       {/* Bill Number */}
       {caseData.billNumber && (
@@ -601,66 +550,6 @@ export default function CaseView() {
               <span className="text-muted-foreground text-xs font-medium">Bill/Reg No:</span>
               <span className="font-semibold">{caseData.billNumber}</span>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Per-case edit history (collapsible) */}
-      {historyOpen && (
-        <Card id="case-history-panel">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="w-4 h-4" /> Edit history
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Records every create / update / delete on this case. Updates list
-              the fields that changed.
-            </p>
-          </CardHeader>
-          <CardContent>
-            {historyFetching ? (
-              <p className="text-sm text-muted-foreground py-3 text-center">
-                Loading…
-              </p>
-            ) : caseHistory.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-3 text-center">
-                No history recorded for this case yet.
-              </p>
-            ) : (
-              <ol className="space-y-2 text-sm">
-                {caseHistory.map((entry) => {
-                  const isUpdate = entry.action.startsWith("updated");
-                  const changedFields = isUpdate
-                    ? entry.action.replace(/^updated:?/, "").split(",").filter(Boolean)
-                    : [];
-                  return (
-                    <li
-                      key={entry.id}
-                      className="flex flex-col gap-0.5 rounded border p-2"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary" className="text-[10px]">
-                          {isUpdate ? "updated" : entry.action}
-                        </Badge>
-                        <span className="text-xs">
-                          {entry.actorName || `User ${entry.actorUserId}`}
-                          {entry.actorUsername ? ` (@${entry.actorUsername})` : ""}{" "}
-                          · {entry.actorRole}
-                        </span>
-                        <span className="text-xs text-muted-foreground ml-auto">
-                          {new Date(entry.createdAt).toLocaleString()}
-                        </span>
-                      </div>
-                      {changedFields.length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          Changed: {changedFields.join(", ")}
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
           </CardContent>
         </Card>
       )}
@@ -686,8 +575,7 @@ export default function CaseView() {
           {patientHistory.length > 0 && (
             <details className="mt-4 rounded border bg-muted/30 px-3 py-2">
               <summary className="cursor-pointer text-xs font-medium select-none">
-                {patientHistory.length} other case
-                {patientHistory.length === 1 ? "" : "s"} for this owner
+                Other cases for this owner ({patientHistory.length})
               </summary>
               <ul className="mt-2 space-y-1 text-xs">
                 {patientHistory.map((entry) => (
@@ -1223,6 +1111,6 @@ export default function CaseView() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </StickyScrollPage>
   );
 }
