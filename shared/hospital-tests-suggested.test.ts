@@ -17,7 +17,7 @@ describe("hospital-tests-suggested", () => {
   });
 
   it("builds panel key from label", () => {
-    expect(panelSubQuestionKeyFromLabel("Hormone Panel Test")).toBe("hormonePanelTests");
+    expect(panelSubQuestionKeyFromLabel("Hormone Panel Test")).toBe("hormonePanelTest");
   });
 
   it("resolves legacy enzyme panel from string option", () => {
