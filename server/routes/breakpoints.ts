@@ -1,5 +1,9 @@
 import type { Express } from "express";
-import { insertBreakpointSchema, updateBreakpointSchema } from "@shared/schema";
+import {
+  insertBreakpointSchema,
+  togglePresetBreakpointSchema,
+  updateBreakpointSchema,
+} from "@shared/schema";
 import { domainRepo } from "../domain-repo";
 import {
   getIdParam,
@@ -52,6 +56,32 @@ export function registerBreakpointRoutes(app: Express) {
           .json({ message: "Preset breakpoints cannot be modified" });
       }
       const updated = await domainRepo.updateBreakpoint(id, parsed.data);
+      if (!updated) {
+        return res.status(404).json({ message: MESSAGES.BREAKPOINT_NOT_FOUND });
+      }
+      res.json(updated);
+    },
+  );
+
+  app.patch(
+    "/api/breakpoints/:id/preset",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const parsed = togglePresetBreakpointSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ message: MESSAGES.INVALID_DATA, errors: parsed.error.flatten() });
+      }
+      const id = getIdParam(req);
+      const existing = await domainRepo.getBreakpoint(id);
+      if (!existing) {
+        return res.status(404).json({ message: MESSAGES.BREAKPOINT_NOT_FOUND });
+      }
+      const updated = await domainRepo.updateBreakpoint(id, {
+        isPreset: parsed.data.isPreset,
+      });
       if (!updated) {
         return res.status(404).json({ message: MESSAGES.BREAKPOINT_NOT_FOUND });
       }

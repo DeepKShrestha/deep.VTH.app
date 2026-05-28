@@ -106,14 +106,30 @@ export default function BreakpointsPage() {
 
   const presetMutation = useMutation({
     mutationFn: async ({ id, isPreset }: { id: number; isPreset: boolean }) => {
-      await apiRequest("PATCH", `/api/breakpoints/${id}`, { isPreset });
+      await apiRequest("PATCH", `/api/breakpoints/${id}/preset`, { isPreset });
+    },
+    onMutate: async ({ id, isPreset }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/breakpoints"] });
+      const previous = queryClient.getQueryData<Breakpoint[]>(["/api/breakpoints"]);
+      if (previous) {
+        queryClient.setQueryData<Breakpoint[]>(
+          ["/api/breakpoints"],
+          previous.map((bp) => (bp.id === id ? { ...bp, isPreset } : bp)),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/breakpoints"], context.previous);
+      }
+      toast({ title: "Failed to update preset", variant: "destructive" });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/breakpoints"] });
       toast({ title: "Preset updated" });
     },
-    onError: () => {
-      toast({ title: "Failed to update preset", variant: "destructive" });
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/breakpoints"] });
     },
   });
 

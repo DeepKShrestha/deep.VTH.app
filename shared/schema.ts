@@ -404,6 +404,18 @@ export const updateBreakpointSchema = insertBreakpointSchema
   .partial();
 export type UpdateBreakpoint = z.infer<typeof updateBreakpointSchema>;
 
+/**
+ * Narrow schema for the dedicated preset-toggle endpoint. The "Preset"
+ * column on the Breakpoints page lets admins flag entries that should
+ * surface as quick picks on register-case; that single flag is the only
+ * thing this schema allows, so the broader `updateBreakpointSchema`
+ * remains locked down for preset rows.
+ */
+export const togglePresetBreakpointSchema = z.object({
+  isPreset: z.boolean(),
+});
+export type TogglePresetBreakpoint = z.infer<typeof togglePresetBreakpointSchema>;
+
 // ---- Insert Schemas for new master data ----
 export const insertMedicationSchema = createInsertSchema(medications).omit({
   id: true,
