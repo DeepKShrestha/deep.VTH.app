@@ -171,7 +171,7 @@ export default function LoginPage() {
               <Microscope className="w-7 h-7 text-primary" />
             </div>
             <h1 className="text-xl font-semibold" data-testid="text-login-title">
-              VTH AST Report System
+              VTH Management System
             </h1>
             <p className="text-sm text-muted-foreground">Sign in to your account</p>
           </div>

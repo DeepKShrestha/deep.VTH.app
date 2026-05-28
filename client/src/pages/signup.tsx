@@ -184,7 +184,7 @@ export default function SignupPage() {
             <Microscope className="w-7 h-7 text-primary" />
           </div>
           <h1 className="text-xl font-semibold" data-testid="text-signup-title">Create Account</h1>
-          <p className="text-sm text-muted-foreground">Join the VTH AST Report System</p>
+          <p className="text-sm text-muted-foreground">Join the VTH Management System</p>
         </div>
 
         <Card>
