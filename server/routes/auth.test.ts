@@ -144,9 +144,8 @@ describe("auth routes", () => {
         designation: "student",
         studentBatch: 9,
         username: "user1",
-        // 10-char password with 2 character classes — passes the strong
-        // password policy in shared/schema.ts (`validateStrongPassword`).
-        password: "Secret1234",
+        // 8+ chars with letter and digit — passes `validateStrongPassword`.
+        password: "Secret12",
       },
     } as Request;
     const res = makeRes();

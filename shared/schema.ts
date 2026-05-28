@@ -238,32 +238,65 @@ export const veterinarians = sqliteTable("veterinarians", {
 // ---- Password policy ----
 /**
  * Minimum length applied at signup, self-service password change, and password
- * reset flow. Was 6 (NIST 2016 minimum) — raised to 10 because a 10-char
- * baseline materially raises the cost of any credential-stuffing or
- * brute-force attempts. Shared between client and server so messages match.
+ * reset flow. Shared between client and server so messages match.
  */
-export const PASSWORD_MIN_LENGTH = 10;
+export const PASSWORD_MIN_LENGTH = 8;
+
+export type PasswordPolicyCheckId = "minLength" | "hasLetter" | "hasDigit";
+
+export type PasswordPolicyCheck = {
+  id: PasswordPolicyCheckId;
+  label: string;
+  passed: boolean;
+};
+
+/** Live checklist items for signup, profile, and forgot-password UIs. */
+export function getPasswordPolicyChecks(password: string): PasswordPolicyCheck[] {
+  const p = typeof password === "string" ? password : "";
+  return [
+    {
+      id: "minLength",
+      label: `At least ${PASSWORD_MIN_LENGTH} characters`,
+      passed: p.length >= PASSWORD_MIN_LENGTH,
+    },
+    {
+      id: "hasLetter",
+      label: "At least one letter (a–z)",
+      passed: /[a-zA-Z]/.test(p),
+    },
+    {
+      id: "hasDigit",
+      label: "At least one number (0–9)",
+      passed: /\d/.test(p),
+    },
+  ];
+}
+
+export function isPasswordPolicyMet(password: string): boolean {
+  return getPasswordPolicyChecks(password).every((c) => c.passed);
+}
 
 /**
  * Validates that a password meets the project's policy:
  *   - >= PASSWORD_MIN_LENGTH characters
- *   - Contains at least two of: lowercase, uppercase, digit, symbol
+ *   - At least one letter and one digit
  *
  * Returns a human-readable error string when invalid, or `null` when OK.
  */
 export function validateStrongPassword(password: string): string | null {
-  if (typeof password !== "string" || password.length < PASSWORD_MIN_LENGTH) {
-    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  const failed = getPasswordPolicyChecks(password).filter((c) => !c.passed);
+  if (failed.length === 0) return null;
+  if (failed.length === 1) {
+    const only = failed[0]!;
+    if (only.id === "minLength") {
+      return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+    }
+    if (only.id === "hasLetter") {
+      return "Password must contain at least one letter";
+    }
+    return "Password must contain at least one number";
   }
-  let classes = 0;
-  if (/[a-z]/.test(password)) classes++;
-  if (/[A-Z]/.test(password)) classes++;
-  if (/[0-9]/.test(password)) classes++;
-  if (/[^A-Za-z0-9]/.test(password)) classes++;
-  if (classes < 2) {
-    return "Password must contain at least two of: lowercase, uppercase, digit, symbol";
-  }
-  return null;
+  return "Password must be at least 8 characters and include both letters and numbers";
 }
 
 // ---- Insert Schemas ----
@@ -284,8 +317,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
     .string()
     .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
     .refine((p) => validateStrongPassword(p) === null, {
-      message:
-        "Password must contain at least two of: lowercase, uppercase, digit, symbol",
+      message: "Password must be at least 8 characters and include letters and numbers",
     }),
   designation: z.enum(["lab_assistant", "veterinarian", "student", "intern"]),
   studentBatch: z.number().int().min(1).max(99).nullable().optional(),

@@ -324,7 +324,7 @@ Frontend token persistence:
 Backend sessions:
 - Tables: `sessions` (token → user_id) + `users` (the user row).
 - **On boot, ALL session rows are wiped by default** (`server/session-boot-prune.ts`) — a server restart is effectively a force-logout for everyone (the boot log warns when this happens). Set `WIPE_SESSIONS_ON_BOOT=false` to opt out and keep active sessions across restarts (useful on a dev laptop with nodemon; only expired rows are pruned in that mode).
-- `last_seen_at` writes are **throttled** to one DB write per session every 5 minutes (`server/auth-session-repo.ts#SESSION_LAST_SEEN_THROTTLE_MS`). Prevents a write storm on hot paths.
+- `last_seen_at` writes are **throttled** to one DB write per session every 30 seconds (`server/auth-session-repo.ts#SESSION_LAST_SEEN_THROTTLE_MS`). Prevents a write storm on hot paths while keeping presence accurate within the 3-minute active window.
 - `requireAuth` uses a **short-lived in-memory cache** of the current-user snapshot keyed by bearer token (`server/current-user-cache.ts`). TTL ≈ 30 s, 5 000-entry cap, invalidated explicitly on `updateUser` / session delete. Keeps high-traffic endpoints from re-reading the `users` row on every request.
 - Sessions are deleted **explicitly** on logout, password change, user deletion, and bulk admin deletes.
 
@@ -875,7 +875,7 @@ These landed together as a production-readiness sweep:
 | **Range-bound, single-use student exports** | `server/download-request-auth.ts`, `server/download-request-range.ts`, `client/src/lib/export-approval.ts`, `client/src/pages/export-data.tsx`, `client/src/pages/hospital-export-data.tsx` | Approvals carry a BS `dateFrom`/`dateTo` window; the server consumes the approval atomically on first export. The UI auto-fills the picker with the approved range and disables download if the range mismatches. |
 | **Bootstrap admin no longer uses `admin123`** | `server/routes.ts`, `server/password-policy.ts`, `.env.example` | `DEFAULT_ADMIN_PASSWORD` must be strong; if unset, a random password is printed once. Hidden superadmin requires 16+ chars w/ letters and digits in production. |
 | **Sessions wiped on every server restart (default)** | `server/session-boot-prune.ts`, `server/routes.ts` | Restarts log everyone out — the safer posture for a clinic deployment. Set `WIPE_SESSIONS_ON_BOOT=false` to opt out (keeps active sessions across restarts; only expired rows pruned). |
-| **`last_seen_at` write throttle** | `server/auth-session-repo.ts` (`SESSION_LAST_SEEN_THROTTLE_MS`) | One DB write per session every 5 minutes instead of every request. |
+| **`last_seen_at` write throttle** | `server/auth-session-repo.ts` (`SESSION_LAST_SEEN_THROTTLE_MS`) | One DB write per session every 30 seconds instead of every request — must stay well below the 3-min active window. |
 | **`requireAuth` in-memory cache** | `server/current-user-cache.ts`, `server/routes/context.ts` | 30-second LRU cache (5 000 entries) of CurrentUser snapshots keyed by bearer token. Explicit invalidation on `updateUser`, session delete, bulk clears. |
 | **N+1 query reduction in admin lists** | `server/routes/admin.ts` (`/api/admin/password-reset-requests`, `/form-edit-audit-logs`, `/action-logs`) | Replaced per-row `getUserById` with batched `getUserDisplayByIds`. |
 | **Formula-injection protection in CSV/XLSX** | `server/routes/cases-export.ts` | Cell values starting with `= + - @ \t \r` get a leading apostrophe so spreadsheet apps don't execute them. |

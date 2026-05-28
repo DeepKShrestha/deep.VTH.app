@@ -13,6 +13,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Microscope, LogIn, Eye, EyeOff } from "lucide-react";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
+import { isPasswordPolicyMet, PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { PasswordPolicyChecklist } from "@/components/password-policy-checklist";
 
 export default function LoginPage() {
   const { login, completeTwoFactor } = useAuth();
@@ -90,6 +92,14 @@ export default function LoginPage() {
     if (!forgotIdentifier || !forgotNewPassword) {
       toast({
         title: "Please provide username/email and new password",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!isPasswordPolicyMet(forgotNewPassword)) {
+      toast({
+        title: "New password does not meet requirements",
+        description: "Check the rules below the password field.",
         variant: "destructive",
       });
       return;
@@ -284,8 +294,9 @@ export default function LoginPage() {
                       type="password"
                       value={forgotNewPassword}
                       onChange={(e) => setForgotNewPassword(e.target.value)}
-                      placeholder="At least 6 characters"
+                      placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                     />
+                    <PasswordPolicyChecklist password={forgotNewPassword} />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="forgotReason">Reason (optional)</Label>

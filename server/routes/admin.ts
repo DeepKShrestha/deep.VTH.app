@@ -2263,8 +2263,13 @@ export function registerAdminRoutes(app: Express) {
     requireRole("superadmin", "admin"),
     async (req, res) => {
       const pagination = getPaginationParams(req);
+      const currentUser = (req as AuthenticatedRequest).currentUser;
       const users = await authSessionRepo.getUsers();
       const activeSessionUserIds = new Set(await authSessionRepo.getActiveSessionUserIds());
+      // The caller is, by definition, active right now (this very request).
+      // Guarantees the admin viewing the list sees themselves as Active even
+      // if their `last_seen_at` write was throttled.
+      if (currentUser?.id) activeSessionUserIds.add(currentUser.id);
       const visibleUsers = users.filter(
         (u) => !isHiddenSuperadminUser(u),
       );

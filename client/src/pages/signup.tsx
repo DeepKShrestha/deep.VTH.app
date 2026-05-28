@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Microscope, UserPlus, CheckCircle, Eye, EyeOff } from "lucide-react";
-import { PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { isPasswordPolicyMet, PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { PasswordPolicyChecklist } from "@/components/password-policy-checklist";
 import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
 
 const DESIGNATIONS = [
@@ -88,9 +89,10 @@ export default function SignupPage() {
       toast({ title: "Please fill in all required fields", variant: "destructive" });
       return;
     }
-    if (password.length < PASSWORD_MIN_LENGTH) {
+    if (!isPasswordPolicyMet(password)) {
       toast({
-        title: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+        title: "Password does not meet requirements",
+        description: "Check the rules below your password field.",
         variant: "destructive",
       });
       return;
@@ -275,6 +277,7 @@ export default function SignupPage() {
                     <p className="text-xs text-muted-foreground">
                       Password strength: {passwordStrength.label}
                     </p>
+                    <PasswordPolicyChecklist password={password} />
                   </div>
                 </div>
                 <div className="space-y-1.5">

@@ -16,8 +16,12 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 /** Sessions with no API activity for this long count as offline in admin presence. */
 const ACTIVE_PRESENCE_MAX_IDLE_MS = 3 * 60 * 1000;
 
-/** Throttle `last_seen_at` writes — one update per session per interval. */
-export const SESSION_LAST_SEEN_THROTTLE_MS = 5 * 60 * 1000;
+/**
+ * Throttle `last_seen_at` writes — one update per session per interval.
+ * MUST be well under `ACTIVE_PRESENCE_MAX_IDLE_MS`; otherwise a user can
+ * appear "Offline" between throttled writes even while sending requests.
+ */
+export const SESSION_LAST_SEEN_THROTTLE_MS = 30 * 1000;
 
 type Provider = "sqlite" | "postgres";
 

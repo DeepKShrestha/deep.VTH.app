@@ -51,7 +51,8 @@ import {
   type InactivityTimeoutOption,
 } from "../lib/auth";
 import { Eye, EyeOff } from "lucide-react";
-import { PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { isPasswordPolicyMet, PASSWORD_MIN_LENGTH } from "@shared/schema";
+import { PasswordPolicyChecklist } from "@/components/password-policy-checklist";
 
 const LAST_PROFILE_UPDATE_AT_KEY = "profile_last_update_at";
 const LAST_PASSWORD_CHANGE_AT_KEY = "profile_last_password_change_at";
@@ -170,15 +171,15 @@ export default function ProfilePage() {
     return null;
   }
 
-  const passwordLengthError =
-    newPassword.length > 0 && newPassword.length < PASSWORD_MIN_LENGTH
-      ? `Password must be at least ${PASSWORD_MIN_LENGTH} characters`
+  const passwordPolicyError =
+    newPassword.length > 0 && !isPasswordPolicyMet(newPassword)
+      ? "Password does not meet requirements"
       : "";
   const passwordMismatchError =
     confirmPassword.length > 0 && newPassword !== confirmPassword
       ? "Passwords do not match"
       : "";
-  const passwordSectionHasError = Boolean(passwordLengthError || passwordMismatchError);
+  const passwordSectionHasError = Boolean(passwordPolicyError || passwordMismatchError);
   const isPasswordChangeRequested = Boolean(
     currentPassword || newPassword || confirmPassword,
   );
@@ -291,9 +292,10 @@ export default function ProfilePage() {
         });
         return;
       }
-      if (newPassword.length < PASSWORD_MIN_LENGTH) {
+      if (!isPasswordPolicyMet(newPassword)) {
         toast({
-          title: `New password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+          title: "New password does not meet requirements",
+          description: "Check the rules below the new password field.",
           variant: "destructive",
         });
         return;
@@ -673,7 +675,7 @@ export default function ProfilePage() {
                           type={showNewPassword ? "text" : "password"}
                           value={newPassword}
                           onChange={(e) => setNewPassword(e.target.value)}
-                          placeholder="Minimum 6 characters"
+                          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                         />
                         <Button
                           type="button"
@@ -701,8 +703,9 @@ export default function ProfilePage() {
                         <p className="text-xs text-muted-foreground">
                           Password strength: {passwordStrength.label}
                         </p>
-                        {passwordLengthError && (
-                          <p className="text-xs text-destructive">{passwordLengthError}</p>
+                        <PasswordPolicyChecklist password={newPassword} />
+                        {passwordPolicyError && (
+                          <p className="text-xs text-destructive">{passwordPolicyError}</p>
                         )}
                       </div>
                     </div>
