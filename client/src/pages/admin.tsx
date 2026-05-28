@@ -1328,7 +1328,7 @@ export default function AdminPanel({
                         <span className="font-medium text-sm">{u.fullName}</span>
                         {roleBadge(u.role)}
                         <Badge
-                          title="Active means this account had API activity in the last 3 minutes while its session is still valid. The list refreshes about every 5 seconds. Closing the browser does not end the session until it expires or the user signs out."
+                          title="Active means this account had API activity in the last 3 minutes. The list refreshes about every 5 seconds. Closing the tab or browser marks the user offline quickly; signing out removes the session immediately."
                           className={`border-0 text-[10px] px-2 py-0.5 ${
                             u.activeNow
                               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"

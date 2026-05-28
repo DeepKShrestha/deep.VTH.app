@@ -161,6 +161,31 @@ export const authSessionRepo = {
     );
   },
 
+  /**
+   * Marks a session as away without deleting it — used when the user closes the
+   * tab/browser so admin presence flips to Offline immediately. The next API
+   * call from the same token (e.g. page reload in the same tab) refreshes
+   * `last_seen_at` and shows Active again.
+   */
+  async markSessionAway(token: string): Promise<void> {
+    invalidateCachedToken(token);
+    const awayIso = new Date(0).toISOString();
+    if (getProvider() === "sqlite") {
+      try {
+        await dbRun(
+          sql`UPDATE sessions SET last_seen_at = ${awayIso} WHERE token = ${token}`,
+        );
+      } catch {
+        // Pre-migration DB without last_seen_at.
+      }
+      return;
+    }
+    await getPgPool().query(
+      `UPDATE sessions SET last_seen_at = $1::timestamptz WHERE token = $2`,
+      [awayIso, token],
+    );
+  },
+
   async deleteSession(token: string): Promise<void> {
     invalidateCachedToken(token);
     if (getProvider() === "sqlite") {

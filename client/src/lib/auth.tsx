@@ -413,6 +413,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [token, user, inactivityTimeout, logout]);
 
+  // When the user closes the tab or navigates away, mark the server session as
+  // away so admin presence shows Offline quickly. Uses fetch keepalive (supports
+  // Authorization). Does not delete the session — a same-tab reload still works.
+  useEffect(() => {
+    if (!token) return;
+
+    const markSessionAway = () => {
+      const t = getAuthToken();
+      if (!t) return;
+      fetch("/api/auth/session/away", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t}` },
+        keepalive: true,
+      }).catch(() => {});
+    };
+
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) return;
+      markSessionAway();
+    };
+
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [token]);
+
   const value: AuthContextType = {
     user,
     token,

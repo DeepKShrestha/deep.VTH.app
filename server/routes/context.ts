@@ -38,6 +38,9 @@ export const sessions = {
   async delete(token: string) {
     await authSessionRepo.deleteSession(token);
   },
+  async markAway(token: string) {
+    await authSessionRepo.markSessionAway(token);
+  },
   async clear() {
     await authSessionRepo.clearSessions();
   },

@@ -452,6 +452,15 @@ export function registerAuthRoutes(app: Express) {
     res.json({ message: "Logged out" });
   });
 
+  /** Soft presence end on tab close — session stays valid for same-tab reload. */
+  app.post("/api/auth/session/away", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      await sessions.markAway(authHeader.substring(7));
+    }
+    res.status(204).end();
+  });
+
   app.post("/api/auth/logout-all-sessions", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     await authSessionRepo.deleteSessionsByUserId(currentUser.id);
