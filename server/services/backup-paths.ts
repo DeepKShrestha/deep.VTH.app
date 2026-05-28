@@ -11,6 +11,14 @@ export function getProfilePhotoUploadDir(): string {
   return raw ? path.resolve(raw) : path.resolve(process.cwd(), "uploads", "profile-photos");
 }
 
+/** Ephemeral forgot-password ID cards — excluded from site backups. */
+export function getPasswordResetIdCardUploadDir(): string {
+  const raw = process.env.PASSWORD_RESET_ID_CARD_DIR?.trim();
+  return raw
+    ? path.resolve(raw)
+    : path.resolve(process.cwd(), "uploads", "password-reset-id-cards");
+}
+
 export function getSiteBackupDir(): string {
   const raw = process.env.BACKUP_LOCAL_DIR?.trim();
   return raw ? path.resolve(raw) : path.resolve(process.cwd(), "backups", "site");

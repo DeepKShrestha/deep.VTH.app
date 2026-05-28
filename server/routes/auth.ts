@@ -39,6 +39,12 @@ import {
   profilePhotoMimeError,
 } from "../services/profile-photo-store";
 import { toClientSafeUser } from "../user-public";
+import {
+  isAllowedPasswordResetIdCardFile,
+  passwordResetIdCardMimeError,
+  savePasswordResetIdCardForRequest,
+  PASSWORD_RESET_ID_CARD_MAX_BYTES,
+} from "../services/password-reset-id-card-store";
 
 function publicAuthUser(user: User) {
   return toClientSafeUser(user);
@@ -71,6 +77,42 @@ const profilePhotoUpload = multer({
     cb(null, true);
   },
 });
+
+const passwordResetIdCardUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PASSWORD_RESET_ID_CARD_MAX_BYTES },
+  fileFilter(_req, file, cb) {
+    if (!isAllowedPasswordResetIdCardFile(file.mimetype, file.originalname)) {
+      cb(
+        new Error(
+          passwordResetIdCardMimeError(file.mimetype) ??
+            "Only JPEG or PNG university ID card images are allowed.",
+        ),
+      );
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+function passwordResetMultipart(req: Request, res: Response, next: NextFunction) {
+  const ct = String(req.headers?.["content-type"] ?? "").toLowerCase();
+  if (!ct.includes("multipart/form-data")) {
+    res.status(400).json({
+      message: "University ID card photo is required.",
+    });
+    return;
+  }
+  passwordResetIdCardUpload.single("universityIdCard")(req, res, (err: unknown) => {
+    if (err) {
+      const message =
+        err instanceof Error ? err.message : "Invalid university ID card upload.";
+      res.status(400).json({ message });
+      return;
+    }
+    next();
+  });
+}
 
 function signupMultipartMaybe(req: Request, res: Response, next: NextFunction) {
   const ct = String(req.headers?.["content-type"] ?? "").toLowerCase();
@@ -654,44 +696,73 @@ export function registerAuthRoutes(app: Express) {
     return res.sendFile(abs);
   });
 
-  app.post("/api/auth/password-reset-requests", async (req, res) => {
-    const { usernameOrEmail, newPassword, reason } = req.body as {
-      usernameOrEmail?: string;
-      newPassword?: string;
-      reason?: string;
-    };
-    const identifier = (usernameOrEmail || "").trim();
-    if (!identifier || !newPassword) {
-      return res
-        .status(400)
-        .json({ message: "Username/email and new password are required" });
-    }
-    const passwordError = validateStrongPassword(newPassword);
-    if (passwordError) {
-      return res.status(400).json({ message: passwordError });
-    }
+  app.post(
+    "/api/auth/password-reset-requests",
+    passwordResetMultipart,
+    async (req, res) => {
+      const body = req.body as Record<string, string | undefined>;
+      const identifier = (body.usernameOrEmail || "").trim();
+      const newPassword = body.newPassword || "";
+      const reason = body.reason?.trim() || null;
+      const file = req.file;
 
-    let user = await authSessionRepo.getUserByUsername(identifier);
-    if (!user) user = await authSessionRepo.getUserByEmail(identifier);
-    if (!user) {
-      // Avoid disclosing account existence
+      if (!identifier || !newPassword) {
+        return res
+          .status(400)
+          .json({ message: "Username/email and new password are required" });
+      }
+      const passwordError = validateStrongPassword(newPassword);
+      if (passwordError) {
+        return res.status(400).json({ message: passwordError });
+      }
+
+      let user = await authSessionRepo.getUserByUsername(identifier);
+      if (!user) user = await authSessionRepo.getUserByEmail(identifier);
+      if (!user) {
+        // Avoid disclosing account existence; discard uploaded file
+        return res.json({
+          message:
+            "If the account exists, a password reset request has been submitted.",
+        });
+      }
+
+      if (!file) {
+        return res.status(400).json({
+          message: "A photo of your university ID card is required.",
+        });
+      }
+
+      const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
+      const request = await authSessionRepo.createPasswordResetRequest({
+        userId: user.id,
+        requestedByRole: user.role,
+        passwordHash: hash,
+        reason,
+      });
+
+      try {
+        const filename = await savePasswordResetIdCardForRequest(
+          request.id,
+          file.buffer,
+          file.mimetype,
+        );
+        await authSessionRepo.setPasswordResetRequestIdCard(request.id, filename);
+        await authSessionRepo.supersedePendingPasswordResetRequests(user.id, request.id);
+      } catch (err) {
+        await dbRun(
+          sql`DELETE FROM password_reset_requests WHERE id = ${request.id}`,
+        );
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Could not save university ID card photo.";
+        return res.status(400).json({ message });
+      }
+
       return res.json({
         message:
-          "If the account exists, a password reset request has been submitted.",
+          "Password reset request submitted. An authorized admin will review it.",
       });
-    }
-
-    const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
-    await authSessionRepo.createPasswordResetRequest({
-      userId: user.id,
-      requestedByRole: user.role,
-      passwordHash: hash,
-      reason: reason?.trim() || null,
-    });
-
-    return res.json({
-      message:
-        "Password reset request submitted. An authorized admin will review it.",
-    });
-  });
+    },
+  );
 }

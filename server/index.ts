@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { dbGet } from "./db-query";
 import { getPgPool, closePgPool } from "./pg-pool";
 import { scheduleTempCaseAttachmentCleanup } from "./temp-attachment-cleanup";
+import { schedulePasswordResetIdCardMaintenance } from "./password-reset-id-card-cleanup";
 import { scheduleSiteBackupJobs } from "./backup-scheduler";
 import { assertProductionAttachmentSigningConfigured } from "./services/attachment-signing";
 
@@ -78,7 +79,7 @@ if (process.env.NODE_ENV === "production") {
           fontSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
           formAction: ["'self'"],
-          upgradeInsecureRequests: [],
+          upgradeInsecureRequests: null,
         },
       },
     }),
@@ -316,6 +317,7 @@ app.get("/api/ready", async (_req, res) => {
       log(`db provider: ${DB_PROVIDER}`);
       log(`using database: ${DB_FILE}`);
       scheduleTempCaseAttachmentCleanup();
+      schedulePasswordResetIdCardMaintenance();
       scheduleSiteBackupJobs();
     },
   );

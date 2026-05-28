@@ -26,7 +26,8 @@ This README stays the **map of the whole system**; split only when a section bec
 
 **Deployment docs (start here if you're shipping to a server):**
 
-- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** — full step-by-step walkthrough for a **fresh Linux server**: OS prep, Node install, service user, SQLite **or** PostgreSQL setup, env vars, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've never deployed this app before.
+- **[`docs/DIGITALOCEAN-DEPLOYMENT.md`](docs/DIGITALOCEAN-DEPLOYMENT.md)** — beginner-friendly walkthrough for deploying to **DigitalOcean** (Droplet + Managed Postgres). Hand-holds through SSH-key generation, billing setup, every command, plus a feature-verification checklist. Use this if you've never deployed a Node app before.
+- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** — full step-by-step walkthrough for a **fresh Linux server**: OS prep, Node install, service user, SQLite **or** PostgreSQL setup, env vars, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've deployed Linux apps before and want a generic recipe.
 - **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** — short pre-flight checklist (required env vars, order of operations, smoke tests). Use this once you know the deployment and just need the list.
 - **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** — day-to-day operational runbooks.
 - **[`docs/RELEASE.md`](docs/RELEASE.md)** — release flow and rollback.

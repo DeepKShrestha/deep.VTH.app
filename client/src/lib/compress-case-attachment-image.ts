@@ -152,6 +152,11 @@ export async function compressCaseAttachmentImage(file: File): Promise<File> {
   );
 }
 
+/** University ID card for forgot-password (JPEG/PNG, same limits as case attachments). */
+export async function compressUniversityIdCardImage(file: File): Promise<File> {
+  return compressCaseAttachmentImage(file);
+}
+
 export async function compressProfilePhotoImage(file: File): Promise<File> {
   return compressImageToStoredLimit(
     file,

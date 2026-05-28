@@ -1,4 +1,6 @@
 import type { Express, RequestHandler } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import multer from "multer";
 import { sql } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
@@ -29,6 +31,10 @@ import {
 } from "../hospital-form-definition";
 import { parseMedicationImportFile } from "../medication-import-parse";
 import type { ParsedMedicationRow } from "../medication-import-parse";
+import {
+  deletePasswordResetIdCardFile,
+  resolvePasswordResetIdCardAbsolutePath,
+} from "../services/password-reset-id-card-store";
 import {
   isBuiltinTestsSuggestedQuestionKey,
   isTestsSuggestedSectionKey,
@@ -154,9 +160,18 @@ type PasswordResetRequestRow = {
   status: string;
   resolved_by: number | null;
   resolver_note: string | null;
+  id_card_filename: string | null;
   created_at: string;
   resolved_at: string | null;
 };
+
+function canResolvePasswordResetRequest(
+  currentUser: { role: string },
+  requestedByRole: string,
+): boolean {
+  if (currentUser.role === "superadmin") return true;
+  return requestedByRole !== "admin" && requestedByRole !== "superadmin";
+}
 
 async function logAdminAction(args: {
   actorUserId: number;
@@ -191,6 +206,7 @@ function toPasswordResetRequest(row: PasswordResetRequestRow) {
     status: row.status,
     resolvedBy: row.resolved_by,
     resolverNote: row.resolver_note,
+    hasIdCard: Boolean(row.id_card_filename),
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
@@ -229,7 +245,7 @@ export function registerAdminRoutes(app: Express) {
           ORDER BY created_at DESC`,
     );
     const pendingResetRows = await dbAll<PasswordResetRequestRow>(
-      sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
+      sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, id_card_filename, created_at, resolved_at
           FROM password_reset_requests
           WHERE status = ${"pending"}
           ORDER BY created_at DESC`,
@@ -2722,7 +2738,7 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const pagination = getPaginationParams(req);
       const rows = await dbAll<PasswordResetRequestRow>(
-        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
+        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, id_card_filename, created_at, resolved_at
             FROM password_reset_requests
             ORDER BY created_at DESC`,
       );
@@ -2767,6 +2783,44 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  app.get(
+    "/api/admin/password-reset-requests/:id/id-card",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const target = await dbGet<PasswordResetRequestRow>(
+        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, id_card_filename, created_at, resolved_at
+            FROM password_reset_requests
+            WHERE id = ${getIdParam(req)}`,
+      );
+      if (!target) {
+        return res.status(404).json({ message: "Request not found" });
+      }
+      const mapped = toPasswordResetRequest(target);
+      if (!canResolvePasswordResetRequest(currentUser, mapped.requestedByRole)) {
+        return res.status(403).json({
+          message: "Only superadmin can view admin-level reset ID cards",
+        });
+      }
+      if (mapped.status !== "pending" || !target.id_card_filename) {
+        return res.status(404).json({ message: "ID card image not available" });
+      }
+
+      const abs = resolvePasswordResetIdCardAbsolutePath(target.id_card_filename);
+      if (!abs || !fs.existsSync(abs)) {
+        return res.status(404).json({ message: "ID card image not found" });
+      }
+
+      const ext = path.extname(abs).toLowerCase();
+      const contentType = ext === ".png" ? "image/png" : "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Disposition", "inline");
+      return res.sendFile(abs);
+    },
+  );
+
   app.post(
     "/api/admin/password-reset-requests/:id/resolve",
     requireAuth,
@@ -2784,7 +2838,7 @@ export function registerAdminRoutes(app: Express) {
       }
 
       const target = await dbGet<PasswordResetRequestRow>(
-        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
+        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, id_card_filename, created_at, resolved_at
             FROM password_reset_requests
             WHERE id = ${getIdParam(req)}`,
       );
@@ -2792,15 +2846,13 @@ export function registerAdminRoutes(app: Express) {
         return res.status(404).json({ message: "Request not found" });
       }
       const targetMapped = toPasswordResetRequest(target);
-      if (
-        currentUser.role !== "superadmin" &&
-        (targetMapped.requestedByRole === "admin" ||
-          targetMapped.requestedByRole === "superadmin")
-      ) {
+      if (!canResolvePasswordResetRequest(currentUser, targetMapped.requestedByRole)) {
         return res.status(403).json({
           message: "Only superadmin can resolve admin-level reset requests",
         });
       }
+
+      await deletePasswordResetIdCardFile(target.id_card_filename);
 
       if (status === "approved") {
         const user = await authSessionRepo.getUserById(targetMapped.userId);
@@ -2815,11 +2867,12 @@ export function registerAdminRoutes(app: Express) {
             SET status = ${status},
                 resolved_by = ${currentUser.id},
                 resolver_note = ${resolverNote || null},
+                id_card_filename = NULL,
                 resolved_at = ${new Date().toISOString()}
             WHERE id = ${targetMapped.id}`,
       );
       const resolved = await dbGet<PasswordResetRequestRow>(
-        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, created_at, resolved_at
+        sql`SELECT id, user_id, requested_by_role, password_hash, reason, status, resolved_by, resolver_note, id_card_filename, created_at, resolved_at
             FROM password_reset_requests
             WHERE id = ${targetMapped.id}`,
       );
@@ -2834,6 +2887,7 @@ export function registerAdminRoutes(app: Express) {
           status,
           requestedByRole: resolved.requested_by_role,
           userId: resolved.user_id,
+          hadIdCard: Boolean(target.id_card_filename),
         },
       });
       res.json(toPasswordResetRequest(resolved));

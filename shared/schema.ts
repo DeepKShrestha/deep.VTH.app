@@ -84,6 +84,7 @@ export const passwordResetRequests = sqliteTable("password_reset_requests", {
   status: text("status").notNull().default("pending"), // pending, approved, rejected
   resolvedBy: integer("resolved_by"),
   resolverNote: text("resolver_note"),
+  idCardFilename: text("id_card_filename"),
   createdAt: text("created_at").notNull(),
   resolvedAt: text("resolved_at"),
 });

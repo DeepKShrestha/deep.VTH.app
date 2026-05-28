@@ -62,7 +62,16 @@ interface IStorage {
   getPendingDownloadRequests(): DownloadRequest[];
   getDownloadRequestsByUser(userId: number): DownloadRequest[];
   resolveDownloadRequest(id: number, status: string, adminNote?: string): DownloadRequest | undefined;
-  createPasswordResetRequest(data: { userId: number; requestedByRole: string; passwordHash: string; reason?: string | null }): PasswordResetRequest;
+  createPasswordResetRequest(data: {
+    userId: number;
+    requestedByRole: string;
+    passwordHash: string;
+    reason?: string | null;
+    idCardFilename?: string | null;
+  }): PasswordResetRequest;
+  getPendingPasswordResetRequestsByUser(userId: number): PasswordResetRequest[];
+  setPasswordResetRequestIdCard(id: number, idCardFilename: string | null): PasswordResetRequest | undefined;
+  clearPasswordResetRequestIdCard(id: number): PasswordResetRequest | undefined;
   getPasswordResetRequests(): PasswordResetRequest[];
   getPasswordResetRequestsPage(limit: number, offset: number): {
     items: PasswordResetRequest[];
@@ -283,15 +292,53 @@ class DatabaseStorage implements IStorage {
     requestedByRole: string;
     passwordHash: string;
     reason?: string | null;
+    idCardFilename?: string | null;
   }): PasswordResetRequest {
     return db
       .insert(passwordResetRequests)
       .values({
-        ...data,
+        userId: data.userId,
+        requestedByRole: data.requestedByRole,
+        passwordHash: data.passwordHash,
         reason: data.reason || null,
+        idCardFilename: data.idCardFilename ?? null,
         status: "pending",
         createdAt: new Date().toISOString(),
       })
+      .returning()
+      .get();
+  }
+
+  getPendingPasswordResetRequestsByUser(userId: number): PasswordResetRequest[] {
+    return db
+      .select()
+      .from(passwordResetRequests)
+      .where(
+        and(
+          eq(passwordResetRequests.userId, userId),
+          eq(passwordResetRequests.status, "pending"),
+        ),
+      )
+      .all();
+  }
+
+  setPasswordResetRequestIdCard(
+    id: number,
+    idCardFilename: string | null,
+  ): PasswordResetRequest | undefined {
+    return db
+      .update(passwordResetRequests)
+      .set({ idCardFilename })
+      .where(eq(passwordResetRequests.id, id))
+      .returning()
+      .get();
+  }
+
+  clearPasswordResetRequestIdCard(id: number): PasswordResetRequest | undefined {
+    return db
+      .update(passwordResetRequests)
+      .set({ idCardFilename: null })
+      .where(eq(passwordResetRequests.id, id))
       .returning()
       .get();
   }
@@ -341,6 +388,7 @@ class DatabaseStorage implements IStorage {
         status,
         resolvedBy,
         resolverNote: resolverNote || null,
+        idCardFilename: null,
         resolvedAt: new Date().toISOString(),
       })
       .where(eq(passwordResetRequests.id, id))

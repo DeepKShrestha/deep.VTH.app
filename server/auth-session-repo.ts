@@ -9,6 +9,7 @@ import {
   invalidateToken as invalidateCachedToken,
   invalidateUserId as invalidateCachedUserId,
 } from "./current-user-cache";
+import { deletePasswordResetIdCardFile } from "./services/password-reset-id-card-store";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
@@ -65,6 +66,10 @@ function mapPgPasswordResetRequest(
     status: String(row.status),
     resolvedBy: row.resolved_by == null ? null : Number(row.resolved_by),
     resolverNote: row.resolver_note == null ? null : String(row.resolver_note),
+    idCardFilename:
+      row.id_card_filename == null || row.id_card_filename === ""
+        ? null
+        : String(row.id_card_filename),
     createdAt: String(row.created_at),
     resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
   };
@@ -110,8 +115,8 @@ export const authSessionRepo = {
     await getPgPool().query(
       `UPDATE sessions SET last_seen_at = $1
        WHERE token = $2
-         AND expires_at > NOW()
-         AND (last_seen_at IS NULL OR last_seen_at < $3)`,
+         AND expires_at::timestamptz > NOW()
+         AND (last_seen_at IS NULL OR last_seen_at::timestamptz < $3::timestamptz)`,
       [seen, token, throttleBefore],
     );
     return Number(row.user_id);
@@ -194,9 +199,9 @@ export const authSessionRepo = {
     }
     const result = await getPgPool().query<{ user_id: number }>(
       `SELECT DISTINCT user_id FROM sessions
-       WHERE expires_at > NOW()
+       WHERE expires_at::timestamptz > NOW()
          AND last_seen_at IS NOT NULL
-         AND last_seen_at > $1`,
+         AND last_seen_at::timestamptz > $1::timestamptz`,
       [cutoffIso],
     );
     return result.rows.map((row) => Number(row.user_id));
@@ -338,6 +343,7 @@ export const authSessionRepo = {
     requestedByRole: string;
     passwordHash: string;
     reason?: string | null;
+    idCardFilename?: string | null;
   }): Promise<PasswordResetRequest> {
     if (getProvider() === "sqlite") {
       return storage.createPasswordResetRequest(data);
@@ -345,18 +351,83 @@ export const authSessionRepo = {
 
     const result = await getPgPool().query(
       `INSERT INTO password_reset_requests
-      (user_id, requested_by_role, password_hash, reason, status, created_at)
-      VALUES ($1, $2, $3, $4, 'pending', $5)
+      (user_id, requested_by_role, password_hash, reason, id_card_filename, status, created_at)
+      VALUES ($1, $2, $3, $4, $5, 'pending', $6)
       RETURNING *`,
       [
         data.userId,
         data.requestedByRole,
         data.passwordHash,
         data.reason || null,
+        data.idCardFilename ?? null,
         new Date().toISOString(),
       ],
     );
     return mapPgPasswordResetRequest(result.rows[0] as Record<string, unknown>);
+  },
+
+  async getPendingPasswordResetRequestsByUser(
+    userId: number,
+  ): Promise<PasswordResetRequest[]> {
+    if (getProvider() === "sqlite") {
+      return storage.getPendingPasswordResetRequestsByUser(userId);
+    }
+    const result = await getPgPool().query(
+      `SELECT * FROM password_reset_requests
+       WHERE user_id = $1 AND status = 'pending'`,
+      [userId],
+    );
+    return result.rows.map((row) =>
+      mapPgPasswordResetRequest(row as Record<string, unknown>),
+    );
+  },
+
+  async setPasswordResetRequestIdCard(
+    id: number,
+    idCardFilename: string | null,
+  ): Promise<PasswordResetRequest | undefined> {
+    if (getProvider() === "sqlite") {
+      return storage.setPasswordResetRequestIdCard(id, idCardFilename);
+    }
+    const result = await getPgPool().query(
+      `UPDATE password_reset_requests SET id_card_filename = $1 WHERE id = $2 RETURNING *`,
+      [idCardFilename, id],
+    );
+    const row = result.rows[0];
+    return row ? mapPgPasswordResetRequest(row as Record<string, unknown>) : undefined;
+  },
+
+  async supersedePendingPasswordResetRequests(
+    userId: number,
+    exceptRequestId: number,
+  ): Promise<void> {
+    const pending = await this.getPendingPasswordResetRequestsByUser(userId);
+    const now = new Date().toISOString();
+    for (const req of pending) {
+      if (req.id === exceptRequestId) continue;
+      await deletePasswordResetIdCardFile(req.idCardFilename);
+      if (getProvider() === "sqlite") {
+        const { dbRun } = await import("./db-query");
+        await dbRun(
+          sql`UPDATE password_reset_requests
+              SET status = ${"rejected"},
+                  resolver_note = ${"Superseded by a newer password reset request."},
+                  id_card_filename = NULL,
+                  resolved_at = ${now}
+              WHERE id = ${req.id}`,
+        );
+      } else {
+        await getPgPool().query(
+          `UPDATE password_reset_requests
+           SET status = 'rejected',
+               resolver_note = $1,
+               id_card_filename = NULL,
+               resolved_at = $2
+           WHERE id = $3`,
+          ["Superseded by a newer password reset request.", now, req.id],
+        );
+      }
+    }
   },
 };
 

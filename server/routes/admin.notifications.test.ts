@@ -47,7 +47,7 @@ function makeReq(overrides: Partial<Request> = {}) {
 const store = {
   users: [{ id: 10, approved: false, fullName: "Pending User", username: "pending1", createdAt: "2026-05-01T00:00:00.000Z", role: "pending" }],
   downloads: [{ id: 20, user_id: 10, request_source: "hospital_case", date_from: null, date_to: null, reason: null, status: "pending", admin_note: null, resolved_by: null, created_at: "2026-05-01T00:01:00.000Z", resolved_at: null }],
-  resets: [{ id: 30, user_id: 10, requested_by_role: "student", password_hash: "hash", reason: null, status: "pending", resolved_by: null, resolver_note: null, created_at: "2026-05-01T00:02:00.000Z", resolved_at: null }],
+  resets: [{ id: 30, user_id: 10, requested_by_role: "student", password_hash: "hash", reason: null, status: "pending", resolved_by: null, resolver_note: null, id_card_filename: null, created_at: "2026-05-01T00:02:00.000Z", resolved_at: null }],
   notificationStates: new Map<string, { is_read: number; is_deleted: number }>(),
 };
 
@@ -55,6 +55,34 @@ vi.mock("../auth-session-repo", () => ({
   authSessionRepo: {
     getUsers: vi.fn(async () => store.users as any),
     getUserById: vi.fn(async (id: number) => store.users.find((u: any) => u.id === id) || { id, fullName: "User", username: "u", role: "student", approved: true }),
+    getUserDisplayByIds: vi.fn(async (ids: number[]) => {
+      const map = new Map<
+        number,
+        { fullName: string; username: string; designation: string; role: string }
+      >();
+      for (const id of ids) {
+        const u = store.users.find((x: any) => x.id === id) as
+          | { fullName: string; username: string; designation?: string; role: string }
+          | undefined;
+        map.set(
+          id,
+          u
+            ? {
+                fullName: u.fullName,
+                username: u.username,
+                designation: u.designation ?? "student",
+                role: u.role,
+              }
+            : {
+                fullName: "User",
+                username: "u",
+                designation: "student",
+                role: "student",
+              },
+        );
+      }
+      return map;
+    }),
     updateUser: vi.fn(async () => undefined),
   },
 }));

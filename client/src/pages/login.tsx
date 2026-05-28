@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { INACTIVITY_LOGOUT_FLAG_KEY, useAuth } from "@/lib/auth";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequestForm } from "@/lib/queryClient";
+import {
+  compressUniversityIdCardImage,
+  isAllowedCaseAttachmentImage,
+} from "@/lib/compress-case-attachment-image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,10 +25,24 @@ export default function LoginPage() {
   const [forgotIdentifier, setForgotIdentifier] = useState("");
   const [forgotNewPassword, setForgotNewPassword] = useState("");
   const [forgotReason, setForgotReason] = useState("");
+  const [forgotIdCardFile, setForgotIdCardFile] = useState<File | null>(null);
+  const [forgotIdCardPreviewUrl, setForgotIdCardPreviewUrl] = useState<string | null>(null);
+  const [forgotIdCardInputKey, setForgotIdCardInputKey] = useState(0);
+  const [forgotCompressingIdCard, setForgotCompressingIdCard] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [twoFactorPendingToken, setTwoFactorPendingToken] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [twoFactorLoading, setTwoFactorLoading] = useState(false);
+
+  useEffect(() => {
+    if (!forgotIdCardFile) {
+      setForgotIdCardPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(forgotIdCardFile);
+    setForgotIdCardPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [forgotIdCardFile]);
 
   useEffect(() => {
     const wasInactiveLogout = sessionStorage.getItem(INACTIVITY_LOGOUT_FLAG_KEY);
@@ -76,18 +94,52 @@ export default function LoginPage() {
       });
       return;
     }
-    setForgotLoading(true);
-    try {
-      const res = await apiRequest("POST", "/api/auth/password-reset-requests", {
-        usernameOrEmail: forgotIdentifier,
-        newPassword: forgotNewPassword,
-        reason: forgotReason || null,
+    if (!forgotIdCardFile) {
+      toast({
+        title: "Upload a photo of your university ID card",
+        variant: "destructive",
       });
+      return;
+    }
+    if (!isAllowedCaseAttachmentImage(forgotIdCardFile)) {
+      toast({
+        title: "University ID card must be a JPEG or PNG image",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setForgotLoading(true);
+    setForgotCompressingIdCard(true);
+    let preparedIdCard: File;
+    try {
+      preparedIdCard = await compressUniversityIdCardImage(forgotIdCardFile);
+    } catch (err: unknown) {
+      setForgotCompressingIdCard(false);
+      setForgotLoading(false);
+      toast({
+        title: err instanceof Error ? err.message : "Could not prepare ID card photo",
+        variant: "destructive",
+      });
+      return;
+    }
+    setForgotCompressingIdCard(false);
+
+    try {
+      const fd = new FormData();
+      fd.append("usernameOrEmail", forgotIdentifier);
+      fd.append("newPassword", forgotNewPassword);
+      if (forgotReason.trim()) fd.append("reason", forgotReason.trim());
+      fd.append("universityIdCard", preparedIdCard);
+
+      const res = await apiRequestForm("POST", "/api/auth/password-reset-requests", fd);
       const body = await res.json();
       toast({ title: body?.message || "Password reset request submitted" });
       setForgotIdentifier("");
       setForgotNewPassword("");
       setForgotReason("");
+      setForgotIdCardFile(null);
+      setForgotIdCardInputKey((k) => k + 1);
       setShowForgot(false);
     } catch (error: unknown) {
       toast({
@@ -212,8 +264,9 @@ export default function LoginPage() {
               {showForgot && (
                 <form onSubmit={submitForgotPassword} className="mt-4 space-y-3 border-t pt-4">
                   <p className="text-xs text-muted-foreground">
-                    Submit a reset request. Admin can approve non-admin requests, and
-                    superadmin can approve admin requests.
+                    Submit a reset request with a photo of your university ID card for
+                    verification. An admin will review it. Your ID photo is deleted once
+                    the request is approved or rejected.
                   </p>
                   <div className="space-y-1.5">
                     <Label htmlFor="forgotIdentifier">Username or Email</Label>
@@ -243,8 +296,52 @@ export default function LoginPage() {
                       placeholder="Why you need reset"
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={forgotLoading}>
-                    {forgotLoading ? "Submitting..." : "Submit Reset Request"}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="forgotUniversityIdCard">University ID card</Label>
+                    <Input
+                      key={forgotIdCardInputKey}
+                      id="forgotUniversityIdCard"
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      className="cursor-pointer"
+                      onChange={(e) => setForgotIdCardFile(e.target.files?.[0] ?? null)}
+                      data-testid="input-forgot-university-id-card"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      JPEG or PNG, up to 5MB. Larger photos are compressed to under 1MB
+                      before upload.
+                    </p>
+                    {forgotIdCardPreviewUrl && (
+                      <div className="flex items-center gap-3 pt-1">
+                        <img
+                          src={forgotIdCardPreviewUrl}
+                          alt="University ID card preview"
+                          className="h-16 w-auto max-w-[8rem] rounded-md object-contain border border-border bg-muted/30"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setForgotIdCardFile(null);
+                            setForgotIdCardInputKey((k) => k + 1);
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={forgotLoading || forgotCompressingIdCard}
+                  >
+                    {forgotCompressingIdCard
+                      ? "Preparing ID card…"
+                      : forgotLoading
+                        ? "Submitting..."
+                        : "Submit Reset Request"}
                   </Button>
                 </form>
               )}

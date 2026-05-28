@@ -35,6 +35,7 @@ import {
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 import { adToBs } from "@/lib/nepali-date";
 import { AdminSiteBackupPanel } from "@/components/admin-site-backup-panel";
+import { PasswordResetIdCardPreview } from "@/components/password-reset-id-card-preview";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 type FormEditLog = {
   id: number;
@@ -365,7 +366,8 @@ export default function AdminPanel({
     data: passwordResetRequests = [],
     error: passwordResetError,
   } = useQuery<
-    (PasswordResetRequest & {
+    (Omit<PasswordResetRequest, "passwordHash" | "idCardFilename"> & {
+      hasIdCard?: boolean;
       userName: string;
       userUsername: string;
       userRole: string;
@@ -1804,6 +1806,11 @@ export default function AdminPanel({
                           Reason: {r.reason}
                         </div>
                       )}
+                      <PasswordResetIdCardPreview
+                        requestId={r.id}
+                        hasIdCard={Boolean(r.hasIdCard)}
+                        status={r.status}
+                      />
                       {r.status === "pending" ? (
                         <div className="mt-2 space-y-1.5">
                           <Label htmlFor={`reset-note-${r.id}`} className="text-xs">
