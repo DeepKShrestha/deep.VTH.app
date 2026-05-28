@@ -25,13 +25,18 @@ function psqlExecutable(): string {
   return pgBin ? path.join(pgBin, name) : name;
 }
 
+function libpqCompatibleDatabaseUrl(rawUrl: string): string {
+  return rawUrl.replace(/sslmode=no-verify/gi, "sslmode=require");
+}
+
 async function runPsqlFile(dumpPath: string): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres restore");
+  const libpqUrl = libpqCompatibleDatabaseUrl(databaseUrl);
   const exe = psqlExecutable();
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn(exe, ["--dbname", databaseUrl, "-v", "ON_ERROR_STOP=1", "-f", dumpPath], {
-      env: process.env,
+    const proc = spawn(exe, ["--dbname", libpqUrl, "-v", "ON_ERROR_STOP=1", "-f", dumpPath], {
+      env: { ...process.env, PGSSLMODE: process.env.PGSSLMODE ?? "require" },
       windowsHide: true,
     });
     let err = "";

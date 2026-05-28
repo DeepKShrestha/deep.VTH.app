@@ -28,16 +28,29 @@ function pgDumpExecutable(): string {
   return pgBin ? path.join(pgBin, name) : name;
 }
 
+/**
+ * Translate pg-driver-only SSL values in the URL to libpq equivalents that
+ * `pg_dump` understands. `no-verify` (pg/Node) ≡ `require` (libpq, encrypted
+ * but no chain validation).
+ */
+function libpqCompatibleDatabaseUrl(rawUrl: string): string {
+  return rawUrl.replace(/sslmode=no-verify/gi, "sslmode=require");
+}
+
 async function runPgDumpSql(): Promise<string> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres backup");
+  const libpqUrl = libpqCompatibleDatabaseUrl(databaseUrl);
   const exe = pgDumpExecutable();
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(
       exe,
-      ["--format=p", "--clean", "--if-exists", "--no-owner", "--dbname", databaseUrl],
-      { env: process.env, windowsHide: true },
+      ["--format=p", "--clean", "--if-exists", "--no-owner", "--dbname", libpqUrl],
+      {
+        env: { ...process.env, PGSSLMODE: process.env.PGSSLMODE ?? "require" },
+        windowsHide: true,
+      },
     );
     proc.stdout.on("data", (c: Buffer) => chunks.push(c));
     let errBuf = "";
