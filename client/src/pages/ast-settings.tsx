@@ -142,7 +142,7 @@ export default function AstSettingsPage() {
             <CollapsibleContent>
               <CardContent className="space-y-3" onClick={(e) => e.stopPropagation()}>
             <label className="flex items-center justify-between gap-3 text-sm">
-              <span>Quick register mode (default ON/OFF)</span>
+              <span>Larger fields on the register form (default ON/OFF)</span>
               <Switch
                 checked={toggleDefaults.quickRegisterMode}
                 onCheckedChange={(checked) =>

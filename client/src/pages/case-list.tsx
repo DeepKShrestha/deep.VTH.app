@@ -346,7 +346,7 @@ export default function CaseList({
   return (
     <StickyScrollPage
       bodyClassName="space-y-6"
-      stickyClassName="max-sm:max-h-[min(48vh,22rem)] max-sm:overflow-y-auto"
+      stickyClassName="max-sm:max-h-[min(40vh,18rem)] max-sm:overflow-y-auto"
       sticky={
         <div className="space-y-4">
           <PageBreadcrumbs
@@ -378,7 +378,7 @@ export default function CaseList({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-9 gap-1.5"
+                className="gap-1.5"
                 title={compactCards ? "Comfortable card spacing" : "Compact list (denser cards)"}
                 onClick={() => setCompactCards((c) => !c)}
               >

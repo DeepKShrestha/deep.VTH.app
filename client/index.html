@@ -16,7 +16,12 @@
     <meta property="og:see_also" content="https://www.perplexity.ai/computer">
     <link rel="author" href="https://www.perplexity.ai/computer">
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <!--
+      Allow pinch-zoom on mobile/tablet for accessibility (low-vision users).
+      The previous `maximum-scale=1` prevented zooming; the form layouts here
+      do not rely on a fixed scale so removing it is safe.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet">
     <title>VTH Management System</title>

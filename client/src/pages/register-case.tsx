@@ -3422,9 +3422,12 @@ export default function RegisterCase({
           <CardContent className="pt-4 pb-3 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium">Quick register mode</p>
+                <p className="text-sm font-medium">Larger fields on this form</p>
                 <p className="text-xs text-muted-foreground">
-                  Optimized for tablet/mobile field work with bigger touch targets.
+                  Bumps every input on this page to a bigger touch target. The
+                  rest of the app already uses bigger fields on phones and
+                  tablets; turn this on if you want the desktop view to look
+                  the same when working from a touchscreen.
                 </p>
               </div>
               <Switch

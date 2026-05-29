@@ -376,10 +376,15 @@ export default function Welcome() {
       bodyClassName="space-y-6"
       sticky={
         <>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-sm">
-            <User className="w-4 h-4 text-muted-foreground" />
-            <span className="font-medium">{user?.fullName}</span>
+        {/*
+          Mobile: stack identity row above action buttons so the user's name
+          never gets pushed off-screen by the Profile/Notifications/Logout
+          row. Wraps back to a single row at `sm+` for tablet/desktop.
+        */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm min-w-0">
+            <User className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="font-medium truncate">{user?.fullName}</span>
             {user && (
               <Badge
                 variant="outline"
@@ -622,7 +627,13 @@ export default function Welcome() {
         </>
       }
     >
-      <div className="grid gap-4 md:grid-cols-2">
+      {/*
+        Mobile-first grid:
+          - 1 col below `sm` (phones): full-width cards, easy thumb scroll.
+          - 2 cols at `sm+` (tablet portrait): side-by-side, no wasted space.
+          - Admin card spans both columns at `md+` via `md:col-span-2`.
+      */}
+      <div className="grid gap-4 sm:grid-cols-2">
           <Card className="h-full flex flex-col">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -668,7 +679,7 @@ export default function Welcome() {
           </Card>
 
           {isAdmin && (
-            <Card className="md:col-span-2 flex flex-col">
+            <Card className="sm:col-span-2 flex flex-col">
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Shield className="w-4 h-4 text-primary" />
