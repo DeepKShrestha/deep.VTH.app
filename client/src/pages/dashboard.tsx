@@ -218,7 +218,7 @@ export default function DashboardPage({
   return (
     <StickyScrollPage
       maxWidthClass="max-w-[1300px]"
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="space-y-3">
         <div className="flex items-start sm:items-center gap-3 mb-3">

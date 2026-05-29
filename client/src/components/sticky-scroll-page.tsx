@@ -33,7 +33,13 @@ export const StickyScrollPage = forwardRef<HTMLDivElement, StickyScrollPageProps
       stickyClassName,
       bodyClassName,
       maxWidthClass = "max-w-4xl",
-      contentPaddingClass = "py-6",
+      // Default desktop vertical padding is `py-4` (16px) — previously
+      // `py-6` (24px). The looser default added 16px of vertical chrome to
+      // every page that didn't specify its own value, which the user
+      // described as "very very extra spacing". Mobile is `py-3` (12px).
+      // Pages that need more breathing room (settings hubs etc.) can still
+      // opt back in via the prop.
+      contentPaddingClass = "py-3 sm:py-4",
     },
     ref,
   ) {

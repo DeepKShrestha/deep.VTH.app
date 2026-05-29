@@ -7,6 +7,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { getAuthToken } from "@/lib/auth";
 import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
+import { DownloadFailedError, readDownloadErrorMessage } from "@/lib/download-error";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -125,9 +126,15 @@ export default function ExportDataPage() {
     fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok) {
-          throw new Error("Download failed");
+          // Surface the server-side reason so admins can see WHY the
+          // download failed (visibility toggle off, validation error,
+          // 5xx, etc.) instead of the generic "no permission" toast.
+          // The server returns JSON for every status; falling back to
+          // the status line when the body isn't JSON keeps this robust.
+          const message = await readDownloadErrorMessage(res);
+          throw new DownloadFailedError(message);
         }
         const disposition = res.headers.get("Content-Disposition");
         const downloadName = filenameFromContentDisposition(disposition, fallback);
@@ -152,9 +159,12 @@ export default function ExportDataPage() {
           queryKey: ["/api/download-requests/mine"],
         });
       })
-      .catch(() => {
+      .catch((error) => {
+        const description =
+          error instanceof DownloadFailedError ? error.message : undefined;
         toast({
-          title: "Download failed. You may not have permission.",
+          title: "Download failed",
+          description,
           variant: "destructive",
         });
       });
@@ -165,7 +175,7 @@ export default function ExportDataPage() {
   return (
     <StickyScrollPage
       maxWidthClass="max-w-3xl"
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="flex items-center gap-3">
           <Link href="/ast-report">

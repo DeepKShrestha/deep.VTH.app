@@ -3397,7 +3397,7 @@ export default function RegisterCase({
         </div>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
         {/* Registration / Bill Number */}
         <Card id="register-section-registration" className="scroll-mt-28">
           <CardHeader className="pb-4">
@@ -3487,7 +3487,7 @@ export default function RegisterCase({
             const astQuestion = visibleQuestions.find((q) => q.key === "astResults");
             const astIsRequired = Boolean(astQuestion?.required);
             return (
-              <div key={section.key} id={`register-section-${section.key}`} className="space-y-6 scroll-mt-28">
+              <div key={section.key} id={`register-section-${section.key}`} className="space-y-3 sm:space-y-4 scroll-mt-28">
         <Card>
           <CardHeader className="pb-4">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

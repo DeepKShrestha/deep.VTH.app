@@ -181,7 +181,7 @@ export default function BreakpointsPage() {
   return (
     <StickyScrollPage
       maxWidthClass="max-w-5xl"
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">

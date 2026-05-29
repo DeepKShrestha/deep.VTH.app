@@ -103,8 +103,8 @@ export default function HospitalTreatmentSettingsPage() {
   return (
     <StickyScrollPage
       maxWidthClass="max-w-5xl"
-      contentPaddingClass="py-8"
-      bodyClassName="space-y-6"
+      contentPaddingClass="py-3 sm:py-5"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="space-y-1">
           <PageBreadcrumbs

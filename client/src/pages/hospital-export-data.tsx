@@ -7,6 +7,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { getAuthToken } from "@/lib/auth";
 import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
+import { DownloadFailedError, readDownloadErrorMessage } from "@/lib/download-error";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -119,9 +120,12 @@ export default function HospitalExportDataPage() {
     fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok) {
-          throw new Error("Download failed");
+          // See the AST export page for the rationale; surface the
+          // actual server reason instead of a generic "no permission".
+          const message = await readDownloadErrorMessage(res);
+          throw new DownloadFailedError(message);
         }
         const disposition = res.headers.get("Content-Disposition");
         const downloadName = filenameFromContentDisposition(disposition, fallback);
@@ -145,9 +149,12 @@ export default function HospitalExportDataPage() {
           queryKey: ["/api/download-requests/mine"],
         });
       })
-      .catch(() => {
+      .catch((error) => {
+        const description =
+          error instanceof DownloadFailedError ? error.message : undefined;
         toast({
-          title: "Download failed. You may not have permission.",
+          title: "Download failed",
+          description,
           variant: "destructive",
         });
       });
@@ -158,7 +165,7 @@ export default function HospitalExportDataPage() {
   return (
     <StickyScrollPage
       maxWidthClass="max-w-3xl"
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="flex items-center gap-3">
           <Link href="/new-case">

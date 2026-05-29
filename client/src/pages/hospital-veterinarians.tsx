@@ -96,8 +96,8 @@ export default function HospitalVeterinariansPage() {
   return (
     <StickyScrollPage
       maxWidthClass="max-w-3xl"
-      contentPaddingClass="py-8"
-      bodyClassName="space-y-6"
+      contentPaddingClass="py-3 sm:py-5"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
         <div className="flex items-center gap-3">
           <Link href="/new-case/settings">

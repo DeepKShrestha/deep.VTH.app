@@ -1413,10 +1413,23 @@ export default function AdminPanel({
                     </div>
                     </div>
 
-                    {u.id !== currentUser?.id && (
+                    {(() => {
+                      // Compute action visibility once so we can also gate
+                      // the wrapper itself. Without this gate, a viewer
+                      // with no available actions on a row (e.g. an admin
+                      // looking at another admin) used to produce an empty
+                      // action row that ate vertical space on mobile —
+                      // particularly visible after we removed the
+                      // duplicate role pill that used to sit inside it.
+                      const canModifyRole =
+                        currentUser?.role === "superadmin" ||
+                        !["superadmin", "admin"].includes(u.role);
+                      const canManage2FA = isSuperAdmin && u.role === "admin";
+                      const hasAnyActions = canModifyRole || canManage2FA;
+                      if (u.id === currentUser?.id || !hasAnyActions) return null;
+                      return (
                       <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-shrink-0">
-                        {(currentUser?.role === "superadmin" ||
-                          !["superadmin", "admin"].includes(u.role)) && (
+                        {canModifyRole && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -1437,8 +1450,19 @@ export default function AdminPanel({
                           </Button>
                         )}
 
-                        {(currentUser?.role === "superadmin" ||
-                          !["superadmin", "admin"].includes(u.role)) ? (
+                        {/*
+                          Role changer — only rendered when the viewer
+                          actually has permission to change this user's
+                          role (superadmin can change anyone; admin can
+                          change non-admins). When the viewer is read-only
+                          for this row we intentionally render NOTHING
+                          here: the same role badge already sits inline
+                          with the user's name above, and showing it a
+                          second time made the mobile card look like the
+                          user had two role tags (see the duplicate "Admin"
+                          and "Super Admin" pills users reported on phones).
+                        */}
+                        {canModifyRole && (
                           <Select
                             value={u.role}
                             onValueChange={(role) => changeRoleMutation.mutate({ id: u.id, role })}
@@ -1461,11 +1485,9 @@ export default function AdminPanel({
                               <SelectItem value="student">Student</SelectItem>
                             </SelectContent>
                           </Select>
-                        ) : (
-                          roleBadge(u.role)
                         )}
 
-                        {isSuperAdmin && u.role === "admin" && (
+                        {canManage2FA && (
                           <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
                             <Label
                               htmlFor={`totp-enforce-${u.id}`}
@@ -1488,8 +1510,7 @@ export default function AdminPanel({
                           </div>
                         )}
 
-                        {(currentUser?.role === "superadmin" ||
-                          !["superadmin", "admin"].includes(u.role)) && (
+                        {canModifyRole && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -1501,7 +1522,8 @@ export default function AdminPanel({
                           </Button>
                         )}
                       </div>
-                    )}
+                      );
+                    })()}
 
                     {u.id === currentUser?.id && (
                       <span className="text-xs text-muted-foreground italic">You</span>

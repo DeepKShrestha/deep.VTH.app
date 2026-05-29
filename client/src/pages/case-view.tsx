@@ -389,7 +389,7 @@ export default function CaseView() {
   if (isLoading) {
     return (
       <StickyScrollPage
-        bodyClassName="space-y-6"
+        bodyClassName="space-y-3 sm:space-y-4"
         sticky={
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3 w-full min-w-0">
@@ -437,7 +437,7 @@ export default function CaseView() {
 
     return (
     <StickyScrollPage
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">

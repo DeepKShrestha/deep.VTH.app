@@ -514,7 +514,7 @@ export default function HospitalFormEditorPage() {
     <StickyScrollPage
       ref={editorRootRef}
       maxWidthClass="max-w-6xl"
-      bodyClassName="space-y-6"
+      bodyClassName="space-y-3 sm:space-y-4"
       sticky={
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
