@@ -29,6 +29,18 @@ function libpqCompatibleDatabaseUrl(rawUrl: string): string {
   return rawUrl.replace(/sslmode=no-verify/gi, "sslmode=require");
 }
 
+/**
+ * Match `backup-service.ts#libpqSubprocessEnv`: HOME is overridden so libpq
+ * cannot try to auto-load an unreadable cert in the service user's home dir.
+ */
+function libpqSubprocessEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: os.tmpdir(),
+    PGSSLMODE: process.env.PGSSLMODE ?? "require",
+  };
+}
+
 async function runPsqlFile(dumpPath: string): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres restore");
@@ -36,7 +48,7 @@ async function runPsqlFile(dumpPath: string): Promise<void> {
   const exe = psqlExecutable();
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(exe, ["--dbname", libpqUrl, "-v", "ON_ERROR_STOP=1", "-f", dumpPath], {
-      env: { ...process.env, PGSSLMODE: process.env.PGSSLMODE ?? "require" },
+      env: libpqSubprocessEnv(),
       windowsHide: true,
     });
     let err = "";

@@ -37,6 +37,24 @@ function libpqCompatibleDatabaseUrl(rawUrl: string): string {
   return rawUrl.replace(/sslmode=no-verify/gi, "sslmode=require");
 }
 
+/**
+ * Build env for libpq subprocesses (pg_dump / psql) that prevents libpq from
+ * auto-loading whatever happens to be at `$HOME/.postgresql/postgresql.crt`.
+ *
+ * Even with `sslmode=require`, libpq stats the default client-cert path; if a
+ * file exists but the runtime user cannot read it (e.g. left behind by an
+ * earlier `psql` invocation as root), the connection aborts with a confusing
+ * "Permission denied" error. Pointing `HOME` at the OS tmpdir gives libpq a
+ * dir with no `.postgresql/` to find, so it cleanly skips client-cert lookup.
+ */
+function libpqSubprocessEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: os.tmpdir(),
+    PGSSLMODE: process.env.PGSSLMODE ?? "require",
+  };
+}
+
 async function runPgDumpSql(): Promise<string> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres backup");
@@ -48,7 +66,7 @@ async function runPgDumpSql(): Promise<string> {
       exe,
       ["--format=p", "--clean", "--if-exists", "--no-owner", "--dbname", libpqUrl],
       {
-        env: { ...process.env, PGSSLMODE: process.env.PGSSLMODE ?? "require" },
+        env: libpqSubprocessEnv(),
         windowsHide: true,
       },
     );
