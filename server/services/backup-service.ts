@@ -13,6 +13,7 @@ import { dbRun } from "../db-query";
 import { buildS3ObjectKey, isS3Configured, uploadSiteBackupToS3 } from "./backup-remote";
 import { getBackupSettings } from "./backup-settings";
 import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir, getSiteBackupDir } from "./backup-paths";
+import { resolvePgTool } from "../libpq-bin";
 
 export type BackupKind = "manual" | "scheduled";
 
@@ -20,12 +21,6 @@ function timestampForFilename(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-function pgDumpExecutable(): string {
-  const pgBin = process.env.PG_BIN?.trim();
-  const name = process.platform === "win32" ? "pg_dump.exe" : "pg_dump";
-  return pgBin ? path.join(pgBin, name) : name;
 }
 
 /**
@@ -57,9 +52,10 @@ function formatPgDumpFailure(code: number | null, stderr: string, exe: string): 
     `The pg_dump binary (${exe}) is newer than your managed Postgres server. ` +
     `Ubuntu's postgresql-client is often ahead of DigitalOcean Managed Postgres.\n\n` +
     `Fix (pick one):\n` +
-    `1. DigitalOcean → your database → Settings → upgrade Postgres to the latest 16.x patch (recommended).\n` +
-    `2. On the Droplet, install a matching client and set PG_BIN in .env, e.g. PG_BIN=/usr/lib/postgresql/16/bin\n` +
-    `   (run: pg_dump --version and compare to the server version shown above).`
+    `Install a PostgreSQL client whose pg_dump version is >= the server version, e.g.\n` +
+    `  sudo apt install postgresql-client-18\n` +
+    `  pg_dump --version\n` +
+    `Optional: set PG_BIN=/usr/lib/postgresql/18/bin in .env if not on PATH.`
   );
 }
 
@@ -75,7 +71,7 @@ async function runPgDumpSql(): Promise<string> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres backup");
   const libpqUrl = libpqCompatibleDatabaseUrl(databaseUrl);
-  const exe = pgDumpExecutable();
+  const exe = resolvePgTool("dump");
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(
@@ -91,7 +87,18 @@ async function runPgDumpSql(): Promise<string> {
     proc.stderr.on("data", (c: Buffer) => {
       errBuf += String(c);
     });
-    proc.on("error", reject);
+    proc.on("error", (err) => {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        reject(
+          new Error(
+            `${exe} not found. Install postgresql-client (match your DB version), e.g. ` +
+              `sudo apt install postgresql-client-18, then restart vth-app.`,
+          ),
+        );
+        return;
+      }
+      reject(err);
+    });
     proc.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(formatPgDumpFailure(code, errBuf, exe)));

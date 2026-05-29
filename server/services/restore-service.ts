@@ -11,6 +11,7 @@ import {
   resumeSqliteAfterExternalDiskReplace,
 } from "../db";
 import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir } from "./backup-paths";
+import { resolvePgTool } from "../libpq-bin";
 
 export const RESTORE_CONFIRM_PHRASE = "RESTORE_SITE_DATA";
 
@@ -18,12 +19,6 @@ type BackupMeta = {
   version: number;
   dbProvider?: string;
 };
-
-function psqlExecutable(): string {
-  const pgBin = process.env.PG_BIN?.trim();
-  const name = process.platform === "win32" ? "psql.exe" : "psql";
-  return pgBin ? path.join(pgBin, name) : name;
-}
 
 function libpqCompatibleDatabaseUrl(rawUrl: string): string {
   return rawUrl.replace(/sslmode=no-verify/gi, "sslmode=require");
@@ -45,7 +40,7 @@ async function runPsqlFile(dumpPath: string): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for Postgres restore");
   const libpqUrl = libpqCompatibleDatabaseUrl(databaseUrl);
-  const exe = psqlExecutable();
+  const exe = resolvePgTool("psql");
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(exe, ["--dbname", libpqUrl, "-v", "ON_ERROR_STOP=1", "-f", dumpPath], {
       env: libpqSubprocessEnv(),
