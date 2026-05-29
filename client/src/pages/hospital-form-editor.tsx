@@ -68,13 +68,14 @@ function isHospitalBuiltinSection(section: { key: string; title: string }): bool
   const normalizedKey = normalizeQuestionId(section.key);
   const normalizedTitle = normalizeQuestionId(section.title);
   if (
-    ["owner", "animal", "history", "clinicalsignssymptoms", "avian", "vitals", "testssuggested", "diagnosis", "attendingveterinarian", "treatment", "final"].includes(normalizedKey)
+    ["owner", "animal", "chiefcomplaint", "history", "clinicalsignssymptoms", "avian", "vitals", "testssuggested", "diagnosis", "attendingveterinarian", "treatment", "final"].includes(normalizedKey)
   ) {
     return true;
   }
   return (
     normalizedTitle === "ownerinformation" ||
     normalizedTitle === "animalinformation" ||
+    normalizedTitle === "chiefcomplaint" ||
     normalizedTitle === "historyandpreviousmedication" ||
     normalizedTitle === "clinicalsignsandsymptoms" ||
     normalizedTitle === "avianinformation" ||

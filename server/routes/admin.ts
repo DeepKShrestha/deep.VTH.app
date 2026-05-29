@@ -25,6 +25,7 @@ import {
   routeOfAdministrationRepo,
 } from "../repos";
 import {
+  ensureHospitalChiefComplaintDefinition,
   ensureHospitalTreatmentDefinition,
   ensureHospitalVeterinarianDefinition,
   ensureHospitalVitalsDefinition,
@@ -548,6 +549,7 @@ export function registerAdminRoutes(app: Express) {
         await ensureHospitalTreatmentDefinition();
         await ensureHospitalVeterinarianDefinition();
         await ensureHospitalVitalsDefinition();
+        await ensureHospitalChiefComplaintDefinition();
       }
       let sections = await dbAll<{ key: string; title: string; display_order: number }>(
         sql`SELECT key, title, display_order FROM form_sections
@@ -724,6 +726,7 @@ export function registerAdminRoutes(app: Express) {
         [
           "owner",
           "animal",
+          "chief_complaint",
           "history",
           "avian",
           "vitals",

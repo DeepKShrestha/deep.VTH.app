@@ -34,6 +34,7 @@ import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { veterinarianRepo } from "../repos";
 import {
+  ensureHospitalChiefComplaintDefinition,
   ensureHospitalTreatmentDefinition,
   ensureHospitalVeterinarianDefinition,
   ensureHospitalVitalsDefinition,
@@ -1144,6 +1145,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       await ensureHospitalTreatmentDefinition();
       await ensureHospitalVeterinarianDefinition();
       await ensureHospitalVitalsDefinition();
+      await ensureHospitalChiefComplaintDefinition();
     }
     let sections = await dbAll<{ key: string; title: string; display_order: number }>(
       sql`SELECT key, title, display_order FROM form_sections

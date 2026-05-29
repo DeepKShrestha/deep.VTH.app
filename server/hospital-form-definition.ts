@@ -166,15 +166,14 @@ type VitalQuestionSeed = {
 };
 
 const HOSPITAL_VITALS_QUESTIONS: ReadonlyArray<VitalQuestionSeed> = [
-  { key: "chiefComplaint", label: "Chief Complaint", inputType: "textarea", displayOrder: 1000 },
-  { key: "temperature", label: "Temperature", inputType: "number", displayOrder: 2000 },
-  { key: "heartRate", label: "Heart Rate", inputType: "number", displayOrder: 3000 },
-  { key: "respiratoryRate", label: "Respiration", inputType: "number", displayOrder: 4000 },
-  { key: "crt", label: "CRT", inputType: "text", displayOrder: 5000 },
-  { key: "dehydrationPercentage", label: "Dehydration percentage", inputType: "number", displayOrder: 6000 },
-  { key: "rumenMotility", label: "Rumen Motility", inputType: "text", displayOrder: 7000 },
-  { key: "weight", label: "Weight", inputType: "number", displayOrder: 8000 },
-  { key: "colour", label: "Colour", inputType: "text", displayOrder: 9000 },
+  { key: "temperature", label: "Temperature", inputType: "number", displayOrder: 1000 },
+  { key: "heartRate", label: "Heart Rate", inputType: "number", displayOrder: 2000 },
+  { key: "respiratoryRate", label: "Respiration", inputType: "number", displayOrder: 3000 },
+  { key: "crt", label: "CRT", inputType: "text", displayOrder: 4000 },
+  { key: "dehydrationPercentage", label: "Dehydration percentage", inputType: "number", displayOrder: 5000 },
+  { key: "rumenMotility", label: "Rumen Motility", inputType: "text", displayOrder: 6000 },
+  { key: "weight", label: "Weight", inputType: "number", displayOrder: 7000 },
+  { key: "colour", label: "Colour", inputType: "text", displayOrder: 8000 },
 ];
 
 export async function ensureHospitalVitalsDefinition() {
@@ -236,5 +235,78 @@ export async function ensureHospitalVitalsDefinition() {
             WHERE key = ${q.key}`,
       );
     }
+  }
+}
+
+/**
+ * Chief Complaint is its own optional hospital section so it appears in the
+ * clinical visit order (after Animal, before History), separately from Vitals.
+ *
+ * Earlier builds put `chiefComplaint` inside the Vitals section. This function
+ * is idempotent and will pull any existing `chiefComplaint` row out of Vitals
+ * (or any other section) into the dedicated Chief Complaint section without
+ * touching admin customisations of `enabled` / `required`.
+ */
+const HOSPITAL_CHIEF_COMPLAINT_SECTION = {
+  key: "chief_complaint",
+  title: "Chief Complaint",
+  displayOrder: 2400,
+} as const;
+
+export async function ensureHospitalChiefComplaintDefinition() {
+  const section = await dbGet<{ key: string }>(
+    sql`SELECT key FROM form_sections WHERE key = ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key}`,
+  );
+  if (!section) {
+    await dbRun(
+      sql`INSERT INTO form_sections (key, title, display_order, form_scope)
+          VALUES (
+            ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key},
+            ${HOSPITAL_CHIEF_COMPLAINT_SECTION.title},
+            ${HOSPITAL_CHIEF_COMPLAINT_SECTION.displayOrder},
+            ${"hospital"}
+          )`,
+    );
+  } else {
+    await dbRun(
+      sql`UPDATE form_sections
+          SET form_scope = ${"hospital"}
+          WHERE key = ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key}`,
+    );
+  }
+
+  const existing = await dbGet<{ id: number }>(
+    sql`SELECT id FROM form_questions WHERE key = ${"chiefComplaint"}`,
+  );
+  if (!existing) {
+    await dbRun(
+      sql`INSERT INTO form_questions
+          (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at, form_scope)
+          VALUES (
+            ${"chiefComplaint"},
+            ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key},
+            ${"Chief Complaint"},
+            ${"textarea"},
+            ${null},
+            ${1},
+            ${0},
+            ${0},
+            ${1000},
+            ${1},
+            ${new Date().toISOString()},
+            ${"hospital"}
+          )`,
+    );
+  } else {
+    // Move the existing chiefComplaint row out of vitals (or wherever it
+    // ended up in a previous build) into the dedicated section. Leaves
+    // enabled / required intact so admin customisation is preserved.
+    await dbRun(
+      sql`UPDATE form_questions
+          SET section_key = ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key},
+              is_builtin = ${1},
+              form_scope = ${"hospital"}
+          WHERE key = ${"chiefComplaint"}`,
+    );
   }
 }

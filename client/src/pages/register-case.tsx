@@ -544,6 +544,8 @@ function isHospitalOnlySectionForAst(sectionKey: string, sectionTitle?: string):
     normalizedKey === "attending_veterinarian" ||
     normalizedKey === "avian" ||
     normalizedKey === "vitals" ||
+    normalizedKey === "chief_complaint" ||
+    normalizedKey === "chiefcomplaint" ||
     normalizedKey === "testssuggested" ||
     normalizedKey === "testsuggested" ||
     normalizedKey === "tests_suggested" ||
@@ -551,6 +553,7 @@ function isHospitalOnlySectionForAst(sectionKey: string, sectionTitle?: string):
     normalizedTitle.includes("clinicalsignsandsymptoms") ||
     normalizedTitle.includes("avianinformation") ||
     normalizedTitle.includes("vitals") ||
+    normalizedTitle.includes("chiefcomplaint") ||
     normalizedTitle.includes("testsuggested")
   );
 }
@@ -569,6 +572,7 @@ function isHospitalOnlyQuestionForAst(question: {
     "previousmedication",
     "clinical",
     "symptom",
+    "chiefcomplaint",
     "testsuggested",
     "vital",
     "temperature",
@@ -862,6 +866,21 @@ export default function RegisterCase({
   );
   const [quickRegisterMode, setQuickRegisterMode] = useState(defaultQuickRegisterMode);
   const [hideOptionalFields, setHideOptionalFields] = useState(defaultHideOptionalFields);
+
+  // Re-apply the settings-page defaults whenever they change. `useState` above
+  // only captures the initial value, so without this effect a register page
+  // that mounted before the prefs hydrated (or before the admin changed
+  // "Hide optional fields by default" in Settings) would stay stuck on the
+  // stale default. Resyncing on default changes makes the Settings toggle
+  // visibly apply to the register form. The user can still override either
+  // toggle in-page; that override holds until the underlying default changes
+  // again (which is a strong signal that they want the new behavior).
+  useEffect(() => {
+    setHideOptionalFields(defaultHideOptionalFields);
+  }, [defaultHideOptionalFields]);
+  useEffect(() => {
+    setQuickRegisterMode(defaultQuickRegisterMode);
+  }, [defaultQuickRegisterMode]);
 
     // NEW: toggle to use preset antibiotics
   const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(
