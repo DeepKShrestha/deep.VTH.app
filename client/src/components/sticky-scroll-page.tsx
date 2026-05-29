@@ -37,14 +37,19 @@ export const StickyScrollPage = forwardRef<HTMLDivElement, StickyScrollPageProps
     },
     ref,
   ) {
+    // Mobile-first gutters: `px-3` (12px) on phones, `px-4` (16px) at `sm+`.
+    // Saves ~8px usable width on every page — material on a 360px screen
+    // where each px counts. Sticky bar matches with `-mx-3 px-3 sm:-mx-4
+    // sm:px-4` so it still bleeds edge-to-edge inside the column. Vertical
+    // sticky padding also tightens (`pb-2 sm:pb-3`).
     return (
       <div
         ref={ref}
-        className={cn(maxWidthClass, "mx-auto px-4", contentPaddingClass, className)}
+        className={cn(maxWidthClass, "mx-auto px-3 sm:px-4", contentPaddingClass, className)}
       >
         <div
           className={cn(
-            "sticky top-0 z-30 -mx-4 px-4 pb-3 mb-1 border-b border-border/60 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/85 shadow-sm",
+            "sticky top-0 z-30 -mx-3 px-3 sm:-mx-4 sm:px-4 pb-2 sm:pb-3 mb-1 border-b border-border/60 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/85 shadow-sm",
             stickyClassName,
           )}
         >

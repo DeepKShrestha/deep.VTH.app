@@ -372,36 +372,50 @@ export default function Welcome() {
     <StickyScrollPage
       maxWidthClass="max-w-3xl w-full"
       className="min-h-[calc(100vh-60px)]"
-      contentPaddingClass="py-6"
-      bodyClassName="space-y-6"
+      contentPaddingClass="py-4 sm:py-6"
+      bodyClassName="space-y-4 sm:space-y-6"
       sticky={
         <>
         {/*
-          Mobile: stack identity row above action buttons so the user's name
-          never gets pushed off-screen by the Profile/Notifications/Logout
-          row. Wraps back to a single row at `sm+` for tablet/desktop.
+          Mobile layout:
+            - Row 1: identity (icon + name on a single inner line, badges
+              kept together on a second inner line so a single badge never
+              wraps alone — the "Super Admin" badge used to float off on
+              its own row, which looked broken).
+            - Row 2: action buttons rendered as an equal-width 3-up grid so
+              Profile / Notifications / Logout are visually balanced. The
+              Logout button is still a destructive ghost on desktop but on
+              mobile it gets a subtle border so it doesn't look detached
+              from the other two outline buttons.
+          Desktop (`sm+`) restores the original single-row layout: identity
+          flows inline with badges, action buttons sit right-aligned in a
+          standard flex row.
         */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm min-w-0">
-            <User className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="font-medium truncate">{user?.fullName}</span>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-y-1 sm:gap-2 text-sm min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <User className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="font-medium truncate">{user?.fullName}</span>
+            </div>
             {user && (
-              <Badge
-                variant="outline"
-                className={`text-xs ${designationBadgeClass(user.designation)}`}
-              >
-                {designationLabel(user.designation)}
-              </Badge>
-            )}
-            {user && user.role !== "student" && (
-              <Badge variant="outline" className={`text-xs ${roleBadgeClass(user.role)}`}>
-                {roleLabel(user.role)}
-              </Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${designationBadgeClass(user.designation)}`}
+                >
+                  {designationLabel(user.designation)}
+                </Badge>
+                {user.role !== "student" && (
+                  <Badge variant="outline" className={`text-xs ${roleBadgeClass(user.role)}`}>
+                    {roleLabel(user.role)}
+                  </Badge>
+                )}
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <Link href="/profile">
-              <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-profile">
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:gap-2 sm:flex-wrap sm:justify-end">
+            <Link href="/profile" className="w-full sm:w-auto">
+              <Button variant="outline" size="sm" className="w-full sm:w-auto gap-1.5" data-testid="button-profile">
                 <User className="w-3.5 h-3.5" />
                 Profile
               </Button>
@@ -412,7 +426,7 @@ export default function Welcome() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="relative gap-1.5"
+                    className="relative w-full sm:w-auto gap-1.5"
                     data-testid="button-notifications"
                   >
                     <Bell className="w-3.5 h-3.5" />
@@ -601,7 +615,7 @@ export default function Welcome() {
             <Button
               variant="ghost"
               size="sm"
-              className="gap-1.5 text-red-500 hover:text-red-700"
+              className="w-full sm:w-auto gap-1.5 text-red-500 hover:text-red-700 border border-red-200 sm:border-0 hover:border-red-300"
               onClick={handleLogout}
               data-testid="button-logout"
             >
@@ -611,16 +625,23 @@ export default function Welcome() {
           </div>
         </div>
 
-        <div className="text-center space-y-3">
+        {/*
+          Hero is tightened on phones to keep the module cards visible
+          without scrolling:
+            - Icon bubble: 48px on mobile, 64px at `sm+`.
+            - Intro sentence hidden on mobile (the cards explain themselves
+              and the title bar already names the hospital).
+        */}
+        <div className="text-center space-y-2 sm:space-y-3">
           <div className="flex justify-center">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Microscope className="w-8 h-8 text-primary" />
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
             </div>
           </div>
-          <h1 className="text-xl font-bold tracking-tight" data-testid="text-title">
+          <h1 className="text-lg sm:text-xl font-bold tracking-tight" data-testid="text-title">
             Veterinary Teaching Hospital
           </h1>
-          <p className="text-sm text-muted-foreground max-w-xl mx-auto">
+          <p className="hidden sm:block text-sm text-muted-foreground max-w-xl mx-auto">
             Choose one of the core modules to continue.
           </p>
         </div>
