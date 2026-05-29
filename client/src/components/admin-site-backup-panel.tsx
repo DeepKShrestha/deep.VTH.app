@@ -15,7 +15,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getAuthToken } from "@/lib/auth";
-import { Database, Download, Loader2, Upload } from "lucide-react";
+import { Database, Download, Loader2, Trash2, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const CONFIRM_PHRASE = "RESTORE_SITE_DATA";
 
@@ -120,6 +131,62 @@ export function AdminSiteBackupPanel() {
     },
   });
 
+  const deleteHistoryMutation = useMutation({
+    mutationFn: async ({
+      id,
+      withFile,
+    }: {
+      id: number;
+      withFile: boolean;
+    }) => {
+      const qs = withFile ? "?withFile=true" : "";
+      await apiRequest("DELETE", `/api/admin/backup/history/${id}${qs}`);
+    },
+    onSuccess: () => {
+      toast({ title: "Backup entry deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/local-files"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Could not delete entry", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const clearFailedMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", "/api/admin/backup/history?status=failed");
+      return res.json() as Promise<{ deleted: number }>;
+    },
+    onSuccess: (data) => {
+      toast({
+        title:
+          data.deleted > 0
+            ? `Removed ${data.deleted} failed ${data.deleted === 1 ? "entry" : "entries"}`
+            : "No failed entries to remove",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/history"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Could not clear failed entries", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteLocalFileMutation = useMutation({
+    mutationFn: async (filename: string) => {
+      await apiRequest(
+        "DELETE",
+        `/api/admin/backup/local-files/${encodeURIComponent(filename)}`,
+      );
+    },
+    onSuccess: () => {
+      toast({ title: "Backup file deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/local-files"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Could not delete file", description: e.message, variant: "destructive" });
+    },
+  });
+
   const restoreMutation = useMutation({
     mutationFn: async () => {
       if (!restoreFile) throw new Error("Choose a backup zip file.");
@@ -196,24 +263,58 @@ export function AdminSiteBackupPanel() {
                     <span className="text-xs text-muted-foreground shrink-0">
                       {formatBytes(f.sizeBytes)}
                     </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 gap-1 text-xs"
-                      onClick={() =>
-                        downloadBackupFile(f.filename).catch((e: Error) =>
-                          toast({
-                            title: "Download failed",
-                            description: e.message,
-                            variant: "destructive",
-                          }),
-                        )
-                      }
-                    >
-                      <Download className="w-3 h-3" />
-                      Download
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 text-xs"
+                        onClick={() =>
+                          downloadBackupFile(f.filename).catch((e: Error) =>
+                            toast({
+                              title: "Download failed",
+                              description: e.message,
+                              variant: "destructive",
+                            }),
+                          )
+                        }
+                      >
+                        <Download className="w-3 h-3" />
+                        Download
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:text-destructive"
+                            aria-label={`Delete ${f.filename}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete this backup file?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Removes <span className="font-mono">{f.filename}</span> from local
+                              storage. The history entry is kept so you still have a record. This
+                              cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              onClick={() => deleteLocalFileMutation.mutate(f.filename)}
+                            >
+                              Delete file
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -221,8 +322,42 @@ export function AdminSiteBackupPanel() {
           </div>
 
           <div className="rounded-md border divide-y">
-            <div className="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
-              Recent backup runs
+            <div className="px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40 flex items-center justify-between gap-2">
+              <span>Recent backup runs</span>
+              {history.some((h) => h.status !== "success") && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[11px] gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Clear failed
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Clear all failed backup entries?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Removes every history row with status &ldquo;failed&rdquo;. No backup
+                        zip files are touched (failed runs never produced one). This cannot
+                        be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={() => clearFailedMutation.mutate()}
+                      >
+                        Clear failed
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
             </div>
             {historyLoading ? (
               <p className="px-3 py-4 text-sm text-muted-foreground">Loading…</p>
@@ -230,31 +365,91 @@ export function AdminSiteBackupPanel() {
               <p className="px-3 py-4 text-sm text-muted-foreground">No history yet.</p>
             ) : (
               <ul className="max-h-56 overflow-auto">
-                {history.slice(0, 50).map((h) => (
-                  <li key={h.id} className="px-3 py-2 text-xs border-b last:border-0">
-                    <div className="flex flex-wrap justify-between gap-1">
-                      <span className="font-medium">{h.kind}</span>
-                      <span
-                        className={
-                          h.status === "success"
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-destructive"
-                        }
-                      >
-                        {h.status}
-                      </span>
-                    </div>
-                    <div className="text-muted-foreground mt-0.5">
-                      {new Date(h.created_at).toLocaleString()} · {h.db_provider}
-                    </div>
-                    {h.filename ? (
-                      <div className="font-mono truncate mt-0.5">{h.filename}</div>
-                    ) : null}
-                    {h.error_message ? (
-                      <div className="text-destructive mt-1 whitespace-pre-wrap">{h.error_message}</div>
-                    ) : null}
-                  </li>
-                ))}
+                {history.slice(0, 50).map((h) => {
+                  const isSuccess = h.status === "success";
+                  const stillExists =
+                    isSuccess && localFiles.some((f) => f.filename === h.filename);
+                  return (
+                    <li key={h.id} className="px-3 py-2 text-xs border-b last:border-0">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap justify-between gap-1">
+                            <span className="font-medium">{h.kind}</span>
+                            <span
+                              className={
+                                isSuccess
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-destructive"
+                              }
+                            >
+                              {h.status}
+                            </span>
+                          </div>
+                          <div className="text-muted-foreground mt-0.5">
+                            {new Date(h.created_at).toLocaleString()} · {h.db_provider}
+                          </div>
+                          {h.filename ? (
+                            <div className="font-mono truncate mt-0.5">{h.filename}</div>
+                          ) : null}
+                          {h.error_message ? (
+                            <div className="text-destructive mt-1 whitespace-pre-wrap">{h.error_message}</div>
+                          ) : null}
+                        </div>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive shrink-0"
+                              aria-label="Delete entry"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete this backup entry?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {stillExists ? (
+                                  <>
+                                    Removes the history row <strong>and</strong> the local zip{" "}
+                                    <span className="font-mono">{h.filename}</span>. This
+                                    cannot be undone.
+                                  </>
+                                ) : isSuccess ? (
+                                  <>
+                                    Removes the history row only. The backup file is no
+                                    longer on disk (retention may have removed it).
+                                  </>
+                                ) : (
+                                  <>
+                                    Removes the failed history row. No file was created by
+                                    this run.
+                                  </>
+                                )}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() =>
+                                  deleteHistoryMutation.mutate({
+                                    id: h.id,
+                                    withFile: stillExists,
+                                  })
+                                }
+                              >
+                                {stillExists ? "Delete entry & file" : "Delete entry"}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

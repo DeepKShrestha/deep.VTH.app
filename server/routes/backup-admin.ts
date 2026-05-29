@@ -74,6 +74,89 @@ export function registerBackupAdminRoutes(app: Express) {
     },
   );
 
+  /**
+   * Delete a single backup_history row. If `?withFile=true` and the row
+   * references a valid `site-YYYYMMDD-HHMMSS.zip` that still lives on disk,
+   * the zip is deleted too. Failed rows have an empty filename and never
+   * touch the filesystem.
+   */
+  app.delete(
+    "/api/admin/backup/history/:id",
+    requireAuth,
+    requireRole("superadmin"),
+    async (req, res) => {
+      const id = Number.parseInt(String(req.params.id ?? ""), 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Invalid history id" });
+      }
+      const withFile = String(req.query.withFile ?? "").toLowerCase() === "true";
+      const rows = await dbAll<{ filename: string }>(
+        sql`SELECT filename FROM backup_history WHERE id = ${id}`,
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "History entry not found" });
+      }
+      const filename = rows[0]!.filename;
+      let fileDeleted = false;
+      if (withFile && filename && /^site-\d{8}-\d{6}\.zip$/i.test(filename)) {
+        const fullPath = path.join(getSiteBackupDir(), filename);
+        try {
+          await fsp.unlink(fullPath);
+          fileDeleted = true;
+        } catch {
+          // file already gone or never existed — fine, continue
+        }
+      }
+      await dbRun(sql`DELETE FROM backup_history WHERE id = ${id}`);
+      return res.json({ deleted: true, fileDeleted });
+    },
+  );
+
+  /** Bulk delete all failed history rows. Returns the count removed. */
+  app.delete(
+    "/api/admin/backup/history",
+    requireAuth,
+    requireRole("superadmin"),
+    async (req, res) => {
+      const status = String(req.query.status ?? "").toLowerCase();
+      if (status !== "failed") {
+        return res
+          .status(400)
+          .json({ message: "Only ?status=failed bulk delete is supported" });
+      }
+      const before = await dbAll<{ n: number | string }>(
+        sql`SELECT COUNT(*) AS n FROM backup_history WHERE status = ${"failed"}`,
+      );
+      await dbRun(sql`DELETE FROM backup_history WHERE status = ${"failed"}`);
+      return res.json({ deleted: Number(before[0]?.n ?? 0) });
+    },
+  );
+
+  /** Delete a single local backup zip; the history row (if any) is kept. */
+  app.delete(
+    "/api/admin/backup/local-files/:filename",
+    requireAuth,
+    requireRole("superadmin"),
+    async (req, res) => {
+      const raw = String(req.params.filename ?? "");
+      const safe = path.basename(raw);
+      if (!/^site-\d{8}-\d{6}\.zip$/i.test(safe)) {
+        return res.status(400).json({ message: "Invalid backup filename" });
+      }
+      const fullPath = path.join(getSiteBackupDir(), safe);
+      try {
+        await fsp.unlink(fullPath);
+        return res.json({ deleted: true });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/no such file|enoent/i.test(msg)) {
+          return res.status(404).json({ message: "Backup file not found" });
+        }
+        return res.status(500).json({ message: msg });
+      }
+    },
+  );
+
   app.get(
     "/api/admin/backup/settings",
     requireAuth,
