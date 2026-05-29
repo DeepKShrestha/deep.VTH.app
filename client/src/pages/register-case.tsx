@@ -763,6 +763,11 @@ export default function RegisterCase({
     staleTime: 0,
     refetchOnMount: "always",
   });
+  const { data: durationOptionsData = [] } = useQuery<string[]>({
+    queryKey: ["/api/durations"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
   const { data: veterinariansData = [] } = useQuery<Veterinarian[]>({
     queryKey: ["/api/veterinarians"],
     queryFn: async () => {
@@ -2588,6 +2593,7 @@ export default function RegisterCase({
       const routeOptions = routeOptionItems.map((item) => item.value);
       const frequencyOptions = frequencyOptionItems.map((item) => item.value);
       const doseUnitOptions = Array.from(new Set(doseUnitOptionsData.filter(Boolean)));
+      const durationOptions = Array.from(new Set(durationOptionsData.filter(Boolean)));
 
       const normalizedRows = current.medications.map((row) => ({
         ...row,
@@ -2709,7 +2715,13 @@ export default function RegisterCase({
               const doseUnitKey = `${q.key}:${rowId}:doseUnit`;
               const routeKey = `${q.key}:${rowId}:route`;
               const frequencyKey = `${q.key}:${rowId}:frequency`;
+              const durationKey = `${q.key}:${rowId}:duration`;
               const doseUnitOptionItems: FilterableOption[] = doseUnitOptions.map((option) => ({
+                value: option,
+                label: option,
+                searchText: option,
+              }));
+              const durationOptionItems: FilterableOption[] = durationOptions.map((option) => ({
                 value: option,
                 label: option,
                 searchText: option,
@@ -2760,7 +2772,16 @@ export default function RegisterCase({
                       }
                       onChange={(value) => updateMedicationRow(rowId, { frequency: value })}
                     />
-                    <Input value={row.duration} onChange={(e) => updateMedicationRow(rowId, { duration: e.target.value })} placeholder="Duration" />
+                    <FilterableField
+                      value={row.duration}
+                      options={durationOptionItems}
+                      placeholder="Duration"
+                      customMode={Boolean(treatmentCustomSelectMode[durationKey])}
+                      onCustomModeChange={(next) =>
+                        setTreatmentCustomSelectMode((prev) => ({ ...prev, [durationKey]: next }))
+                      }
+                      onChange={(value) => updateMedicationRow(rowId, { duration: value })}
+                    />
                   </div>
 
                   {row.showNote ? (
