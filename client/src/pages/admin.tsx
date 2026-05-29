@@ -3099,6 +3099,20 @@ function AdminAuditLogPanel() {
 
         {auditQuery.isLoading ? (
           <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+        ) : auditQuery.isError ? (
+          // Previously we rendered "No admin actions recorded yet." for
+          // both the empty-table case AND the request-failed case, which
+          // hid a real production bug where the SELECT query was
+          // failing on Postgres. Always show the actual server message
+          // so the next regression is visible.
+          <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+            <p className="font-medium">Couldn't load the audit log.</p>
+            <p className="text-xs mt-1 opacity-90">
+              {auditQuery.error instanceof Error
+                ? auditQuery.error.message
+                : "Unknown error"}
+            </p>
+          </div>
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground py-6 text-center">
             No admin actions recorded yet.

@@ -2,7 +2,7 @@ import type { Express, RequestHandler } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { dbAll, dbGet, dbRun } from "../db-query";
 import {
   getIdParam,
@@ -2649,6 +2649,22 @@ export function registerAdminRoutes(app: Express) {
       }
       await dbRun(sql`DELETE FROM users WHERE id = ${id}`);
       await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      // Audit the single-user delete. Bulk and batch delete already
+      // wrote audit rows; this endpoint (the trash icon on a single
+      // row in the Users tab) used to silently delete an account with
+      // no trace, which made the audit log misleading.
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "user.delete",
+        targetType: "user",
+        targetId: id,
+        details: {
+          deletedUsername: targetUser.username,
+          deletedFullName: targetUser.fullName,
+          deletedRole: targetUser.role,
+        },
+      });
       res.json({ message: "User removed" });
     },
   );
@@ -2742,6 +2758,7 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin"),
     async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
       const id = getIdParam(req);
       const targetUser = await authSessionRepo.getUserById(id);
       if (!targetUser) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
@@ -2786,6 +2803,39 @@ export function registerAdminRoutes(app: Express) {
       const updated = await authSessionRepo.updateUser(id, updates);
       if (!updated)
         return res.status(500).json({ message: "Failed to update user" });
+
+      // Audit only the fields that actually changed value, not every
+      // field the request body included. This avoids logging a no-op
+      // when the admin opens the Edit form and presses Save without
+      // changing anything (the form submits all fields back).
+      const changes: Record<string, { from: string; to: string }> = {};
+      type EditableKey = "fullName" | "address" | "phone" | "email" | "username" | "designation";
+      const editableKeys: EditableKey[] = [
+        "fullName",
+        "address",
+        "phone",
+        "email",
+        "username",
+        "designation",
+      ];
+      for (const key of editableKeys) {
+        const next = (updates as Record<string, string | undefined>)[key];
+        if (next === undefined) continue;
+        const prev = (targetUser as unknown as Record<string, string | undefined>)[key] ?? "";
+        if (next !== prev) {
+          changes[key] = { from: prev, to: next };
+        }
+      }
+      if (Object.keys(changes).length > 0) {
+        await logAdminAction({
+          actorUserId: currentUser.id,
+          actorRole: currentUser.role,
+          actionType: "user.profile.edit",
+          targetType: "user",
+          targetId: updated.id,
+          details: { changes },
+        });
+      }
 
       res.json(toClientSafeUser(updated));
     },
@@ -3099,14 +3149,26 @@ export function registerAdminRoutes(app: Express) {
         created_at: string;
       };
 
+      // Build the WHERE clause dynamically. The previous implementation
+      // inlined `(${param} IS NULL OR col = ${param})` for every filter,
+      // which works on SQLite but fails on Postgres with
+      // "could not determine data type of parameter $1" — Postgres can't
+      // infer a type for an untyped NULL bound parameter on the left of
+      // `IS NULL`. That bug silently broke the audit log panel for every
+      // production deployment on Postgres (the only env we ship to).
+      const conditions: SQL[] = [];
+      if (before !== null) conditions.push(sql`id < ${before}`);
+      if (actor !== null) conditions.push(sql`actor_user_id = ${actor}`);
+      if (actionType) conditions.push(sql`action_type = ${actionType}`);
+      if (targetType) conditions.push(sql`target_type = ${targetType}`);
+      const whereClause =
+        conditions.length === 0
+          ? sql``
+          : sql` WHERE ${sql.join(conditions, sql` AND `)}`;
+
       const rows = await dbAll<LogRow>(
         sql`SELECT id, actor_user_id, actor_role, action_type, target_type, target_id, details_json, created_at
-            FROM admin_action_logs
-            WHERE 1=1
-              AND (${before} IS NULL OR id < ${before})
-              AND (${actor} IS NULL OR actor_user_id = ${actor})
-              AND (${actionType} = '' OR action_type = ${actionType})
-              AND (${targetType} = '' OR target_type = ${targetType})
+            FROM admin_action_logs${whereClause}
             ORDER BY id DESC
             LIMIT ${limit}`,
       );
