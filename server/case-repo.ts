@@ -126,7 +126,9 @@ function buildCaseListWhere(scope: CaseScope | undefined, filters: CaseListFilte
   }
   const sp = filters.species?.trim();
   if (sp) {
-    parts.push(sql`species = ${sp}`);
+    // Case-insensitive exact match — cases are stored title-cased (e.g. "Canine")
+    // but the list filter must still work when the UI sends a different case.
+    parts.push(sql`LOWER(TRIM(species)) = LOWER(${sp})`);
   }
   if (filters.dateFrom?.trim()) {
     parts.push(sql`date >= ${filters.dateFrom.trim()}`);
@@ -391,19 +393,25 @@ export const caseRepo = {
       parts.push(sql`(${sql.join(dateBranches, sql` OR `)})`);
     }
     if (filters.species && filters.species !== "all") {
-      parts.push(sql`species = ${filters.species}`);
+      parts.push(sql`LOWER(TRIM(species)) = LOWER(${filters.species.trim()})`);
     }
     if (filters.breed && filters.breed !== "all") {
-      parts.push(sql`breed = ${filters.breed}`);
+      parts.push(sql`LOWER(TRIM(breed)) = LOWER(${filters.breed.trim()})`);
     }
     if (filters.sex && filters.sex !== "all") {
-      parts.push(sql`COALESCE(sex, 'Unknown') = ${filters.sex}`);
+      parts.push(
+        sql`LOWER(TRIM(COALESCE(sex, 'Unknown'))) = LOWER(${filters.sex.trim()})`,
+      );
     }
     if (filters.sampleType && filters.sampleType !== "all") {
-      parts.push(sql`COALESCE(sample_type, 'Unknown') = ${filters.sampleType}`);
+      parts.push(
+        sql`LOWER(TRIM(COALESCE(sample_type, 'Unknown'))) = LOWER(${filters.sampleType.trim()})`,
+      );
     }
     if (filters.organism && filters.organism !== "all") {
-      parts.push(sql`TRIM(COALESCE(culture_result, '')) = ${filters.organism}`);
+      parts.push(
+        sql`LOWER(TRIM(COALESCE(culture_result, ''))) = LOWER(${filters.organism.trim()})`,
+      );
     }
 
     const where = sql.join(parts, sql` AND `);

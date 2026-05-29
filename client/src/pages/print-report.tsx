@@ -11,6 +11,12 @@ import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
 import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
+import {
+  formatRespiratoryVitalValue,
+  isHospitalRespiratoryFieldKey,
+  isHospitalVitalExamFieldKey,
+  resolveRespiratoryFieldLabel,
+} from "@/lib/hospital-vitals-display";
 
 interface AstRow {
   antibiotic: string;
@@ -71,17 +77,7 @@ function resolveHospitalSectionKey(key: string): HospitalSectionKey {
   if (n.includes("clinical") || n.includes("symptom") || n.includes("chiefcomplaint")) {
     return "clinicalSigns";
   }
-  if (
-    n.includes("temperature") ||
-    n.includes("heartrate") ||
-    n.includes("respiration") ||
-    n.includes("resprate") ||
-    n.includes("rumenmotility") ||
-    n.includes("dehydration") ||
-    n.includes("crt") ||
-    n.includes("weight") ||
-    n.includes("chiefcomplaint")
-  ) {
+  if (isHospitalVitalExamFieldKey(key) || n.includes("chiefcomplaint")) {
     return "vitalsExam";
   }
   if (
@@ -131,12 +127,8 @@ function resolveFieldOrderAndLabel(rawLabel: string, rawKey: string) {
   }
   if (source.includes("temperature")) return { order: 50, label: "Temperature" };
   if (source.includes("heartrate")) return { order: 60, label: "Heart Rate" };
-  if (
-    source.includes("respiratoryrate") ||
-    source.includes("respirationrate") ||
-    source.includes("resprate")
-  ) {
-    return { order: 70, label: "Respiration" };
+  if (isHospitalRespiratoryFieldKey(rawKey, rawLabel)) {
+    return { order: 70, label: resolveRespiratoryFieldLabel(rawLabel) };
   }
   if (source.includes("rumenmotility")) return { order: 80, label: "Rumen Motility" };
   if (source.includes("crt")) return { order: 90, label: "CRT" };
@@ -166,10 +158,8 @@ function withClinicalUnit(label: string, rawValue: string): string {
     if (/bpm/i.test(value)) return value;
     return `${value} bpm`;
   }
-  if (n === "respiration") {
-    if (/breath|\/min|per\s*min|bpm/i.test(value)) return value;
-    return `${value} breaths/min`;
-  }
+  const respiratory = formatRespiratoryVitalValue(label, value);
+  if (respiratory !== value) return respiratory;
   if (n === "rumenmotility") {
     if (/\/min|per\s*min/i.test(value)) return value;
     return `${value} /min`;

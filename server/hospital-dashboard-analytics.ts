@@ -525,6 +525,11 @@ function isAvianSpecies(species: string): boolean {
   return AVIAN_PATTERN.test(species);
 }
 
+/** Case-insensitive trimmed equality for dashboard secondary filters. */
+function filterValueMatches(stored: string, selected: string): boolean {
+  return stored.trim().toLowerCase() === selected.trim().toLowerCase();
+}
+
 const IMAGING_KEYS: Array<{ key: string; label: string }> = [
   { key: "xrayDetails", label: "X-Ray" },
   { key: "ultrasoundDetails", label: "Ultrasound" },
@@ -886,14 +891,18 @@ export function computeHospitalDashboard(
     const dept = String(c.veterinarianDepartment ?? "").trim();
     const vet = String(c.veterinarianName ?? "").trim();
     const species = String(c.species ?? "").trim();
-    if (departmentFilter && departmentFilter !== "all" && dept !== departmentFilter) return false;
-    if (vetFilter && vetFilter !== "all" && vet !== vetFilter) return false;
+    if (departmentFilter && departmentFilter !== "all" && !filterValueMatches(dept, departmentFilter)) {
+      return false;
+    }
+    if (vetFilter && vetFilter !== "all" && !filterValueMatches(vet, vetFilter)) {
+      return false;
+    }
     if (avianOnly && !isAvianSpecies(species)) return false;
     if (medClassFilter && medClassFilter !== "all") {
       const meds = flattenMedications(parseTreatmentDetails(c.treatmentDetails));
       const hasClass = meds.some((m) => {
         const klass = medicationClassByName.get(String(m.medication ?? "").trim().toLowerCase());
-        return klass === medClassFilter;
+        return filterValueMatches(klass ?? "", medClassFilter);
       });
       if (!hasClass) return false;
     }

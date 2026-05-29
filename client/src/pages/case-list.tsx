@@ -4,6 +4,13 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Case } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -275,6 +282,24 @@ export default function CaseList({
       ),
   });
 
+  const { data: caseFilterOptions } = useQuery<{ species: string[] }>({
+    queryKey: ["/api/cases/filter-options", caseScope],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/cases/filter-options?scope=${caseScope}`);
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const speciesFilterOptions = useMemo(() => {
+    const fromCases = caseFilterOptions?.species ?? [];
+    const selected = speciesFilter.trim();
+    if (selected && !fromCases.some((s) => s.toLowerCase() === selected.toLowerCase())) {
+      return [selected, ...fromCases].sort((a, b) => a.localeCompare(b));
+    }
+    return fromCases;
+  }, [caseFilterOptions?.species, speciesFilter]);
+
   const filtered = casesPayload?.items ?? [];
   const total = casesPayload?.total ?? 0;
   const totalPages = Math.max(1, casesPayload?.totalPages ?? 1);
@@ -507,14 +532,25 @@ export default function CaseList({
                   so they fit without stacking; result count drops below.
                 - Desktop: original wrap layout. */}
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center sm:flex sm:flex-row sm:items-end sm:flex-wrap">
-            <Input
-              type="text"
-              placeholder="Species"
-              value={speciesFilter}
-              onChange={(e) => setSpeciesFilter(e.target.value)}
-              className="text-sm sm:max-w-xs"
-              data-testid="input-species-filter"
-            />
+            <Select
+              value={speciesFilter.trim() || "__all__"}
+              onValueChange={(value) => setSpeciesFilter(value === "__all__" ? "" : value)}
+            >
+              <SelectTrigger
+                className="text-sm sm:max-w-xs h-11 md:h-9"
+                data-testid="select-species-filter"
+              >
+                <SelectValue placeholder="All species" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All species</SelectItem>
+                {speciesFilterOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <CaseListDateFilterDialog
               dateFrom={dateFromBs}
               dateTo={dateToBs}

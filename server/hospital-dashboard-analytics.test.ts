@@ -380,6 +380,18 @@ describe("computeHospitalDashboard", () => {
     expect(out.drilldownRows[0]?.department).toBe("Poultry");
   });
 
+  it("department filter is case-insensitive", () => {
+    const out = computeHospitalDashboard({
+      cases: fixtureCases(),
+      groupBy: "month",
+      medicationClassByName: medMap,
+      filters: { department: "poultry", vet: "all", medicationClass: "all", avianOnly: false },
+      now,
+    });
+    expect(out.overview.totalCases).toBe(1);
+    expect(out.drilldownRows[0]?.department).toBe("Poultry");
+  });
+
   it("drilldownRows expose computed counts", () => {
     const out = computeHospitalDashboard({
       cases: fixtureCases(),

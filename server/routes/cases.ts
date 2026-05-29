@@ -533,7 +533,12 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     });
 
     const astFiltered = astRows.filter((r) => {
-      if (antibioticFilter !== "all" && r.antibiotic !== antibioticFilter) return false;
+      if (
+        antibioticFilter !== "all" &&
+        r.antibiotic.trim().toLowerCase() !== antibioticFilter.trim().toLowerCase()
+      ) {
+        return false;
+      }
       if (resultFilter !== "ALL" && resultFilter !== "all" && r.resultCategory !== resultFilter)
         return false;
       return true;
@@ -1571,6 +1576,22 @@ export function registerCaseAndDownloadRoutes(app: Express) {
         createdAt: row.created_at,
       })),
     );
+  });
+
+  app.get("/api/cases/filter-options", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
+    if (!userCanViewScope(currentUser.role, scope)) {
+      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    const viewer = caseViewerAccess(currentUser);
+    const options = await caseRepo.getDashboardFilterOptions(scope, viewer);
+    return res.json({
+      species: options.species,
+      breeds: options.breeds,
+      sexes: options.sexes,
+      sampleTypes: options.sampleTypes,
+    });
   });
 
   app.get("/api/cases", requireAuth, async (req, res) => {
