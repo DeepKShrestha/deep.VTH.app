@@ -632,30 +632,38 @@ export default function PrintReport() {
                   if (!items || items.length === 0) return null;
                   if (sectionKey === "other") return null;
                   if (sectionKey === "vitalsExam") {
-                    const byLabel = new Map(items.map((item) => [normalizeKey(item.label), item.value]));
-                    const vitalsCells = [
-                      ["Temperature", byLabel.get("temperature")],
-                      ["Heart Rate", byLabel.get("heartrate")],
-                      ["Respiration", byLabel.get("respiration")],
-                      ["Rumen Motility", byLabel.get("rumenmotility")],
-                      ["CRT", byLabel.get("crt")],
-                      ["Dehydration %", byLabel.get("dehydrationpercentage")],
-                      ["Weight", byLabel.get("weight")],
-                    ]
-                      .filter(([, v]) => v !== undefined && String(v).trim().length > 0)
-                      .map(([k, v]) => ({
-                        label: String(k),
-                        value: withClinicalUnit(String(k), String(v ?? "")),
-                      }));
-                    const fallback = items
-                      .map((item) => `${item.label}: ${withClinicalUnit(item.label, String(item.value))}`)
-                      .join(" | ");
+                    // Print view: render every filled vital (including any
+                    // admin-added custom vital from the Hospital Form Editor).
+                    // Empty vitals (e.g. Rumen Motility on a dog) are excluded
+                    // entirely — no labeled blank cell, no `&nbsp;` filler.
+                    // The grid is chunked into rows of 4 with the final row
+                    // padded by empty `<td>`s only when needed to keep table
+                    // column widths consistent for print.
+                    const vitalsCells = items
+                      .map((item) => {
+                        const text = Array.isArray(item.value)
+                          ? item.value.join(", ")
+                          : String(item.value ?? "");
+                        const trimmed = text.trim();
+                        if (!trimmed) return null;
+                        return {
+                          label: item.label,
+                          value: withClinicalUnit(item.label, trimmed),
+                        };
+                      })
+                      .filter((c): c is { label: string; value: string } => c !== null);
+                    if (vitalsCells.length === 0) return null;
+                    const columnsPerRow = 4;
+                    const rows: Array<typeof vitalsCells> = [];
+                    for (let i = 0; i < vitalsCells.length; i += columnsPerRow) {
+                      rows.push(vitalsCells.slice(i, i + columnsPerRow));
+                    }
                     return (
                       <table key={sectionKey} className="w-full table-fixed text-[10px] border border-gray-400 print-table">
                         <thead>
                           <tr className="bg-gray-100">
                             <th
-                              colSpan={4}
+                              colSpan={columnsPerRow}
                               className="py-1 px-2 text-left border border-gray-400 font-semibold text-black"
                             >
                               {HOSPITAL_SECTION_TITLES[sectionKey]}
@@ -663,50 +671,36 @@ export default function PrintReport() {
                           </tr>
                         </thead>
                         <tbody>
-                          {vitalsCells.length > 0 ? (
-                            <>
-                              <tr className="border-b border-gray-300">
-                                {[...vitalsCells.slice(0, 4), ...Array(Math.max(0, 4 - vitalsCells.slice(0, 4).length)).fill(null)].map((cell, idx) => (
+                          {rows.map((rowCells, rowIdx) => {
+                            const padding = columnsPerRow - rowCells.length;
+                            return (
+                              <tr
+                                key={`vitals-row-${rowIdx}`}
+                                className="border-b border-gray-300"
+                              >
+                                {rowCells.map((cell) => (
                                   <td
-                                    key={cell ? cell.label : `empty-top-${idx}`}
+                                    key={cell.label}
                                     className="py-1 px-2 text-black align-top"
                                   >
-                                    {cell ? (
-                                      <div className="break-words">
-                                        <span className="font-semibold text-gray-700">{cell.label}:</span>{" "}
-                                        <span>{cell.value}</span>
-                                      </div>
-                                    ) : (
-                                      <span>&nbsp;</span>
-                                    )}
+                                    <div className="break-words">
+                                      <span className="font-semibold text-gray-700">
+                                        {cell.label}:
+                                      </span>{" "}
+                                      <span>{cell.value}</span>
+                                    </div>
                                   </td>
                                 ))}
+                                {padding > 0 &&
+                                  Array.from({ length: padding }).map((_, padIdx) => (
+                                    <td
+                                      key={`vitals-row-${rowIdx}-pad-${padIdx}`}
+                                      className="py-1 px-2 text-black align-top"
+                                    />
+                                  ))}
                               </tr>
-                              <tr className="border-b border-gray-300">
-                                {[...vitalsCells.slice(4, 8), ...Array(Math.max(0, 4 - vitalsCells.slice(4, 8).length)).fill(null)].map((cell, idx) => (
-                                  <td
-                                    key={cell ? cell.label : `empty-${idx}`}
-                                    className="py-1 px-2 text-black align-top"
-                                  >
-                                    {cell ? (
-                                      <div className="break-words">
-                                        <span className="font-semibold text-gray-700">{cell.label}:</span>{" "}
-                                        <span>{cell.value}</span>
-                                      </div>
-                                    ) : (
-                                      <span>&nbsp;</span>
-                                    )}
-                                  </td>
-                                ))}
-                              </tr>
-                            </>
-                          ) : (
-                            <tr>
-                              <td className="py-1 px-2 text-black whitespace-pre-wrap">
-                                {fallback}
-                              </td>
-                            </tr>
-                          )}
+                            );
+                          })}
                         </tbody>
                       </table>
                     );

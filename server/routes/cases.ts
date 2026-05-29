@@ -65,9 +65,20 @@ function resolveFormScope(raw: unknown): "ast" | "hospital" {
   return String(raw ?? "ast").toLowerCase() === "hospital" ? "hospital" : "ast";
 }
 
-/** Students only see cases they registered (`registered_by`); staff/admin unchanged. */
-function caseViewerAccess(user: { id: number; role: string }): CaseViewerAccess | undefined {
-  if (user.role === "student") return { role: "student", userId: user.id };
+/**
+ * Per-user row filter for case reads.
+ *
+ * Historically this was used to restrict students to cases they registered
+ * (`registered_by = user.id`). That policy was lifted so every authenticated
+ * role with the relevant `*.case.view` capability can see ALL cases in the
+ * module — this is intentional: students need to learn from cases handled by
+ * other clinicians (diagnosis, treatment approach, etc.).
+ *
+ * The function is kept (rather than inlined as `undefined`) so a future
+ * per-role data-scope policy (e.g. batch-scoped students) can be added in
+ * one place without touching every read call site.
+ */
+function caseViewerAccess(_user: { id: number; role: string }): CaseViewerAccess | undefined {
   return undefined;
 }
 
@@ -1468,17 +1479,11 @@ export function registerCaseAndDownloadRoutes(app: Express) {
 
     // Scope-filter by what the user can view — never leak hospital data to
     // someone with only AST view rights, even though we matched on owner.
+    // (Students are NOT restricted to their own cases here: see policy in
+    // `caseViewerAccess()` — all roles with view capability see all cases.)
     const filtered = matches.filter((row) => {
       const rowScope = resolveCaseScopeFromCaseNumber(row.case_number);
-      if (!userCanViewScope(currentUser.role, rowScope)) return false;
-      if (
-        currentUser.role === "student" &&
-        row.registered_by != null &&
-        row.registered_by !== currentUser.id
-      ) {
-        return false;
-      }
-      return true;
+      return userCanViewScope(currentUser.role, rowScope);
     });
 
     return res.json(

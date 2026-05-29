@@ -712,65 +712,43 @@ export default function CaseView() {
               if (!items || items.length === 0) return null;
               if (sectionKey === "other") return null;
               if (sectionKey === "vitalsExam") {
-                const byLabel = new Map(items.map((item) => [normalizeKey(item.label), item.value]));
-                const vitalsCells = [
-                  ["Temperature", byLabel.get("temperature")],
-                  ["Heart Rate", byLabel.get("heartrate")],
-                  ["Respiration", byLabel.get("respiration")],
-                  ["Rumen Motility", byLabel.get("rumenmotility")],
-                  ["CRT", byLabel.get("crt")],
-                  ["Dehydration %", byLabel.get("dehydrationpercentage")],
-                  ["Weight", byLabel.get("weight")],
-                ]
-                  .filter(([, v]) => v !== undefined && String(v).trim().length > 0)
-                  .map(([k, v]) => ({
-                    label: String(k),
-                    value: withClinicalUnit(String(k), String(v ?? "")),
-                  }));
-                const fallback = items
-                  .map((item) => `${item.label}: ${withClinicalUnit(item.label, String(item.value))}`)
-                  .join(" | ");
+                // `items` is already pre-filtered to drop empty values and is
+                // sorted by `resolveFieldOrderAndLabel` (Temp → HR → Resp →
+                // Rumen Motility → CRT → Dehydration% → Weight → any custom
+                // admin-added vital). We render every filled vital — including
+                // custom ones admins added via the Hospital Form Editor — and
+                // intentionally do NOT render placeholder cells for empty
+                // vitals (e.g. Rumen Motility on a dog), so the table only
+                // ever shows clinically meaningful data.
+                const vitalsCells = items
+                  .map((item) => {
+                    const text = Array.isArray(item.value)
+                      ? item.value.join(", ")
+                      : String(item.value ?? "");
+                    const trimmed = text.trim();
+                    if (!trimmed) return null;
+                    return {
+                      label: item.label,
+                      value: withClinicalUnit(item.label, trimmed),
+                    };
+                  })
+                  .filter((c): c is { label: string; value: string } => c !== null);
+                if (vitalsCells.length === 0) return null;
                 return (
                   <div key={sectionKey} className="space-y-2 border-t border-slate-300 pt-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
                       {HOSPITAL_SECTION_TITLES[sectionKey]}
                     </h3>
-                    {vitalsCells.length > 0 ? (
-                      <div className="rounded-md border overflow-hidden">
-                        <table className="w-full text-xs">
-                          <tbody>
-                            <tr className="border-b">
-                              {vitalsCells.slice(0, 4).map((cell) => (
-                                <td key={cell.label} className="p-2 align-top border-r last:border-r-0">
-                                  <p className="font-medium leading-4">
-                                    <span className="text-slate-600">{cell.label}:</span>{" "}
-                                    <span>{cell.value}</span>
-                                  </p>
-                                </td>
-                              ))}
-                            </tr>
-                            <tr>
-                              {[...vitalsCells.slice(4, 8), ...Array(Math.max(0, 4 - vitalsCells.slice(4, 8).length)).fill(null)].map((cell, idx) => (
-                                <td key={cell ? cell.label : `empty-${idx}`} className="p-2 align-top border-r last:border-r-0">
-                                  {cell ? (
-                                    <p className="font-medium leading-4">
-                                      <span className="text-slate-600">{cell.label}:</span>{" "}
-                                      <span>{cell.value}</span>
-                                    </p>
-                                  ) : (
-                                    <span>&nbsp;</span>
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          </tbody>
-                        </table>
+                    <div className="rounded-md border p-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-1.5">
+                        {vitalsCells.map((cell) => (
+                          <div key={cell.label} className="text-xs leading-5">
+                            <span className="text-slate-600">{cell.label}:</span>{" "}
+                            <span className="font-medium">{cell.value}</span>
+                          </div>
+                        ))}
                       </div>
-                    ) : (
-                      <div className="rounded-md border p-2.5 text-sm leading-5">
-                        <p>{fallback}</p>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 );
               }

@@ -701,8 +701,8 @@ Current effective capability model:
   - `hospital.case.create`, `hospital.case.view`, `ast.case.create`, `ast.case.view`, `ast.download`
 - `student`
   - `hospital.case.create`, `hospital.case.view`, `ast.case.view`
-  - **Data scope:** students only see **cases they registered** (`registered_by`) in list, detail, exports, dashboard aggregates, and patient‑history matches—unless you change that policy in code.
-  - note: download path for students is handled by request-approval logic in `canDownload`
+  - **Data scope:** students see **all cases** in both modules — list, detail, print, patient‑history, and exports (after admin approval). This is intentional so students can learn from cases handled by other clinicians (diagnosis, treatment approach, etc.). The per-user filter lives in `caseViewerAccess()` in `server/routes/cases.ts`; tighten that one function if you ever need to scope students again (e.g. batch‑scoped data).
+  - note: bulk downloads for students still go through the request‑approval flow in `canDownload`; only the per‑user row filter has been lifted.
 - `pending`
   - no case-view/create capabilities (blocked from AST/Hospital case flows)
 
