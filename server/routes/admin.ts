@@ -3173,24 +3173,46 @@ export function registerAdminRoutes(app: Express) {
             LIMIT ${limit}`,
       );
 
-      const actorIds = Array.from(
-        new Set(rows.map((r) => r.actor_user_id).filter((v): v is number => Number.isFinite(v))),
-      );
-      const actorDisplay = await authSessionRepo.getUserDisplayByIds(actorIds);
+      // Resolve actor and (when the target is a user) target display names
+      // in a single batched DB lookup so the audit table can show real
+      // names instead of bare numeric IDs. Targets whose user has since
+      // been deleted return undefined here and surface as "Deleted user"
+      // on the client.
+      const actorIds = rows
+        .map((r) => r.actor_user_id)
+        .filter((v): v is number => Number.isFinite(v));
+      const userTargetIds = rows
+        .filter((r) => r.target_type === "user")
+        .map((r) => Number(r.target_id))
+        .filter((v) => Number.isFinite(v) && v > 0);
+      const display = await authSessionRepo.getUserDisplayByIds([
+        ...actorIds,
+        ...userTargetIds,
+      ]);
 
       res.json(
-        rows.map((row) => ({
-          id: row.id,
-          actorUserId: row.actor_user_id,
-          actorRole: row.actor_role,
-          actorName: actorDisplay.get(row.actor_user_id)?.fullName ?? null,
-          actorUsername: actorDisplay.get(row.actor_user_id)?.username ?? null,
-          actionType: row.action_type,
-          targetType: row.target_type,
-          targetId: row.target_id,
-          details: row.details_json ? safeParseJson(row.details_json) : null,
-          createdAt: row.created_at,
-        })),
+        rows.map((row) => {
+          const actor = display.get(row.actor_user_id);
+          const targetIdNum = Number(row.target_id);
+          const targetUser =
+            row.target_type === "user" && Number.isFinite(targetIdNum) && targetIdNum > 0
+              ? display.get(targetIdNum)
+              : undefined;
+          return {
+            id: row.id,
+            actorUserId: row.actor_user_id,
+            actorRole: row.actor_role,
+            actorName: actor?.fullName ?? null,
+            actorUsername: actor?.username ?? null,
+            actionType: row.action_type,
+            targetType: row.target_type,
+            targetId: row.target_id,
+            targetName: targetUser?.fullName ?? null,
+            targetUsername: targetUser?.username ?? null,
+            details: row.details_json ? safeParseJson(row.details_json) : null,
+            createdAt: row.created_at,
+          };
+        }),
       );
     },
   );

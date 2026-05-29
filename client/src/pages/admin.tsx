@@ -35,6 +35,7 @@ import {
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 import { adToBs } from "@/lib/nepali-date";
 import { AdminSiteBackupPanel } from "@/components/admin-site-backup-panel";
+import { UserAvatar } from "@/components/user-avatar";
 import { PasswordResetIdCardPreview } from "@/components/password-reset-id-card-preview";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 type FormEditLog = {
@@ -1352,7 +1353,7 @@ export default function AdminPanel({
                 <CardContent className="pt-4 pb-3">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div
-                      className={`flex flex-1 min-w-0 items-start ${usersMultiSelectMode ? "gap-3" : ""}`}
+                      className={`flex flex-1 min-w-0 items-start gap-3`}
                     >
                       {usersMultiSelectMode &&
                         (() => {
@@ -1389,6 +1390,22 @@ export default function AdminPanel({
                             />
                           );
                         })()}
+                      {/*
+                        Round avatar in front of each approved user — uses
+                        the uploaded profile photo if any, otherwise the
+                        person's initials, otherwise a generic person icon.
+                        `mt-0.5` keeps it visually centred on the first
+                        text line on both mobile and desktop; `shrink-0`
+                        guarantees it never deforms even when the email/
+                        designation row wraps on narrow phones.
+                      */}
+                      <UserAvatar
+                        photoUrl={u.profilePhotoUrl}
+                        name={u.fullName}
+                        size={36}
+                        tone="muted"
+                        className="mt-0.5"
+                      />
                       <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{u.fullName}</span>
@@ -2978,6 +2995,15 @@ type AdminActionLogEntry = {
   actionType: string;
   targetType: string;
   targetId: string | null;
+  /**
+   * Resolved full name for `targetType === "user"` rows. Null when the
+   * target user no longer exists (was deleted) OR when the target is not
+   * a user (e.g. `targetType === "site"` for restores). The UI uses this
+   * to show real names alongside the numeric ID.
+   */
+  targetName: string | null;
+  /** Resolved username for user targets; same null semantics as targetName. */
+  targetUsername: string | null;
   details: unknown;
   createdAt: string;
 };
@@ -3154,10 +3180,46 @@ function AdminAuditLogPanel() {
                     </td>
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1">
-                        <div>
-                          <div>{row.targetType}</div>
-                          {row.targetId != null && (
-                            <div className="text-muted-foreground">#{row.targetId}</div>
+                        <div className="min-w-0">
+                          {/*
+                            For user targets, prefer "Full Name" on top with
+                            "@username · #id" underneath so the row reads as
+                            a person, not a database row. Falls back to
+                            "Deleted user · #id" if the user was removed
+                            since the action was logged (lookup returned no
+                            row). Non-user targets (e.g. "site" for a
+                            restore) keep the previous compact rendering.
+                          */}
+                          {row.targetType === "user" ? (
+                            row.targetName ? (
+                              <>
+                                <div className="font-medium">{row.targetName}</div>
+                                <div className="text-muted-foreground">
+                                  {row.targetUsername ? `@${row.targetUsername} · ` : ""}
+                                  #{row.targetId}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="font-medium text-muted-foreground italic">
+                                  Deleted user
+                                </div>
+                                {row.targetId != null && (
+                                  <div className="text-muted-foreground">
+                                    #{row.targetId}
+                                  </div>
+                                )}
+                              </>
+                            )
+                          ) : (
+                            <>
+                              <div>{row.targetType}</div>
+                              {row.targetId != null && (
+                                <div className="text-muted-foreground">
+                                  #{row.targetId}
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                         {row.targetId != null && (

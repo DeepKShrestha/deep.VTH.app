@@ -163,7 +163,7 @@ describe("GET /api/admin/action-logs — Postgres-safe WHERE clause", () => {
     expect(auditSelect!.toLowerCase()).not.toContain(" is null");
   });
 
-  it("returns rows newest-first with parsed details", async () => {
+  it("returns rows newest-first with parsed details and resolved target names", async () => {
     const app = new MockApp();
     registerAdminRoutes(app as unknown as any);
 
@@ -179,6 +179,12 @@ describe("GET /api/admin/action-logs — Postgres-safe WHERE clause", () => {
     expect(payload[0].details).toEqual({ fromRole: "student", toRole: "staff" });
     expect(payload[0].actorName).toBe("Actor 1");
     expect(payload[0].actorUsername).toBe("actor1");
+    // New: user-target rows must surface the resolved target identity so the
+    // UI can show real names instead of bare "#42" cells.
+    expect(payload[0].targetType).toBe("user");
+    expect(payload[0].targetId).toBe("42");
+    expect(payload[0].targetName).toBe("Actor 42");
+    expect(payload[0].targetUsername).toBe("actor42");
   });
 
   it("adds an action_type filter only when one is supplied", async () => {
