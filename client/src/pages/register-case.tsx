@@ -718,11 +718,6 @@ export default function RegisterCase({
     () => (mode === "hospital" ? getHospitalToggleDefaults() : null),
     [mode, toggleDefaultsVersion],
   );
-  const defaultHideOptionalFields =
-    mode === "hospital"
-      ? (hospitalToggleDefaults?.hideOptionalFields ?? false)
-      : astToggleDefaults.hideOptionalFields;
-
   const { data: caseInfo } = useQuery<{
     caseNumber: string;
     dailyNumber: number;
@@ -860,19 +855,6 @@ export default function RegisterCase({
   const [autoMode, setAutoMode] = useState(
     mode === "hospital" ? true : astToggleDefaults.autoMode,
   );
-  const [hideOptionalFields, setHideOptionalFields] = useState(defaultHideOptionalFields);
-
-  // Re-apply the settings-page defaults whenever they change. `useState` above
-  // only captures the initial value, so without this effect a register page
-  // that mounted before the prefs hydrated (or before the admin changed
-  // "Hide optional fields by default" in Settings) would stay stuck on the
-  // stale default. Resyncing on default changes makes the Settings toggle
-  // visibly apply to the register form. The user can still override either
-  // toggle in-page; that override holds until the underlying default changes
-  // again (which is a strong signal that they want the new behavior).
-  useEffect(() => {
-    setHideOptionalFields(defaultHideOptionalFields);
-  }, [defaultHideOptionalFields]);
 
     // NEW: toggle to use preset antibiotics
   const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(
@@ -3273,7 +3255,13 @@ export default function RegisterCase({
       </div>
     );
   };
-  const shouldShowQuestion = (required: boolean, key?: string) => {
+  const shouldShowQuestion = (_required: boolean, key?: string) => {
+    // Previously this consulted a "Hide optional fields" toggle to filter
+    // out non-required questions. The toggle was removed because the
+    // hospital form editor wasn't reliably writing the `required` flag on
+    // every question, so the toggle appeared to do nothing in practice.
+    // The `_required` argument is kept (with an underscore prefix) so all
+    // existing call sites don't need to change.
     if (
       mode === "hospital" &&
       (key === "animalName" || key === "age" || key === "sex")
@@ -3281,7 +3269,7 @@ export default function RegisterCase({
       if (isAvianSpecies && key === "animalName") return false;
       return true;
     }
-    return !hideOptionalFields || required;
+    return true;
   };
   const isBulletPointsEnabled = (fieldKey: string, fallback = false) => {
     if (bulletPointModes[fieldKey] !== undefined) return bulletPointModes[fieldKey]!;
@@ -3410,21 +3398,6 @@ export default function RegisterCase({
       }
     >
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card>
-          <CardContent className="pt-4 pb-3 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">
-                Hide optional fields
-              </p>
-              <Switch
-                checked={hideOptionalFields}
-                onCheckedChange={setHideOptionalFields}
-                data-testid="switch-hide-optional-fields"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Registration / Bill Number */}
         <Card id="register-section-registration" className="scroll-mt-28">
           <CardHeader className="pb-4">

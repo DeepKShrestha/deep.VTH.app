@@ -780,43 +780,66 @@ export default function CaseView() {
                     {HOSPITAL_SECTION_TITLES[sectionKey]}
                   </h3>
                   {sectionKey === "testsSuggested" ? (
+                    /*
+                      Tests Suggested layout.
+                        Desktop (`sm+`): the original fixed-width 3-column
+                          table where simple rows lay out 3-up and detail
+                          rows put the label in a narrow column with the
+                          value spanning the remaining 2.
+                        Mobile (<sm): the table-fixed + whitespace-nowrap
+                          label produced visible clipping — e.g.
+                          "1. Rapid diagnostic testParvo, Anaplasma, …" — on
+                          a ~320px screen because the 22% label column was
+                          ~70px wide but the no-wrap label painted into the
+                          value column. We swap to `display:block` on every
+                          table element so each row reads as stacked text:
+                          label on its own line with the value indented
+                          underneath. The data structure is unchanged so
+                          desktop and print views still render identically.
+                    */
                     <div className="rounded-md border overflow-hidden text-xs">
                       {(() => {
                         let mainTestSerial = 0;
                         return (
-                      <table className="w-full table-fixed">
-                        <thead>
-                          <tr className="bg-muted/50 border-b">
-                            <th className="text-left px-2 py-1 font-semibold text-slate-800" colSpan={3}>
+                      <table className="w-full sm:table-fixed max-sm:block">
+                        <thead className="max-sm:block">
+                          <tr className="bg-muted/50 border-b max-sm:block">
+                            <th className="text-left px-2 py-1 font-semibold text-slate-800 max-sm:block" colSpan={3}>
                               {HOSPITAL_SECTION_TITLES[sectionKey]}
                             </th>
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody className="max-sm:block">
                           {buildHospitalTestsSuggestedLayout(
                             customFieldEntries.filter(
                               ([key]) => resolveHospitalSectionKey(key) === "testsSuggested",
                             ),
                           ).map((row, idx) =>
                             row.kind === "simple-row" ? (
-                              <tr key={`ts-s-${idx}`} className="border-b last:border-b-0">
+                              <tr
+                                key={`ts-s-${idx}`}
+                                className="border-b last:border-b-0 max-sm:block"
+                              >
                                 {row.cells.map((cell, j) => (
                                   <td
                                     key={`ts-s-${idx}-${j}`}
-                                    className="px-2 py-1 align-top w-1/3 bg-slate-50 text-slate-800 font-semibold"
+                                    className="px-2 py-1 align-top sm:w-1/3 bg-slate-50 text-slate-800 font-semibold max-sm:block max-sm:w-full max-sm:border-b max-sm:border-slate-200 max-sm:last:border-b-0"
                                   >
                                     {cell ? `${++mainTestSerial}. ${cell}` : "\u00a0"}
                                   </td>
                                 ))}
                               </tr>
                             ) : (
-                              <tr key={`ts-d-${idx}`} className="border-b last:border-b-0">
-                                <td className="px-2 py-1 font-medium bg-slate-50 text-slate-800 align-top w-[22%] whitespace-nowrap">
+                              <tr
+                                key={`ts-d-${idx}`}
+                                className="border-b last:border-b-0 max-sm:block"
+                              >
+                                <td className="px-2 py-1 font-medium bg-slate-50 text-slate-800 align-top sm:w-[22%] sm:whitespace-nowrap max-sm:block max-sm:w-full">
                                   {`${++mainTestSerial}. ${row.label}`}
                                 </td>
                                 <td
                                   colSpan={2}
-                                  className="px-2 py-1 font-normal text-slate-700 align-top whitespace-pre-wrap break-words leading-4"
+                                  className="px-2 py-1 font-normal text-slate-700 align-top whitespace-pre-wrap break-words leading-4 max-sm:block max-sm:w-full max-sm:pl-4"
                                 >
                                   {row.value}
                                 </td>

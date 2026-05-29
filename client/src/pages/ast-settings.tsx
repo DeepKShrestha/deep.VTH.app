@@ -142,15 +142,6 @@ export default function AstSettingsPage() {
             <CollapsibleContent>
               <CardContent className="space-y-3" onClick={(e) => e.stopPropagation()}>
             <label className="flex items-center justify-between gap-3 text-sm">
-              <span>Hide optional fields by default</span>
-              <Switch
-                checked={toggleDefaults.hideOptionalFields}
-                onCheckedChange={(checked) =>
-                  setToggleDefaults((prev) => ({ ...prev, hideOptionalFields: checked }))
-                }
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 text-sm">
               <span>Use preset antibiotics by default</span>
               <Switch
                 checked={toggleDefaults.usePresetAntibiotics}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,19 +41,21 @@ function deriveInitials(name?: string | null): string {
 }
 
 /**
- * Round profile avatar with a 3-tier fallback chain:
- *   1. Uploaded photo (`profilePhotoUrl`)
- *   2. Derived initials from full name
- *   3. Generic person icon
+ * Round profile avatar with a strict fallback chain:
+ *   1. Uploaded photo (`profilePhotoUrl`) — when loaded, NOTHING is
+ *      rendered on top of it (no initials, no icon overlay). The previous
+ *      revision stacked the initials layer behind the `<img>` and relied on
+ *      `onError` to expose them, but transparent or partially-failed images
+ *      let the initials bleed through (see screenshot bug where "DS" sat on
+ *      the user's face). We now ONLY render the `<img>` when there's a
+ *      photo URL, and only swap in the initials block once `onError` fires.
+ *   2. Derived initials from full name.
+ *   3. Generic person icon.
  *
- * Why a dedicated component instead of inlining: we render the avatar in 4
- * places (welcome mobile card, welcome desktop toolbar, profile header, and
- * the welcome Profile button) — without this, swapping the fallback chain
- * or photo URL renewal logic would require touching all four call sites.
- *
- * The `<img>` falls back to the initials block via an `onError` handler so
- * a 404 (e.g. signed URL expired) doesn't show a broken-image glyph; it
- * just degrades to the initials.
+ * Why a dedicated component instead of inlining: we render the avatar in
+ * three places (welcome mobile card, welcome desktop toolbar, profile page
+ * header). Without this, swapping the fallback chain or photo-URL renewal
+ * logic would require touching all three call sites.
  */
 export function UserAvatar({
   photoUrl,
@@ -65,6 +68,14 @@ export function UserAvatar({
   const dim = { width: size, height: size };
   const fontSize = Math.max(10, Math.round(size * 0.4));
 
+  // Track image load failure so we can fall back to initials/icon WITHOUT
+  // stacking a hidden layer behind a transparent image. Reset whenever the
+  // src changes (e.g. user re-uploads a photo and the signed URL changes).
+  const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [photoUrl]);
+
   const baseClasses = cn(
     "relative inline-flex items-center justify-center rounded-full overflow-hidden shrink-0",
     tone === "tinted"
@@ -73,33 +84,19 @@ export function UserAvatar({
     className,
   );
 
-  if (photoUrl) {
+  const showPhoto = Boolean(photoUrl) && !imgFailed;
+
+  if (showPhoto) {
     return (
       <span className={baseClasses} style={dim} aria-hidden>
         <img
-          src={photoUrl}
+          src={photoUrl ?? undefined}
           alt=""
           className="h-full w-full object-cover"
           loading="lazy"
           decoding="async"
-          onError={(event) => {
-            // Hide the broken <img> so the fallback layer below shows.
-            event.currentTarget.style.display = "none";
-          }}
+          onError={() => setImgFailed(true)}
         />
-        {/* Initials/icon layer sits behind the img and only becomes
-            visible if the img fails to load (display:none above). */}
-        <span
-          className="absolute inset-0 flex items-center justify-center font-semibold"
-          style={{ fontSize }}
-        >
-          {initials || (
-            <UserIcon
-              style={{ width: size * 0.55, height: size * 0.55 }}
-              aria-hidden
-            />
-          )}
-        </span>
       </span>
     );
   }
@@ -107,7 +104,7 @@ export function UserAvatar({
   return (
     <span className={baseClasses} style={dim} aria-hidden>
       {initials ? (
-        <span className="font-semibold" style={{ fontSize }}>
+        <span className="font-semibold leading-none" style={{ fontSize }}>
           {initials}
         </span>
       ) : (

@@ -8,15 +8,19 @@ type ModuleScope = "ast" | "hospital";
 // browser zoom in that case. Any previously persisted `quickRegisterMode`
 // value in localStorage/Postgres is silently ignored by `pickFromRecord`
 // below since the key is no longer in the defaults object.
+// `hideOptionalFields` previously hid any question marked NOT required.
+// Removed because the form editor's "required" flag wasn't reliably set on
+// every field (e.g. history / previous medication remained visible even when
+// marked optional), so the toggle appeared broken to users. Any previously
+// persisted value in localStorage/Postgres is silently ignored by
+// `pickFromRecord` below since the key is no longer in the defaults object.
 export type AstToggleDefaults = {
-  hideOptionalFields: boolean;
   usePresetAntibiotics: boolean;
   autoMode: boolean;
   compactPrintMode: boolean;
 };
 
 export type HospitalToggleDefaults = {
-  hideOptionalFields: boolean;
   historyNotesBulletPoints: boolean;
   previousMedicationNotesBulletPoints: boolean;
   clinicalSignsSymptomsNotesBulletPoints: boolean;
@@ -25,14 +29,12 @@ export type HospitalToggleDefaults = {
 };
 
 const AST_DEFAULTS: AstToggleDefaults = {
-  hideOptionalFields: false,
   usePresetAntibiotics: false,
   autoMode: true,
   compactPrintMode: false,
 };
 
 const HOSPITAL_DEFAULTS: HospitalToggleDefaults = {
-  hideOptionalFields: false,
   historyNotesBulletPoints: true,
   previousMedicationNotesBulletPoints: true,
   clinicalSignsSymptomsNotesBulletPoints: true,
