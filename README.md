@@ -29,6 +29,7 @@ This README stays the **map of the whole system**; split only when a section bec
 - **[`docs/DIGITALOCEAN-DEPLOYMENT.md`](docs/DIGITALOCEAN-DEPLOYMENT.md)** — beginner-friendly walkthrough for deploying to **DigitalOcean** (Droplet + Managed Postgres). Hand-holds through SSH-key generation, billing setup, every command, plus a feature-verification checklist. Use this if you've never deployed a Node app before.
 - **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** — full step-by-step walkthrough for a **fresh Linux server**: OS prep, Node install, service user, SQLite **or** PostgreSQL setup, env vars, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've deployed Linux apps before and want a generic recipe.
 - **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** — short pre-flight checklist (required env vars, order of operations, smoke tests). Use this once you know the deployment and just need the list.
+- **[`scripts/deploy.sh`](scripts/deploy.sh)** — one-command deploy script for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Always runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and verifies it came up healthy. Usage: `sudo bash /opt/vth-app/scripts/deploy.sh` (add `--verify` to also run tests + typecheck, `--branch <name>` for non-`main`, `--no-restart` for a build-only dry run).
 - **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** — day-to-day operational runbooks.
 - **[`docs/RELEASE.md`](docs/RELEASE.md)** — release flow and rollback.
 
@@ -444,6 +445,14 @@ The app is designed to run as a **single Node process** behind a reverse proxy (
 3. Run `npm run start` under a process manager (systemd, PM2, or your platform’s supervisor).
 4. Point the reverse proxy at `PORT` (default in `.env.example` is `5000`; dev uses `5001` in `npm run dev`).
 5. Validate `GET /api/health` and `GET /api/ready` after deploy.
+
+**For an existing Linux/systemd install at `/opt/vth-app` (DigitalOcean Droplet layout), every subsequent deploy is a single command:**
+
+```bash
+sudo bash /opt/vth-app/scripts/deploy.sh
+```
+
+The script (see `scripts/deploy.sh`) always runs git/npm as the `vth-app` user, self-heals ownership of `/opt/vth-app`, runs `npm ci && npm run build`, restarts the service, and verifies it is Active. Add `--verify` to also run tests + typecheck, `--branch <name>` for non-`main`, `--no-restart` for a build-only dry run.
 
 **Database choice**
 

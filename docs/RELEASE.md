@@ -24,9 +24,12 @@ This runbook is for safe production releases.
   - `DB_FILE=/absolute/path/to/data.db` (SQLite) **or** `DB_PROVIDER=postgres` + `DATABASE_URL`
   - **`ATTACHMENT_SIGNING_SECRET`** — at least 32 characters; **required** or the production server exits on startup
   - `ALLOW_DEFAULT_ADMIN=false`
-- Build and start:
+- **Linux/systemd install (DigitalOcean Droplet, single-VM):**
+  - One command: `sudo bash /opt/vth-app/scripts/deploy.sh` (add `--verify` to also run tests + typecheck). The script runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, restarts the service, and confirms it is healthy. See `docs/OPERATIONS.md` for full flags.
+- **Other platforms (PaaS, containers, manual):**
+  - `npm ci`
   - `npm run build`
-  - `npm run start`
+  - `npm run start` (under your platform's process supervisor)
 
 ## 4) Post-deploy validation
 
