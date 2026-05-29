@@ -47,6 +47,22 @@ function libpqCompatibleDatabaseUrl(rawUrl: string): string {
  * "Permission denied" error. Pointing `HOME` at the OS tmpdir gives libpq a
  * dir with no `.postgresql/` to find, so it cleanly skips client-cert lookup.
  */
+function formatPgDumpFailure(code: number | null, stderr: string, exe: string): string {
+  const base = `pg_dump failed (${code ?? "?"}): ${stderr.trim() || "no stderr"}`;
+  if (!/server version mismatch/i.test(stderr)) {
+    return base;
+  }
+  return (
+    `${base}\n\n` +
+    `The pg_dump binary (${exe}) is newer than your managed Postgres server. ` +
+    `Ubuntu's postgresql-client is often ahead of DigitalOcean Managed Postgres.\n\n` +
+    `Fix (pick one):\n` +
+    `1. DigitalOcean → your database → Settings → upgrade Postgres to the latest 16.x patch (recommended).\n` +
+    `2. On the Droplet, install a matching client and set PG_BIN in .env, e.g. PG_BIN=/usr/lib/postgresql/16/bin\n` +
+    `   (run: pg_dump --version and compare to the server version shown above).`
+  );
+}
+
 function libpqSubprocessEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -78,7 +94,7 @@ async function runPgDumpSql(): Promise<string> {
     proc.on("error", reject);
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`pg_dump failed (${code}): ${errBuf || "no stderr"}`));
+      else reject(new Error(formatPgDumpFailure(code, errBuf, exe)));
     });
   });
   return Buffer.concat(chunks).toString("utf8");

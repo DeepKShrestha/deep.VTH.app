@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, apiRequestForm, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -117,19 +117,31 @@ export function AdminSiteBackupPanel() {
     },
   });
 
-  const settingsMutation = useMutation({
-    mutationFn: async (patch: Partial<BackupSettingsResponse>) => {
-      const res = await apiRequest("PUT", "/api/admin/backup/settings", patch);
-      return res.json() as Promise<BackupSettingsResponse>;
+  const settingsSaveChain = useRef<Promise<BackupSettingsResponse | void>>(Promise.resolve());
+
+  const saveBackupSettings = useCallback(
+    (patch: Partial<BackupSettingsResponse>) => {
+      queryClient.setQueryData<BackupSettingsResponse>(
+        ["/api/admin/backup/settings"],
+        (prev) => (prev ? { ...prev, ...patch } : prev),
+      );
+      settingsSaveChain.current = settingsSaveChain.current
+        .then(async () => {
+          const res = await apiRequest("PUT", "/api/admin/backup/settings", patch);
+          return res.json() as Promise<BackupSettingsResponse>;
+        })
+        .then((data) => {
+          queryClient.setQueryData(["/api/admin/backup/settings"], data);
+          return data;
+        })
+        .catch((e: unknown) => {
+          queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/settings"] });
+          const message = e instanceof Error ? e.message : "Could not save settings";
+          toast({ title: "Could not save settings", description: message, variant: "destructive" });
+        });
     },
-    onSuccess: () => {
-      toast({ title: "Backup settings saved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/settings"] });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Could not save settings", description: e.message, variant: "destructive" });
-    },
-  });
+    [toast],
+  );
 
   const deleteHistoryMutation = useMutation({
     mutationFn: async ({
@@ -479,8 +491,7 @@ export function AdminSiteBackupPanel() {
                 <Switch
                   id="auto-backup-enabled"
                   checked={settings.autoBackupEnabled}
-                  onCheckedChange={(v) => settingsMutation.mutate({ autoBackupEnabled: v })}
-                  disabled={settingsMutation.isPending}
+                  onCheckedChange={(v) => saveBackupSettings({ autoBackupEnabled: v })}
                 />
               </div>
 
@@ -489,9 +500,8 @@ export function AdminSiteBackupPanel() {
                 <Select
                   value={String(settings.autoIntervalHours)}
                   onValueChange={(v) =>
-                    settingsMutation.mutate({ autoIntervalHours: Number.parseInt(v, 10) })
+                    saveBackupSettings({ autoIntervalHours: Number.parseInt(v, 10) })
                   }
-                  disabled={settingsMutation.isPending}
                 >
                   <SelectTrigger className="h-9">
                     <SelectValue />
@@ -516,9 +526,8 @@ export function AdminSiteBackupPanel() {
                 <Select
                   value={String(settings.retentionCount)}
                   onValueChange={(v) =>
-                    settingsMutation.mutate({ retentionCount: Number.parseInt(v, 10) })
+                    saveBackupSettings({ retentionCount: Number.parseInt(v, 10) })
                   }
-                  disabled={settingsMutation.isPending}
                 >
                   <SelectTrigger className="h-9">
                     <SelectValue />
@@ -558,8 +567,7 @@ export function AdminSiteBackupPanel() {
                 <Switch
                   id="remote-upload"
                   checked={settings.remoteUploadEnabled}
-                  onCheckedChange={(v) => settingsMutation.mutate({ remoteUploadEnabled: v })}
-                  disabled={settingsMutation.isPending}
+                  onCheckedChange={(v) => saveBackupSettings({ remoteUploadEnabled: v })}
                 />
               </div>
               {remoteBlocked ? (

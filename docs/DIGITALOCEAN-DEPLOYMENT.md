@@ -777,6 +777,23 @@ For each test, **note any errors** so we can fix them before users touch the sys
 | 31 | Create a site backup | Admin → Backups → Create | ZIP file appears in the list |
 | 32 | Download the backup | Click Download | File downloads to your laptop |
 
+**If backup fails with `server version mismatch` (pg_dump 16.14 vs server 16.4):**
+
+Ubuntu’s `postgresql-client` is often **newer** than DigitalOcean Managed Postgres. Newer `pg_dump` refuses to dump an older server.
+
+**Recommended fix:** DigitalOcean console → **Databases** → your cluster → **Settings** → upgrade Postgres to the **latest 16.x** patch (e.g. 16.14). Then retry **Run backup now**.
+
+**Alternative:** On the Droplet, confirm versions:
+
+```bash
+pg_dump --version
+# compare to server (from DO database overview, e.g. 16.4)
+```
+
+If they still differ, set `PG_BIN` in `/opt/vth-app/.env` to a `pg_dump` that matches the server major/minor, then `systemctl restart vth-app`.
+
+**Automatic backup settings:** Enable the toggle, set interval and “Keep last N” separately — each saves independently. Default retention is **7** zips; oldest local zips are deleted after each **successful** backup.
+
 ### 7.8 Server-side smoke tests
 
 Back in SSH on the Droplet:

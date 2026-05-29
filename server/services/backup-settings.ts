@@ -28,16 +28,32 @@ export async function getBackupSettings(): Promise<BackupSettingsClient> {
   };
 }
 
+/**
+ * Updates only the keys present in `patch`. Each setting is written
+ * independently so rapid UI changes (toggle + retention) cannot race and
+ * overwrite each other with stale values read from the database.
+ */
 export async function updateBackupSettings(patch: Partial<BackupSettingsClient>): Promise<void> {
-  const current = await getBackupSettings();
-  const next = { ...current, ...patch };
-  const entries: [string, string][] = [
-    [KEYS.auto_backup_enabled, next.autoBackupEnabled ? "true" : "false"],
-    [KEYS.auto_interval_hours, String(next.autoIntervalHours)],
-    [KEYS.retention_count, String(next.retentionCount)],
-    [KEYS.remote_upload_enabled, next.remoteUploadEnabled ? "true" : "false"],
-  ];
-  for (const [key, value] of entries) {
-    await dbRun(sql`UPDATE backup_settings SET value = ${value} WHERE key = ${key}`);
+  if (patch.autoBackupEnabled !== undefined) {
+    await dbRun(
+      sql`UPDATE backup_settings SET value = ${patch.autoBackupEnabled ? "true" : "false"} WHERE key = ${KEYS.auto_backup_enabled}`,
+    );
+  }
+  if (patch.autoIntervalHours !== undefined) {
+    const hours = Math.max(1, Math.floor(patch.autoIntervalHours));
+    await dbRun(
+      sql`UPDATE backup_settings SET value = ${String(hours)} WHERE key = ${KEYS.auto_interval_hours}`,
+    );
+  }
+  if (patch.retentionCount !== undefined) {
+    const count = Math.max(1, Math.min(100, Math.floor(patch.retentionCount)));
+    await dbRun(
+      sql`UPDATE backup_settings SET value = ${String(count)} WHERE key = ${KEYS.retention_count}`,
+    );
+  }
+  if (patch.remoteUploadEnabled !== undefined) {
+    await dbRun(
+      sql`UPDATE backup_settings SET value = ${patch.remoteUploadEnabled ? "true" : "false"} WHERE key = ${KEYS.remote_upload_enabled}`,
+    );
   }
 }
