@@ -1,10 +1,11 @@
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { saveNotificationPrefsToServer, useAuth } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { useToast } from "@/hooks/use-toast";
@@ -368,6 +369,218 @@ export default function Welcome() {
     logout();
   };
 
+  const userBadges = user ? (
+    <div className="flex flex-wrap items-center justify-center gap-1.5">
+      <Badge
+        variant="outline"
+        className={`text-xs ${designationBadgeClass(user.designation)}`}
+      >
+        {designationLabel(user.designation)}
+      </Badge>
+      {user.role !== "student" && (
+        <Badge variant="outline" className={`text-xs ${roleBadgeClass(user.role)}`}>
+          {roleLabel(user.role)}
+        </Badge>
+      )}
+    </div>
+  ) : null;
+
+  const welcomeHero = (
+    <div className="text-center space-y-2 sm:space-y-3">
+      <div className="flex justify-center">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+        </div>
+      </div>
+      <h1 className="text-lg sm:text-xl font-bold tracking-tight" data-testid="text-title">
+        Veterinary Teaching Hospital
+      </h1>
+      <p className="hidden sm:block text-sm text-muted-foreground max-w-xl mx-auto">
+        Choose one of the core modules to continue.
+      </p>
+    </div>
+  );
+
+  const mobileActionBtn =
+    "w-full h-auto min-h-[4.25rem] flex flex-col items-center justify-center gap-1.5 px-1";
+
+  const notificationsDropdown = (trigger: ReactElement) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="center"
+        className="w-[min(360px,calc(100vw-2rem))] sm:align-end sm:w-[360px]"
+      >
+        <DropdownMenuLabel className="flex items-center justify-between">
+          <span>Admin notifications</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {notificationsLoading ? "Loading..." : `${unreadCount} unread`}
+            </span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setShowNotificationSettings((value) => !value);
+              }}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Notification settings"
+              data-testid="button-notification-settings"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <div className="px-2 pb-2">
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={markAllReadMutation.isPending || notificationItems.length === 0}
+              onClick={() => markAllReadMutation.mutate()}
+              data-testid="button-notification-mark-all-read"
+            >
+              Mark all as read
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={deleteReadMutation.isPending || notificationItems.length === 0}
+              onClick={() => deleteReadMutation.mutate()}
+              data-testid="button-notification-delete-read"
+            >
+              Delete read
+            </Button>
+          </div>
+        </div>
+        {showNotificationSettings && (
+          <div className="px-2 pb-2">
+            <div className="rounded-md border bg-muted/30 p-2 text-xs space-y-1.5">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setEnableToastAlerts((v) => !v);
+                }}
+                className="w-full text-left rounded px-2 py-1 hover:bg-muted"
+              >
+                Toast alerts: {enableToastAlerts ? "On" : "Off"}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setEnableSoundAlerts((v) => !v);
+                }}
+                className="w-full text-left rounded px-2 py-1 hover:bg-muted"
+              >
+                Sound alerts: {enableSoundAlerts ? "On" : "Off"}
+              </button>
+              <label className="block px-2 pt-1 text-muted-foreground">Sound style</label>
+              <select
+                value={soundStyle}
+                onChange={(event) => {
+                  const nextStyle = event.target.value as NotificationSoundStyle;
+                  setSoundStyle(nextStyle);
+                  if (enableSoundAlerts) {
+                    playNotificationSound(nextStyle, soundVolume);
+                  }
+                }}
+                className="w-full rounded border bg-background px-2 py-1 text-xs"
+              >
+                <option value="chime">Chime (classic)</option>
+                <option value="ding">Ding (classic)</option>
+                <option value="pulse">Pulse (classic)</option>
+                <option value="studio-confirm">Studio Confirm</option>
+                <option value="ui-back">UI Back</option>
+                <option value="ui-start">UI Start</option>
+                <option value="ui-start-alt">UI Start Alt</option>
+                <option value="correct-answer">Correct Answer</option>
+                <option value="notif-real">Real Notification</option>
+                <option value="digital-quick">Digital Quick</option>
+              </select>
+              <label className="block px-2 pt-1 text-muted-foreground">
+                Volume ({Math.round(soundVolume * 100)}%)
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(soundVolume * 100)}
+                onChange={(event) => {
+                  const parsed = Number(event.target.value);
+                  if (!Number.isFinite(parsed)) return;
+                  const nextVolume = Math.max(0, Math.min(1, parsed / 100));
+                  setSoundVolume(nextVolume);
+                  if (enableSoundAlerts) {
+                    playNotificationSound(soundStyle, nextVolume);
+                  }
+                }}
+                className="w-full"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  playNotificationSound(soundStyle, soundVolume);
+                }}
+              >
+                Test sound
+              </Button>
+            </div>
+          </div>
+        )}
+        <DropdownMenuSeparator />
+        {notificationItems.length === 0 ? (
+          <div className="px-2 py-6 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">No pending notifications.</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setLocation("/admin?tab=pending");
+              }}
+            >
+              Open admin — Pending
+            </Button>
+          </div>
+        ) : (
+          notificationItems.slice(0, 12).map((item) => (
+            <DropdownMenuItem
+              key={item.key}
+              className="items-start whitespace-normal py-2 cursor-pointer"
+              onClick={() => handleOpenNotification(item.key, item.type, item.href)}
+            >
+              <div className="space-y-0.5">
+                <p className={`text-sm ${item.isRead ? "font-normal" : "font-semibold"}`}>
+                  {item.title}
+                </p>
+                <p className="text-xs text-muted-foreground">{item.message}</p>
+                <p className="text-[11px] text-muted-foreground/80">
+                  {formatTimeAgo(item.createdAt)}
+                </p>
+              </div>
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
     <StickyScrollPage
       maxWidthClass="max-w-3xl w-full"
@@ -376,57 +589,100 @@ export default function Welcome() {
       bodyClassName="space-y-4 sm:space-y-6"
       sticky={
         <>
-        {/*
-          Mobile layout:
-            - Row 1: identity (icon + name on a single inner line, badges
-              kept together on a second inner line so a single badge never
-              wraps alone — the "Super Admin" badge used to float off on
-              its own row, which looked broken).
-            - Row 2: action buttons rendered as an equal-width 3-up grid so
-              Profile / Notifications / Logout are visually balanced. The
-              Logout button is still a destructive ghost on desktop but on
-              mobile it gets a subtle border so it doesn't look detached
-              from the other two outline buttons.
-          Desktop (`sm+`) restores the original single-row layout: identity
-          flows inline with badges, action buttons sit right-aligned in a
-          standard flex row.
-        */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-y-1 sm:gap-2 text-sm min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <User className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="font-medium truncate">{user?.fullName}</span>
-            </div>
-            {user && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className={`text-xs ${designationBadgeClass(user.designation)}`}
-                >
-                  {designationLabel(user.designation)}
-                </Badge>
-                {user.role !== "student" && (
-                  <Badge variant="outline" className={`text-xs ${roleBadgeClass(user.role)}`}>
-                    {roleLabel(user.role)}
-                  </Badge>
-                )}
+        {/* Phones: one centered column (account card + hero) so nothing fights left vs center alignment */}
+        <div className="sm:hidden space-y-4">
+          <div className="rounded-xl border border-border/80 bg-card shadow-sm px-4 py-4 space-y-3">
+            <div className="flex flex-col items-center gap-2 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-2 ring-primary/15">
+                <User className="h-6 w-6 text-primary" />
               </div>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:gap-2 sm:flex-wrap sm:justify-end">
-            <Link href="/profile" className="w-full sm:w-auto">
-              <Button variant="outline" size="sm" className="w-full sm:w-auto gap-1.5" data-testid="button-profile">
-                <User className="w-3.5 h-3.5" />
-                Profile
-              </Button>
-            </Link>
-            {isAdmin && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              <p className="font-semibold text-sm leading-snug">{user?.fullName}</p>
+              {userBadges}
+            </div>
+            <div className={cn("grid gap-2", isAdmin ? "grid-cols-3" : "grid-cols-2")}>
+              <Link href="/profile">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={mobileActionBtn}
+                  data-testid="button-profile"
+                >
+                  <User className="h-4 w-4 shrink-0" />
+                  <span className="text-[11px] font-medium leading-none">Profile</span>
+                </Button>
+              </Link>
+              {isAdmin &&
+                notificationsDropdown(
                   <Button
                     variant="outline"
                     size="sm"
-                    className="relative w-full sm:w-auto gap-1.5"
+                    className={cn(mobileActionBtn, "relative")}
+                    data-testid="button-notifications"
+                  >
+                    <Bell className="h-4 w-4 shrink-0" />
+                    <span className="text-[11px] font-medium leading-none">Alerts</span>
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1.5 right-1.5 min-w-4 h-4 px-0.5 rounded-full bg-red-600 text-white text-[10px] leading-4 text-center">
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    )}
+                  </Button>,
+                )}
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  mobileActionBtn,
+                  "text-destructive border-destructive/35 hover:bg-destructive/5 hover:text-destructive",
+                )}
+                onClick={handleLogout}
+                data-testid="button-logout"
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span className="text-[11px] font-medium leading-none">Logout</span>
+              </Button>
+            </div>
+          </div>
+          {welcomeHero}
+        </div>
+
+        {/* Tablet / desktop: compact toolbar row + centered hero */}
+        <div className="hidden sm:block space-y-4">
+          <div className="flex flex-row items-center justify-between gap-3">
+            <div className="flex flex-row items-center flex-wrap gap-2 text-sm min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <User className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="font-medium truncate">{user?.fullName}</span>
+              </div>
+              {user && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className={`text-xs ${designationBadgeClass(user.designation)}`}
+                  >
+                    {designationLabel(user.designation)}
+                  </Badge>
+                  {user.role !== "student" && (
+                    <Badge variant="outline" className={`text-xs ${roleBadgeClass(user.role)}`}>
+                      {roleLabel(user.role)}
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+              <Link href="/profile">
+                <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-profile">
+                  <User className="w-3.5 h-3.5" />
+                  Profile
+                </Button>
+              </Link>
+              {isAdmin &&
+                notificationsDropdown(
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="relative gap-1.5"
                     data-testid="button-notifications"
                   >
                     <Bell className="w-3.5 h-3.5" />
@@ -436,214 +692,21 @@ export default function Welcome() {
                         {unreadCount > 99 ? "99+" : unreadCount}
                       </span>
                     )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[360px]">
-                  <DropdownMenuLabel className="flex items-center justify-between">
-                    <span>Admin notifications</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {notificationsLoading ? "Loading..." : `${unreadCount} unread`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setShowNotificationSettings((value) => !value);
-                        }}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                        aria-label="Notification settings"
-                        data-testid="button-notification-settings"
-                      >
-                        <Settings2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 pb-2">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        disabled={markAllReadMutation.isPending || notificationItems.length === 0}
-                        onClick={() => markAllReadMutation.mutate()}
-                        data-testid="button-notification-mark-all-read"
-                      >
-                        Mark all as read
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        disabled={deleteReadMutation.isPending || notificationItems.length === 0}
-                        onClick={() => deleteReadMutation.mutate()}
-                        data-testid="button-notification-delete-read"
-                      >
-                        Delete read
-                      </Button>
-                    </div>
-                  </div>
-                  {showNotificationSettings && (
-                    <>
-                      <div className="px-2 pb-2">
-                        <div className="rounded-md border bg-muted/30 p-2 text-xs space-y-1.5">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setEnableToastAlerts((v) => !v);
-                            }}
-                            className="w-full text-left rounded px-2 py-1 hover:bg-muted"
-                          >
-                            Toast alerts: {enableToastAlerts ? "On" : "Off"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setEnableSoundAlerts((v) => !v);
-                            }}
-                            className="w-full text-left rounded px-2 py-1 hover:bg-muted"
-                          >
-                            Sound alerts: {enableSoundAlerts ? "On" : "Off"}
-                          </button>
-                          <label className="block px-2 pt-1 text-muted-foreground">
-                            Sound style
-                          </label>
-                          <select
-                            value={soundStyle}
-                            onChange={(event) => {
-                              const nextStyle = event.target.value as NotificationSoundStyle;
-                              setSoundStyle(nextStyle);
-                              if (enableSoundAlerts) {
-                                playNotificationSound(nextStyle, soundVolume);
-                              }
-                            }}
-                            className="w-full rounded border bg-background px-2 py-1 text-xs"
-                          >
-                            <option value="chime">Chime (classic)</option>
-                            <option value="ding">Ding (classic)</option>
-                            <option value="pulse">Pulse (classic)</option>
-                            <option value="studio-confirm">Studio Confirm</option>
-                            <option value="ui-back">UI Back</option>
-                            <option value="ui-start">UI Start</option>
-                            <option value="ui-start-alt">UI Start Alt</option>
-                            <option value="correct-answer">Correct Answer</option>
-                            <option value="notif-real">Real Notification</option>
-                            <option value="digital-quick">Digital Quick</option>
-                          </select>
-                          <label className="block px-2 pt-1 text-muted-foreground">
-                            Volume ({Math.round(soundVolume * 100)}%)
-                          </label>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            step={5}
-                            value={Math.round(soundVolume * 100)}
-                            onChange={(event) => {
-                              const parsed = Number(event.target.value);
-                              if (!Number.isFinite(parsed)) return;
-                              const nextVolume = Math.max(0, Math.min(1, parsed / 100));
-                              setSoundVolume(nextVolume);
-                              if (enableSoundAlerts) {
-                                playNotificationSound(soundStyle, nextVolume);
-                              }
-                            }}
-                            className="w-full"
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              playNotificationSound(soundStyle, soundVolume);
-                            }}
-                          >
-                            Test sound
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                  <DropdownMenuSeparator />
-                  {notificationItems.length === 0 ? (
-                    <div className="px-2 py-6 text-center space-y-3">
-                      <p className="text-sm text-muted-foreground">No pending notifications.</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-9"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setLocation("/admin?tab=pending");
-                        }}
-                      >
-                        Open admin — Pending
-                      </Button>
-                    </div>
-                  ) : (
-                    notificationItems.slice(0, 12).map((item) => (
-                      <DropdownMenuItem
-                        key={item.key}
-                        className="items-start whitespace-normal py-2 cursor-pointer"
-                        onClick={() => handleOpenNotification(item.key, item.type, item.href)}
-                      >
-                        <div className="space-y-0.5">
-                          <p className={`text-sm ${item.isRead ? "font-normal" : "font-semibold"}`}>
-                            {item.title}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{item.message}</p>
-                          <p className="text-[11px] text-muted-foreground/80">
-                            {formatTimeAgo(item.createdAt)}
-                          </p>
-                        </div>
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full sm:w-auto gap-1.5 text-red-500 hover:text-red-700 border border-red-200 sm:border-0 hover:border-red-300"
-              onClick={handleLogout}
-              data-testid="button-logout"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
-            </Button>
-          </div>
-        </div>
-
-        {/*
-          Hero is tightened on phones to keep the module cards visible
-          without scrolling:
-            - Icon bubble: 48px on mobile, 64px at `sm+`.
-            - Intro sentence hidden on mobile (the cards explain themselves
-              and the title bar already names the hospital).
-        */}
-        <div className="text-center space-y-2 sm:space-y-3">
-          <div className="flex justify-center">
-            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+                  </Button>,
+                )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-red-500 hover:text-red-700"
+                onClick={handleLogout}
+                data-testid="button-logout"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Logout
+              </Button>
             </div>
           </div>
-          <h1 className="text-lg sm:text-xl font-bold tracking-tight" data-testid="text-title">
-            Veterinary Teaching Hospital
-          </h1>
-          <p className="hidden sm:block text-sm text-muted-foreground max-w-xl mx-auto">
-            Choose one of the core modules to continue.
-          </p>
+          {welcomeHero}
         </div>
         </>
       }
@@ -655,15 +718,15 @@ export default function Welcome() {
           - Admin card spans both columns at `md+` via `md:col-span-2`.
       */}
       <div className="grid gap-4 sm:grid-cols-2">
-          <Card className="h-full flex flex-col">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <ClipboardPlus className="w-4 h-4 text-primary" />
+          <Card className="h-full flex flex-col max-sm:text-center">
+            <CardHeader className="max-sm:items-center">
+              <CardTitle className="text-base flex items-center gap-2 max-sm:justify-center">
+                <ClipboardPlus className="w-4 h-4 text-primary shrink-0" />
                 VTH Case Registration
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              <p className="text-sm text-muted-foreground">
+            <CardContent className="flex flex-1 flex-col gap-3 max-sm:items-center">
+              <p className="text-sm text-muted-foreground max-sm:max-w-[280px]">
                 Add patient details, diagnosis, tests, and treatment plan for a new hospital case.
               </p>
               {canRegisterHospitalCase ? (
@@ -680,15 +743,15 @@ export default function Welcome() {
             </CardContent>
           </Card>
 
-          <Card className="h-full flex flex-col">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-primary" />
+          <Card className="h-full flex flex-col max-sm:text-center">
+            <CardHeader className="max-sm:items-center">
+              <CardTitle className="text-base flex items-center gap-2 max-sm:justify-center">
+                <FileSpreadsheet className="w-4 h-4 text-primary shrink-0" />
                 AST Report
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              <p className="text-sm text-muted-foreground">
+            <CardContent className="flex flex-1 flex-col gap-3 max-sm:items-center">
+              <p className="text-sm text-muted-foreground max-sm:max-w-[280px]">
                 Open the AST module with case registration, previous cases, downloads, and related tools.
               </p>
               <Link href="/ast-report" className="mt-auto">
@@ -700,15 +763,15 @@ export default function Welcome() {
           </Card>
 
           {isAdmin && (
-            <Card className="sm:col-span-2 flex flex-col">
-              <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary" />
+            <Card className="sm:col-span-2 flex flex-col max-sm:text-center">
+              <CardHeader className="max-sm:items-center">
+                <CardTitle className="text-base flex items-center gap-2 max-sm:justify-center">
+                  <Shield className="w-4 h-4 text-primary shrink-0" />
                   Admin Panel
                 </CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-1 flex-col gap-3">
-                <p className="text-sm text-muted-foreground">
+              <CardContent className="flex flex-1 flex-col gap-3 max-sm:items-center">
+                <p className="text-sm text-muted-foreground max-sm:max-w-[280px]">
                   Manage pending approvals, users, password resets, and pending download requests.
                 </p>
                 <Link href="/admin" className="mt-auto">
