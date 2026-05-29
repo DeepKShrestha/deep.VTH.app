@@ -9,7 +9,7 @@ import { createWriteStream } from "node:fs";
 import os from "node:os";
 import { sql } from "drizzle-orm";
 import { DB_PROVIDER, backupLiveSqliteToFile } from "../db";
-import { dbRun } from "../db-query";
+import { dbAll, dbRun } from "../db-query";
 import { buildS3ObjectKey, isS3Configured, uploadSiteBackupToS3 } from "./backup-remote";
 import { getBackupSettings } from "./backup-settings";
 import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir, getSiteBackupDir } from "./backup-paths";
@@ -107,12 +107,218 @@ async function runPgDumpSql(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function zipSiteBackup(meta: Record<string, unknown>, options: { sqlDump?: string; sqliteTemp?: string }): Promise<string> {
+/**
+ * Tables we surface row counts for in `backup-summary.txt`. Keep this list
+ * conservative — every entry runs a COUNT(*) so very wide tables would slow
+ * scheduled backups. Anything missing is still captured in the dump.
+ */
+const SUMMARY_TABLE_NAMES = [
+  "users",
+  "cases",
+  "case_attachments",
+  "breakpoints",
+  "species_options",
+  "breed_options",
+  "form_sections",
+  "custom_questions",
+  "download_requests",
+  "password_reset_requests",
+  "notification_states",
+  "backup_history",
+  "admin_action_logs",
+  "form_edit_audit_logs",
+  "sessions",
+  "user_preferences",
+  "veterinarians",
+  "medications",
+] as const;
+
+async function getTableRowCounts(): Promise<Array<{ table: string; rows: number | string }>> {
+  const out: Array<{ table: string; rows: number | string }> = [];
+  for (const name of SUMMARY_TABLE_NAMES) {
+    try {
+      const rows = await dbAll<{ n: number | string }>(
+        sql.raw(`SELECT COUNT(*) AS n FROM "${name}"`),
+      );
+      out.push({ table: name, rows: Number(rows[0]?.n ?? 0) });
+    } catch {
+      out.push({ table: name, rows: "n/a" });
+    }
+  }
+  return out;
+}
+
+type DirStats = { fileCount: number; totalBytes: number };
+
+function statsForDir(dir: string): DirStats {
+  if (!fs.existsSync(dir)) return { fileCount: 0, totalBytes: 0 };
+  let fileCount = 0;
+  let totalBytes = 0;
+  const stack: string[] = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      try {
+        const st = fs.statSync(full);
+        fileCount += 1;
+        totalBytes += st.size;
+      } catch {
+        // skip
+      }
+    }
+  }
+  return { fileCount, totalBytes };
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function buildEnvKeysSnapshot(): string {
+  const keys = Object.keys(process.env)
+    .filter((k) => {
+      // Skip noise that varies per process restart and never matters for recovery.
+      return !/^(PWD|OLDPWD|SHLVL|_)$/i.test(k);
+    })
+    .sort();
+  return (
+    `# env-keys.txt — names only, never values.\n` +
+    `# Captured at ${new Date().toISOString()} by vth-app site backup.\n` +
+    `# Use this on a fresh deploy as a checklist of vars to set in /opt/vth-app/.env.\n\n` +
+    keys.join("\n") +
+    "\n"
+  );
+}
+
+function buildBackupSummary(args: {
+  meta: Record<string, unknown>;
+  rowCounts: Array<{ table: string; rows: number | string }>;
+  uploads: DirStats;
+  profiles: DirStats;
+  dbDumpBytes: number | null;
+  sqliteBytes: number | null;
+}): string {
+  const lines: string[] = [];
+  lines.push(`# backup-summary.txt`);
+  lines.push(`Created at:  ${args.meta.createdAt}`);
+  lines.push(`DB provider: ${args.meta.dbProvider}`);
+  lines.push(`Node env:    ${args.meta.nodeEnv}`);
+  lines.push("");
+  lines.push("## Database");
+  if (args.dbDumpBytes != null) {
+    lines.push(`Postgres dump: ${formatBytes(args.dbDumpBytes)}`);
+  }
+  if (args.sqliteBytes != null) {
+    lines.push(`SQLite file:   ${formatBytes(args.sqliteBytes)}`);
+  }
+  lines.push("");
+  lines.push("Row counts (table → rows):");
+  const longest = Math.max(...args.rowCounts.map((r) => r.table.length), 0);
+  for (const r of args.rowCounts) {
+    lines.push(`  ${r.table.padEnd(longest, " ")}  ${r.rows}`);
+  }
+  lines.push("");
+  lines.push("## Uploads");
+  lines.push(
+    `Case attachments: ${args.uploads.fileCount} files, ${formatBytes(args.uploads.totalBytes)}`,
+  );
+  lines.push(
+    `Profile photos:   ${args.profiles.fileCount} files, ${formatBytes(args.profiles.totalBytes)}`,
+  );
+  lines.push("");
+  lines.push("## Excluded (intentional)");
+  lines.push("  - .env / secrets (see env-keys.txt for the name list)");
+  lines.push("  - Forgot-password ID card uploads (ephemeral PII)");
+  lines.push("  - OS / journal logs, code, node_modules, dist");
+  lines.push("");
+  return lines.join("\n");
+}
+
+function buildRestoreReadme(): string {
+  return `VTH Management System — Site backup
+===================================
+
+This zip contains a point-in-time snapshot of the VTH app:
+
+  meta.json            Format version + when this backup was created
+  db/dump.sql          Full Postgres dump (or db/sqlite.db on SQLite)
+  files/               Case attachments (PDFs, images uploaded to cases)
+  profile-photos/      Per-user profile and ID photos
+  backup-summary.txt   Row counts and upload sizes (sanity check)
+  env-keys.txt         Names of env vars that were set when this was made
+                       (no values — safe to share)
+
+How to restore
+--------------
+1. Stand up a fresh VTH deploy (Droplet + Postgres) per
+   docs/DIGITALOCEAN-DEPLOYMENT.md, including /opt/vth-app/.env.
+2. Make sure the Postgres major version on the server matches what is
+   recorded in meta.json (run \`psql -c "SHOW server_version;"\`).
+3. In the running app, sign in as a superadmin.
+4. Open Admin → Backup → Restore from zip.
+5. Upload this zip file.
+6. Type the confirmation phrase exactly: RESTORE_SITE_DATA
+7. Click Restore. The current DB and uploads are wiped and replaced.
+8. Restart the service so DB connections refresh:
+       sudo systemctl restart vth-app
+
+Notes
+-----
+- Restore does not bring back active sessions (everyone has to log in).
+- Restore does not overwrite the current backup_settings — it keeps
+  your live schedule and retention so you do not lose them by accident.
+- All users / cases / breakpoints / form layouts / audit logs / etc. ARE
+  restored from the dump.
+`;
+}
+
+async function zipSiteBackup(
+  meta: Record<string, unknown>,
+  options: {
+    sqlDump?: string;
+    sqliteTemp?: string;
+    rowCounts: Array<{ table: string; rows: number | string }>;
+  },
+): Promise<string> {
   const backupDir = getSiteBackupDir();
   await fsp.mkdir(backupDir, { recursive: true });
   const filename = `site-${timestampForFilename()}.zip`;
   const outPath = path.join(backupDir, filename);
   const uploadDir = getCaseAttachmentUploadDir();
+  const profileDir = getProfilePhotoUploadDir();
+
+  const uploads = statsForDir(uploadDir);
+  const profiles = statsForDir(profileDir);
+  const dbDumpBytes = options.sqlDump != null ? Buffer.byteLength(options.sqlDump) : null;
+  const sqliteBytes =
+    options.sqliteTemp && fs.existsSync(options.sqliteTemp)
+      ? fs.statSync(options.sqliteTemp).size
+      : null;
+
+  const summary = buildBackupSummary({
+    meta,
+    rowCounts: options.rowCounts,
+    uploads,
+    profiles,
+    dbDumpBytes,
+    sqliteBytes,
+  });
+  const readme = buildRestoreReadme();
+  const envKeys = buildEnvKeysSnapshot();
 
   await new Promise<void>((resolve, reject) => {
     const output = createWriteStream(outPath);
@@ -123,6 +329,9 @@ async function zipSiteBackup(meta: Record<string, unknown>, options: { sqlDump?:
     archive.pipe(output);
 
     archive.append(JSON.stringify(meta, null, 2), { name: "meta.json" });
+    archive.append(summary, { name: "backup-summary.txt" });
+    archive.append(readme, { name: "README.txt" });
+    archive.append(envKeys, { name: "env-keys.txt" });
 
     if (DB_PROVIDER === "postgres" && options.sqlDump != null) {
       archive.append(options.sqlDump, { name: "db/dump.sql" });
@@ -131,19 +340,11 @@ async function zipSiteBackup(meta: Record<string, unknown>, options: { sqlDump?:
       archive.file(options.sqliteTemp, { name: "db/sqlite.db" });
     }
 
-    if (fs.existsSync(uploadDir)) {
-      const entries = fs.readdirSync(uploadDir);
-      if (entries.length > 0) {
-        archive.directory(uploadDir, "files");
-      }
+    if (uploads.fileCount > 0) {
+      archive.directory(uploadDir, "files");
     }
-
-    const profileDir = getProfilePhotoUploadDir();
-    if (fs.existsSync(profileDir)) {
-      const profileEntries = fs.readdirSync(profileDir);
-      if (profileEntries.length > 0) {
-        archive.directory(profileDir, "profile-photos");
-      }
+    if (profiles.fileCount > 0) {
+      archive.directory(profileDir, "profile-photos");
     }
 
     archive.finalize().catch(reject);
@@ -197,7 +398,8 @@ export async function runSiteBackup(kind: BackupKind): Promise<{
       await backupLiveSqliteToFile(sqliteTemp);
     }
 
-    const fullPath = await zipSiteBackup(meta, { sqlDump, sqliteTemp });
+    const rowCounts = await getTableRowCounts();
+    const fullPath = await zipSiteBackup(meta, { sqlDump, sqliteTemp, rowCounts });
     if (sqliteTemp) {
       await fsp.unlink(sqliteTemp).catch(() => {});
     }

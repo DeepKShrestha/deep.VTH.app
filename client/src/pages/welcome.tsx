@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/lib/auth";
+import { saveNotificationPrefsToServer, useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { useToast } from "@/hooks/use-toast";
@@ -243,51 +243,76 @@ export default function Welcome() {
   const notificationItems = notificationsData?.items ?? [];
   const unreadCount = notificationsData?.unreadCount ?? 0;
 
+  // Read the per-user notification prefs from the localStorage cache that
+  // `syncPreferencesFromServer` populates after login. Re-read whenever the
+  // hydrate event fires (e.g. user switches devices and the server pushes a
+  // fresh copy).
   useEffect(() => {
     if (typeof window === "undefined" || !user?.id) return;
     const userKey = String(user.id);
-    setEnableToastAlerts(window.localStorage.getItem(`vth:notifications:toast:${userKey}`) !== "0");
-    setEnableSoundAlerts(window.localStorage.getItem(`vth:notifications:sound:${userKey}`) === "1");
-    const storedStyle = window.localStorage.getItem(`vth:notifications:sound-style:${userKey}`);
-    if (
-      storedStyle === "chime" ||
-      storedStyle === "ding" ||
-      storedStyle === "pulse" ||
-      storedStyle === "studio-confirm" ||
-      storedStyle === "ui-back" ||
-      storedStyle === "ui-start" ||
-      storedStyle === "ui-start-alt" ||
-      storedStyle === "correct-answer" ||
-      storedStyle === "notif-real" ||
-      storedStyle === "digital-quick"
-    ) {
-      setSoundStyle(storedStyle);
-    } else {
-      setSoundStyle("chime");
-    }
-    const storedVolume = Number(window.localStorage.getItem(`vth:notifications:sound-volume:${userKey}`));
-    setSoundVolume(Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1 ? storedVolume : 0.7);
+
+    const readFromCache = () => {
+      setEnableToastAlerts(
+        window.localStorage.getItem(`vth:notifications:toast:${userKey}`) !== "0",
+      );
+      setEnableSoundAlerts(
+        window.localStorage.getItem(`vth:notifications:sound:${userKey}`) === "1",
+      );
+      const storedStyle = window.localStorage.getItem(
+        `vth:notifications:sound-style:${userKey}`,
+      );
+      if (
+        storedStyle === "chime" ||
+        storedStyle === "ding" ||
+        storedStyle === "pulse" ||
+        storedStyle === "studio-confirm" ||
+        storedStyle === "ui-back" ||
+        storedStyle === "ui-start" ||
+        storedStyle === "ui-start-alt" ||
+        storedStyle === "correct-answer" ||
+        storedStyle === "notif-real" ||
+        storedStyle === "digital-quick"
+      ) {
+        setSoundStyle(storedStyle);
+      } else {
+        setSoundStyle("chime");
+      }
+      const storedVolume = Number(
+        window.localStorage.getItem(`vth:notifications:sound-volume:${userKey}`),
+      );
+      setSoundVolume(
+        Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1
+          ? storedVolume
+          : 0.7,
+      );
+    };
+
+    readFromCache();
+    window.addEventListener("vth:notification-prefs-hydrated", readFromCache);
+    return () =>
+      window.removeEventListener("vth:notification-prefs-hydrated", readFromCache);
   }, [user?.id]);
 
+  // Write through to the localStorage cache (instant UI on this device) AND
+  // to the server (so the prefs follow the user to other devices).
+  const isInitialPrefsSyncRef = useRef(true);
   useEffect(() => {
     if (typeof window === "undefined" || !user?.id) return;
     window.localStorage.setItem(`vth:notifications:toast:${user.id}`, enableToastAlerts ? "1" : "0");
-  }, [enableToastAlerts, user?.id]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !user?.id) return;
     window.localStorage.setItem(`vth:notifications:sound:${user.id}`, enableSoundAlerts ? "1" : "0");
-  }, [enableSoundAlerts, user?.id]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !user?.id) return;
     window.localStorage.setItem(`vth:notifications:sound-style:${user.id}`, soundStyle);
-  }, [soundStyle, user?.id]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !user?.id) return;
     window.localStorage.setItem(`vth:notifications:sound-volume:${user.id}`, String(soundVolume));
-  }, [soundVolume, user?.id]);
+    if (isInitialPrefsSyncRef.current) {
+      isInitialPrefsSyncRef.current = false;
+      return;
+    }
+    saveNotificationPrefsToServer({
+      enableToastAlerts,
+      enableSoundAlerts,
+      soundStyle,
+      soundVolume,
+    });
+  }, [enableToastAlerts, enableSoundAlerts, soundStyle, soundVolume, user?.id]);
 
   useEffect(() => {
     if (!isAdmin || !notificationsData) return;

@@ -41,7 +41,7 @@ export type LoginOutcome =
   | { kind: "error"; message: string }
   | { kind: "two_factor"; pendingToken: string };
 
-async function syncPreferencesFromServer(token: string) {
+async function syncPreferencesFromServer(token: string, userId: number) {
   try {
     const prefRes = await fetch("/api/users/me/preferences", {
       headers: { Authorization: `Bearer ${token}` },
@@ -50,14 +50,114 @@ async function syncPreferencesFromServer(token: string) {
     const prefs = (await prefRes.json()) as {
       astToggleDefaults: Record<string, unknown> | null;
       hospitalToggleDefaults: Record<string, unknown> | null;
+      notificationPrefs: Record<string, unknown> | null;
     };
     hydrateToggleDefaultsFromServer({
       astToggleDefaults: prefs.astToggleDefaults,
       hospitalToggleDefaults: prefs.hospitalToggleDefaults,
     });
+    hydrateNotificationPrefsFromServer(userId, prefs.notificationPrefs, token);
   } catch {
     /* ignore offline errors */
   }
+}
+
+const NOTIF_KEYS = {
+  toast: (uid: number | string) => `vth:notifications:toast:${uid}`,
+  sound: (uid: number | string) => `vth:notifications:sound:${uid}`,
+  style: (uid: number | string) => `vth:notifications:sound-style:${uid}`,
+  volume: (uid: number | string) => `vth:notifications:sound-volume:${uid}`,
+};
+
+function hydrateNotificationPrefsFromServer(
+  userId: number,
+  serverPrefs: Record<string, unknown> | null,
+  token: string,
+) {
+  if (typeof window === "undefined") return;
+
+  // No server record yet: if local storage already has values, migrate them
+  // to the server so this device's prefs persist across devices going forward.
+  if (!serverPrefs) {
+    const local = readLocalNotificationPrefs(userId);
+    if (local) {
+      void fetch("/api/users/me/preferences", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ notificationPrefs: local }),
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // Server is source of truth — overwrite localStorage cache.
+  if (typeof serverPrefs.enableToastAlerts === "boolean") {
+    window.localStorage.setItem(
+      NOTIF_KEYS.toast(userId),
+      serverPrefs.enableToastAlerts ? "1" : "0",
+    );
+  }
+  if (typeof serverPrefs.enableSoundAlerts === "boolean") {
+    window.localStorage.setItem(
+      NOTIF_KEYS.sound(userId),
+      serverPrefs.enableSoundAlerts ? "1" : "0",
+    );
+  }
+  if (typeof serverPrefs.soundStyle === "string") {
+    window.localStorage.setItem(NOTIF_KEYS.style(userId), serverPrefs.soundStyle);
+  }
+  if (typeof serverPrefs.soundVolume === "number") {
+    window.localStorage.setItem(
+      NOTIF_KEYS.volume(userId),
+      String(serverPrefs.soundVolume),
+    );
+  }
+  window.dispatchEvent(new Event("vth:notification-prefs-hydrated"));
+}
+
+/**
+ * Persist notification preferences for the current user to the server so they
+ * follow them across devices. Fire-and-forget; the localStorage write in the
+ * caller is the authoritative cache for instant UI feedback.
+ */
+export function saveNotificationPrefsToServer(prefs: {
+  enableToastAlerts: boolean;
+  enableSoundAlerts: boolean;
+  soundStyle: string;
+  soundVolume: number;
+}): void {
+  const token = getAuthToken();
+  if (!token) return;
+  void fetch("/api/users/me/preferences", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ notificationPrefs: prefs }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function readLocalNotificationPrefs(userId: number): Record<string, unknown> | null {
+  if (typeof window === "undefined") return null;
+  const toastRaw = window.localStorage.getItem(NOTIF_KEYS.toast(userId));
+  const soundRaw = window.localStorage.getItem(NOTIF_KEYS.sound(userId));
+  const style = window.localStorage.getItem(NOTIF_KEYS.style(userId));
+  const volumeRaw = window.localStorage.getItem(NOTIF_KEYS.volume(userId));
+  if (toastRaw == null && soundRaw == null && style == null && volumeRaw == null) {
+    return null;
+  }
+  const volume = Number(volumeRaw);
+  return {
+    enableToastAlerts: toastRaw == null ? true : toastRaw !== "0",
+    enableSoundAlerts: soundRaw === "1",
+    soundStyle: style ?? "chime",
+    soundVolume: Number.isFinite(volume) && volume >= 0 && volume <= 1 ? volume : 0.7,
+  };
 }
 
 interface AuthContextType {
@@ -192,7 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const safeUser = (await res.json()) as AuthUser;
         setAuth(token, safeUser);
-        await syncPreferencesFromServer(token);
+        await syncPreferencesFromServer(token, safeUser.id);
       } catch {
         setAuth(null, null);
       } finally {
@@ -226,7 +326,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setAuth(data.token, data.user);
         localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
-        await syncPreferencesFromServer(data.token);
+        await syncPreferencesFromServer(data.token, data.user.id);
         return { kind: "ok", message: "Login successful" };
       } catch {
         return { kind: "error", message: "Network error" };
@@ -252,7 +352,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setAuth(data.token, data.user);
         localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
-        await syncPreferencesFromServer(data.token);
+        await syncPreferencesFromServer(data.token, data.user.id);
         return { success: true, message: "Login successful" };
       } catch {
         return { success: false, message: "Network error" };

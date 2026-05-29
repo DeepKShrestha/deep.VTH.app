@@ -437,6 +437,15 @@ export function registerAuthRoutes(app: Express) {
             ? (v as Record<string, unknown>)
             : null;
     }
+    if ("notificationPrefs" in body) {
+      const v = body.notificationPrefs;
+      patch.notificationPrefs =
+        v == null
+          ? null
+          : typeof v === "object" && !Array.isArray(v)
+            ? (v as Record<string, unknown>)
+            : null;
+    }
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ message: MESSAGES.NO_CHANGES_PROVIDED });
     }

@@ -12,6 +12,7 @@ import {
 } from "../db";
 import { getCaseAttachmentUploadDir, getProfilePhotoUploadDir } from "./backup-paths";
 import { resolvePgTool } from "../libpq-bin";
+import { getBackupSettings, type BackupSettingsClient } from "./backup-settings";
 
 export const RESTORE_CONFIRM_PHRASE = "RESTORE_SITE_DATA";
 
@@ -57,6 +58,60 @@ async function runPsqlFile(dumpPath: string): Promise<void> {
       else reject(new Error(`psql exited ${code}: ${err || "unknown error"}`));
     });
   });
+}
+
+function pgLiteralString(value: string): string {
+  // Use E'' escape form so a single backslash also escapes safely.
+  return `E'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+/**
+ * Post-restore SQL that runs via psql (avoiding stale prepared statements in
+ * the live pg pool). Wipes per-device session state and the prior owner's
+ * backup history, then restores the *current* backup_settings so the user's
+ * automatic-backup schedule and retention survive the restore.
+ */
+function buildPostRestoreSql(captured: BackupSettingsClient): string {
+  const set = (key: string, value: string) =>
+    `INSERT INTO backup_settings (key, value) VALUES (${pgLiteralString(key)}, ${pgLiteralString(value)})\n  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;`;
+  return [
+    "-- vth-app post-restore cleanup",
+    "TRUNCATE TABLE sessions;",
+    "TRUNCATE TABLE backup_history;",
+    set("auto_backup_enabled", captured.autoBackupEnabled ? "true" : "false"),
+    set("auto_interval_hours", String(captured.autoIntervalHours)),
+    set("retention_count", String(captured.retentionCount)),
+    set("remote_upload_enabled", captured.remoteUploadEnabled ? "true" : "false"),
+  ].join("\n");
+}
+
+async function runPostRestoreCleanupPostgres(captured: BackupSettingsClient): Promise<void> {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) return;
+  const sqlText = buildPostRestoreSql(captured);
+  const tmp = path.join(os.tmpdir(), `vth-restore-cleanup-${Date.now()}.sql`);
+  await fsp.writeFile(tmp, sqlText, "utf8");
+  try {
+    const libpqUrl = libpqCompatibleDatabaseUrl(databaseUrl);
+    const exe = resolvePgTool("psql");
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(exe, ["--dbname", libpqUrl, "-v", "ON_ERROR_STOP=1", "-f", tmp], {
+        env: libpqSubprocessEnv(),
+        windowsHide: true,
+      });
+      let err = "";
+      proc.stderr.on("data", (c: Buffer) => {
+        err += String(c);
+      });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`psql post-restore cleanup exited ${code}: ${err || "unknown"}`));
+      });
+    });
+  } finally {
+    await fsp.unlink(tmp).catch(() => {});
+  }
 }
 
 /**
@@ -159,11 +214,35 @@ export async function restoreSiteFromZip(params: {
       if (!fs.existsSync(dumpPath)) {
         throw new Error("Backup is missing db/dump.sql (required for Postgres restore)");
       }
+      // Capture the current backup schedule + retention BEFORE the dump
+      // overwrites it so we can re-apply it post-restore. Falls back silently
+      // if the live DB is in a bad state — defaults will be re-seeded.
+      let capturedSettings: BackupSettingsClient | null = null;
+      try {
+        capturedSettings = await getBackupSettings();
+      } catch {
+        capturedSettings = null;
+      }
       await runPsqlFile(dumpPath);
+      // Post-restore: wipe sessions + backup_history that came from the dump,
+      // and re-apply this server's backup_settings.
+      const settingsToApply: BackupSettingsClient = capturedSettings ?? {
+        autoBackupEnabled: false,
+        autoIntervalHours: 24,
+        retentionCount: 7,
+        remoteUploadEnabled: false,
+      };
+      await runPostRestoreCleanupPostgres(settingsToApply);
     } else {
       const sqlitePath = path.join(dbDir, "sqlite.db");
       if (!fs.existsSync(sqlitePath)) {
         throw new Error("Backup is missing db/sqlite.db (required for SQLite restore)");
+      }
+      let capturedSettings: BackupSettingsClient | null = null;
+      try {
+        capturedSettings = await getBackupSettings();
+      } catch {
+        capturedSettings = null;
       }
       suspendSqliteForExternalDiskReplace();
       try {
@@ -173,6 +252,28 @@ export async function restoreSiteFromZip(params: {
       } finally {
         resumeSqliteAfterExternalDiskReplace();
       }
+      // SQLite equivalent of the Postgres cleanup. Use dbRun against the
+      // freshly re-opened connection.
+      const { dbRun } = await import("../db-query");
+      const { sql: drizzleSql } = await import("drizzle-orm");
+      const settingsToApply: BackupSettingsClient = capturedSettings ?? {
+        autoBackupEnabled: false,
+        autoIntervalHours: 24,
+        retentionCount: 7,
+        remoteUploadEnabled: false,
+      };
+      await dbRun(drizzleSql`DELETE FROM sessions`).catch(() => {});
+      await dbRun(drizzleSql`DELETE FROM backup_history`).catch(() => {});
+      const upsert = async (key: string, value: string) => {
+        await dbRun(
+          drizzleSql`INSERT INTO backup_settings (key, value) VALUES (${key}, ${value})
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        ).catch(() => {});
+      };
+      await upsert("auto_backup_enabled", settingsToApply.autoBackupEnabled ? "true" : "false");
+      await upsert("auto_interval_hours", String(settingsToApply.autoIntervalHours));
+      await upsert("retention_count", String(settingsToApply.retentionCount));
+      await upsert("remote_upload_enabled", settingsToApply.remoteUploadEnabled ? "true" : "false");
     }
 
     const filesDir = path.join(tmpRoot, "files");
@@ -194,8 +295,8 @@ export async function restoreSiteFromZip(params: {
     return {
       detail:
         DB_PROVIDER === "postgres"
-          ? "Database SQL was applied and uploads restored where present. If errors persist, restart the Node process so DB connections refresh."
-          : "SQLite file was replaced and uploads restored where present. Restart the Node process so all modules reload the database.",
+          ? "Database SQL was applied and uploads restored. Active sessions and prior backup history were cleared; your live backup schedule was preserved. If errors persist, restart the Node process so DB connections refresh."
+          : "SQLite file was replaced and uploads restored. Active sessions and prior backup history were cleared; your live backup schedule was preserved. Restart the Node process so all modules reload the database.",
     };
   } finally {
     await fsp.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
