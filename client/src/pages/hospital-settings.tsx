@@ -144,15 +144,6 @@ export default function HospitalSettingsPage() {
             <CollapsibleContent>
               <CardContent className="space-y-3" onClick={(e) => e.stopPropagation()}>
             <label className="flex items-center justify-between gap-3 text-sm">
-              <span>Larger fields on the register form (default ON/OFF)</span>
-              <Switch
-                checked={toggleDefaults.quickRegisterMode}
-                onCheckedChange={(checked) =>
-                  setToggleDefaults((prev) => ({ ...prev, quickRegisterMode: checked }))
-                }
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 text-sm">
               <span>Hide optional fields by default</span>
               <Switch
                 checked={toggleDefaults.hideOptionalFields}

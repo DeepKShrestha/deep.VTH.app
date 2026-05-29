@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { saveNotificationPrefsToServer, useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/user-avatar";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { useToast } from "@/hooks/use-toast";
@@ -82,102 +83,28 @@ function formatTimeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-type NotificationSoundStyle =
-  | "chime"
-  | "ding"
-  | "pulse"
-  | "studio-confirm"
-  | "ui-back"
-  | "ui-start"
-  | "ui-start-alt"
-  | "correct-answer"
-  | "notif-real"
-  | "digital-quick";
-
-const SOUND_FILE_BY_STYLE: Partial<Record<NotificationSoundStyle, string>> = {
-  "studio-confirm": "/sounds/confirm_tone.wav",
-  "ui-back": "/sounds/interface_back.wav",
-  "ui-start": "/sounds/interface_start.wav",
-  "ui-start-alt": "/sounds/interface_start_alt.wav",
-  "correct-answer": "/sounds/correct_answer.wav",
-  "notif-real": "/sounds/new_notification_09.mp3",
-  "digital-quick": "/sounds/digital_quick.wav",
-};
-
-function playNotificationSound(style: NotificationSoundStyle, volume: number) {
-  const clampedVolume = Math.max(0, Math.min(1, volume));
-  const externalSound = SOUND_FILE_BY_STYLE[style];
-  if (externalSound) {
-    try {
-      const audio = new Audio(externalSound);
-      audio.volume = clampedVolume;
-      void audio.play().catch(() => {
-        // Autoplay policy or missing asset; ignore.
-      });
-    } catch {
-      // Ignore if browser blocks autoplay.
-    }
-    return;
-  }
-  try {
-    const AudioCtx =
-      window.AudioContext ||
-      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const audioCtx = new AudioCtx();
-    const gain = audioCtx.createGain();
-    // File-based styles use element volume 0–1; match perceived loudness for built-in tones.
-    gain.gain.value = Math.min(0.85, 0.1 + clampedVolume * 0.55);
-    gain.connect(audioCtx.destination);
-
-    const addTone = (type: OscillatorType, freq: number, start: number, end: number) => {
-      const osc = audioCtx.createOscillator();
-      osc.type = type;
-      osc.frequency.value = freq;
-      osc.connect(gain);
-      osc.start(audioCtx.currentTime + start);
-      osc.stop(audioCtx.currentTime + end);
-    };
-
-    const schedule = () => {
-      if (style === "ding") {
-        addTone("sine", 1174, 0, 0.14); // D6
-        return;
-      }
-      if (style === "pulse") {
-        addTone("square", 880, 0, 0.06);
-        addTone("square", 988, 0.1, 0.17);
-        addTone("square", 1046, 0.2, 0.3);
-        return;
-      }
-      // default: chime
-      addTone("triangle", 1046, 0, 0.09); // C6
-      addTone("sine", 1318, 0.1, 0.22); // E6
-    };
-
-    void audioCtx.resume().then(schedule).catch(() => {
-      // Still try scheduling if resume is unsupported.
-      schedule();
-    });
-  } catch {
-    // Optional enhancement only; silently ignore when audio isn't allowed.
-  }
-}
+// Sound styles + the playback helper now live in
+// `components/admin-notification-center.tsx` so the global toaster and this
+// Welcome bell UI share the same implementation. Re-import them here so the
+// rest of the file (state types, Test button, select options) is unchanged.
+import {
+  playNotificationSound,
+  type NotificationSoundStyle,
+} from "@/components/admin-notification-center";
 
 export default function Welcome() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user, logout, canRegisterHospitalCase, confirmBeforeLogout, isAdmin } = useAuth();
-  const [enableToastAlerts, setEnableToastAlerts] = useState(() => {
-    return true;
-  });
-  const [enableSoundAlerts, setEnableSoundAlerts] = useState(() => {
-    return false;
-  });
+  const [enableToastAlerts, setEnableToastAlerts] = useState(true);
+  // Default ON. The actual play happens in `<AdminNotificationCenter />` so
+  // sounds fire on every page; this Welcome page just controls the prefs UI.
+  // Previously this defaulted to OFF and was buried behind a settings cog,
+  // so admins reported never hearing notifications.
+  const [enableSoundAlerts, setEnableSoundAlerts] = useState(true);
   const [soundStyle, setSoundStyle] = useState<NotificationSoundStyle>("chime");
   const [soundVolume, setSoundVolume] = useState<number>(0.7);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
-  const previousUnreadKeysRef = useRef<Set<string> | null>(null);
   const {
     data: notificationsData,
     isLoading: notificationsLoading,
@@ -257,7 +184,8 @@ export default function Welcome() {
         window.localStorage.getItem(`vth:notifications:toast:${userKey}`) !== "0",
       );
       setEnableSoundAlerts(
-        window.localStorage.getItem(`vth:notifications:sound:${userKey}`) === "1",
+        // Treat unset/missing as ON; only explicit "0" disables sound.
+        window.localStorage.getItem(`vth:notifications:sound:${userKey}`) !== "0",
       );
       const storedStyle = window.localStorage.getItem(
         `vth:notifications:sound-style:${userKey}`,
@@ -315,29 +243,11 @@ export default function Welcome() {
     });
   }, [enableToastAlerts, enableSoundAlerts, soundStyle, soundVolume, user?.id]);
 
-  useEffect(() => {
-    if (!isAdmin || !notificationsData) return;
-    const unreadKeys = new Set(
-      notificationsData.items.filter((item) => !item.isRead).map((item) => item.key),
-    );
-    const prev = previousUnreadKeysRef.current;
-    previousUnreadKeysRef.current = unreadKeys;
-    if (!prev) return; // don't notify on initial load
-    let newItems = 0;
-    unreadKeys.forEach((key) => {
-      if (!prev.has(key)) newItems += 1;
-    });
-    if (newItems <= 0) return;
-    if (enableToastAlerts) {
-      toast({
-        title: "New admin notifications",
-        description: `${newItems} new request${newItems > 1 ? "s" : ""} waiting for review.`,
-      });
-    }
-    if (enableSoundAlerts) {
-      playNotificationSound(soundStyle, soundVolume);
-    }
-  }, [isAdmin, notificationsData, enableToastAlerts, enableSoundAlerts, soundStyle, soundVolume, toast]);
+  // NOTE: the new-unread diff + sound + toast side-effect used to live here
+  // but it only fired while the user was on `/`. It now lives in
+  // `<AdminNotificationCenter />` (mounted at the app shell) so admins get
+  // alerts on every page. The Welcome page still owns the prefs UI inside
+  // the bell dropdown — both share cache via React Query queryKey dedupe.
 
   const handleOpenNotification = (
     key: string,
@@ -386,7 +296,10 @@ export default function Welcome() {
   ) : null;
 
   const welcomeHero = (
-    <div className="text-center space-y-2 sm:space-y-3">
+    // Internal hero spacing: a touch more breathing room between the icon
+    // and the title at `sm+` so the icon doesn't sit shoulder-to-shoulder
+    // with the title text. The mobile values are unchanged.
+    <div className="text-center space-y-2 sm:space-y-4">
       <div className="flex justify-center">
         <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
           <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
@@ -433,8 +346,8 @@ export default function Welcome() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <div className="px-2 pb-2">
-          <div className="flex items-center gap-2">
+        <div className="px-2 pb-2 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm"
               variant="outline"
@@ -454,6 +367,43 @@ export default function Welcome() {
               data-testid="button-notification-delete-read"
             >
               Delete read
+            </Button>
+          </div>
+          {/*
+            Sound state pill + Test button promoted out of the buried
+            "settings cog" panel below. Most admins reported never hearing
+            sounds because they never discovered the toggle. Now a single
+            tap toggles sound, and "Test" plays the current style at the
+            current volume so they can verify their audio routing works.
+          */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <Button
+              type="button"
+              size="sm"
+              variant={enableSoundAlerts ? "default" : "outline"}
+              className="h-8 text-xs gap-1.5"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setEnableSoundAlerts((v) => !v);
+              }}
+              data-testid="button-notification-sound-toggle"
+            >
+              {enableSoundAlerts ? "🔊 Sound on" : "🔇 Sound off"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                playNotificationSound(soundStyle, soundVolume);
+              }}
+              data-testid="button-notification-test-sound"
+            >
+              Test
             </Button>
           </div>
         </div>
@@ -593,9 +543,12 @@ export default function Welcome() {
         <div className="sm:hidden space-y-4">
           <div className="rounded-xl border border-border/80 bg-card shadow-sm px-4 py-4 space-y-3">
             <div className="flex flex-col items-center gap-2 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-2 ring-primary/15">
-                <User className="h-6 w-6 text-primary" />
-              </div>
+              <UserAvatar
+                photoUrl={user?.profilePhotoUrl}
+                name={user?.fullName}
+                size={48}
+                tone="tinted"
+              />
               <p className="font-semibold text-sm leading-snug">{user?.fullName}</p>
               {userBadges}
             </div>
@@ -646,12 +599,24 @@ export default function Welcome() {
           {welcomeHero}
         </div>
 
-        {/* Tablet / desktop: compact toolbar row + centered hero */}
-        <div className="hidden sm:block space-y-4">
+        {/*
+          Tablet / desktop: compact toolbar row + centered hero.
+          Spacing between the two blocks is intentionally larger than the
+          default body rhythm (`space-y-6 md:space-y-8`) — the previous
+          `space-y-4` made the microscope hero icon sit too close to the
+          toolbar, giving a cluttered "all one chunk" feel. The extra gap
+          cues that the toolbar is page-chrome and the hero is content.
+        */}
+        <div className="hidden sm:block space-y-6 md:space-y-8">
           <div className="flex flex-row items-center justify-between gap-3">
             <div className="flex flex-row items-center flex-wrap gap-2 text-sm min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <User className="w-4 h-4 text-muted-foreground shrink-0" />
+                <UserAvatar
+                  photoUrl={user?.profilePhotoUrl}
+                  name={user?.fullName}
+                  size={28}
+                  tone="muted"
+                />
                 <span className="font-medium truncate">{user?.fullName}</span>
               </div>
               {user && (

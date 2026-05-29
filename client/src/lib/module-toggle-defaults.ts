@@ -1,7 +1,14 @@
 type ModuleScope = "ast" | "hospital";
 
+// `quickRegisterMode` previously bumped every input on the register form
+// from 36px → 44px on desktop. Since the global UI now uses 44px on
+// phones/tablets automatically (Input + Button + Select primitives), the
+// toggle was only meaningful for users running the desktop view on a
+// touchscreen — a vanishingly small audience. Removed in favour of using
+// browser zoom in that case. Any previously persisted `quickRegisterMode`
+// value in localStorage/Postgres is silently ignored by `pickFromRecord`
+// below since the key is no longer in the defaults object.
 export type AstToggleDefaults = {
-  quickRegisterMode: boolean;
   hideOptionalFields: boolean;
   usePresetAntibiotics: boolean;
   autoMode: boolean;
@@ -9,7 +16,6 @@ export type AstToggleDefaults = {
 };
 
 export type HospitalToggleDefaults = {
-  quickRegisterMode: boolean;
   hideOptionalFields: boolean;
   historyNotesBulletPoints: boolean;
   previousMedicationNotesBulletPoints: boolean;
@@ -19,7 +25,6 @@ export type HospitalToggleDefaults = {
 };
 
 const AST_DEFAULTS: AstToggleDefaults = {
-  quickRegisterMode: false,
   hideOptionalFields: false,
   usePresetAntibiotics: false,
   autoMode: true,
@@ -27,7 +32,6 @@ const AST_DEFAULTS: AstToggleDefaults = {
 };
 
 const HOSPITAL_DEFAULTS: HospitalToggleDefaults = {
-  quickRegisterMode: false,
   hideOptionalFields: false,
   historyNotesBulletPoints: true,
   previousMedicationNotesBulletPoints: true,

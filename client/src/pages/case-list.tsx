@@ -345,35 +345,54 @@ export default function CaseList({
 
   return (
     <StickyScrollPage
-      bodyClassName="space-y-6"
-      stickyClassName="max-sm:max-h-[min(40vh,18rem)] max-sm:overflow-y-auto"
+      bodyClassName="space-y-4 sm:space-y-6"
+      stickyClassName="max-sm:max-h-[min(38vh,17rem)] max-sm:overflow-y-auto"
       sticky={
-        <div className="space-y-4">
-          <PageBreadcrumbs
-            items={
-              isHospitalHistory
-                ? [
-                    { label: "Hospital", href: "/new-case" },
-                    { label: "Previous cases" },
-                  ]
-                : [
-                    { label: "AST module", href: "/ast-report" },
-                    { label: "Previous cases" },
-                  ]
-            }
-          />
+        <div className="space-y-3 sm:space-y-4">
+          {/* Breadcrumb is noise on a phone — the back arrow + title already
+              tell the user where they are. Hide below `sm`. */}
+          <div className="hidden sm:block">
+            <PageBreadcrumbs
+              items={
+                isHospitalHistory
+                  ? [
+                      { label: "Hospital", href: "/new-case" },
+                      { label: "Previous cases" },
+                    ]
+                  : [
+                      { label: "AST module", href: "/ast-report" },
+                      { label: "Previous cases" },
+                    ]
+              }
+            />
+          </div>
+          {/* Title row + actions */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 w-full sm:w-auto">
               <Link href={backHref}>
                 <Button variant="ghost" size="icon" data-testid="button-back">
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
               </Link>
-              <h1 className="text-lg font-semibold truncate" data-testid="text-page-title">
+              <h1 className="text-base sm:text-lg font-semibold truncate flex-1" data-testid="text-page-title">
                 Previous Cases
               </h1>
+              {/* New Case on mobile sits inline with the title so the toolbar
+                  uses one row instead of two. It moves to the desktop action
+                  cluster below at `sm+`. */}
+              {canCreateFromThisList && (
+                <Link href={createCaseHref} className="sm:hidden shrink-0">
+                  <Button size="sm" className="gap-1.5" data-testid="button-new-case-mobile">
+                    <ClipboardPlus className="w-3.5 h-3.5" />
+                    New
+                  </Button>
+                </Link>
+              )}
             </div>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto shrink-0">
+            {/* Compact toggle is only useful on desktop (mobile is always
+                cards in a single column), and the New Case button has its
+                own mobile home above. Both hidden below `sm`. */}
+            <div className="hidden sm:flex flex-row items-center gap-2 shrink-0">
               <Button
                 type="button"
                 variant="outline"
@@ -395,7 +414,7 @@ export default function CaseList({
                 )}
               </Button>
               {canCreateFromThisList && (
-                <Link href={createCaseHref} className="w-full sm:w-auto">
+                <Link href={createCaseHref}>
                   <Button size="sm" className="gap-1.5" data-testid="button-new-case">
                     <ClipboardPlus className="w-3.5 h-3.5" />
                     New Case
@@ -407,20 +426,21 @@ export default function CaseList({
 
           {isAdmin && (
             <Card>
-              <CardContent className="p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">
+              <CardContent className="p-3 flex flex-row items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground truncate">
                   {isHospitalHistory ? "Hospital Case Change Logs" : "AST Case Change Logs"}
                 </div>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="gap-1.5"
+                  className="gap-1.5 shrink-0"
                   onClick={() => setShowCaseLogs((v) => !v)}
                   data-testid="button-toggle-case-change-logs"
                 >
                   <Clock className="w-3.5 h-3.5" />
-                  {showCaseLogs ? "Hide Logs" : "View Logs"}
+                  {showCaseLogs ? "Hide" : "View"}
+                  <span className="hidden sm:inline">{showCaseLogs ? " Logs" : " Logs"}</span>
                 </Button>
               </CardContent>
             </Card>
@@ -464,27 +484,35 @@ export default function CaseList({
               <Input
                 ref={searchInputRef}
                 type="search"
-                placeholder="Search by case number, owner, species, breed, or phone..."
+                placeholder="Search cases…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-9 pl-9"
+                className="pl-9"
                 data-testid="input-search"
                 aria-label="Search cases"
+                title="Search by case number, owner, species, breed, or phone"
               />
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            {/* Keyboard shortcut hint is meaningless on phones (no `/` or `?`
+                keys in the soft keyboard's default plane and no URL bar to
+                share). Hidden below `sm`. */}
+            <p className="hidden sm:block text-[11px] text-muted-foreground">
               Press <kbd className="px-1 rounded border bg-muted font-mono text-[10px]">/</kbd> to focus
               search · <kbd className="px-1 rounded border bg-muted font-mono text-[10px]">?</kbd> for
               shortcuts · filters sync to the URL for sharing
             </p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:flex-wrap">
+          {/* Filter row:
+                - Mobile: species + date sit on one row (`grid-cols-[1fr,auto]`)
+                  so they fit without stacking; result count drops below.
+                - Desktop: original wrap layout. */}
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center sm:flex sm:flex-row sm:items-end sm:flex-wrap">
             <Input
               type="text"
-              placeholder="Species (exact match, e.g. Canine)"
+              placeholder="Species"
               value={speciesFilter}
               onChange={(e) => setSpeciesFilter(e.target.value)}
-              className="h-9 text-sm sm:max-w-xs"
+              className="text-sm sm:max-w-xs"
               data-testid="input-species-filter"
             />
             <CaseListDateFilterDialog
@@ -499,12 +527,12 @@ export default function CaseList({
                 setDateToBs("");
               }}
             />
-            <p className="text-xs text-muted-foreground sm:pb-2">
+            <p className="col-span-2 text-xs text-muted-foreground sm:pb-2">
               {total} case{total === 1 ? "" : "s"}
               {hasActiveFilters && !dateRangeInvalid ? " (filtered)" : ""}
             </p>
             {dateRangeInvalid ? (
-              <p className="text-xs text-destructive w-full sm:pb-2">
+              <p className="col-span-2 text-xs text-destructive w-full sm:pb-2">
                 Date filter: from must be on or before to.
               </p>
             ) : null}
@@ -718,19 +746,30 @@ export default function CaseList({
                   key={c.id}
                   className="transition-colors hover:bg-accent/50 motion-reduce:transition-none"
                 >
-                  <CardContent className={compactCards ? "p-3" : "p-4"}>
+                  {/*
+                    Mobile-tightened card:
+                      - Padding: `p-3` even when not in compact mode (saves
+                        space without losing readability).
+                      - Body and action area always stack on mobile (we used
+                        to flex-row at xs which forced the buttons to share
+                        a too-narrow gutter beside the text).
+                      - Action row on mobile = two equal-width buttons in a
+                        grid, matching the welcome-page pattern so Preview
+                        and Delete are visually balanced.
+                  */}
+                  <CardContent className={compactCards ? "p-3" : "p-3 sm:p-4"}>
                     <div
                       className={
                         compactCards
                           ? "flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3"
-                          : "flex flex-col sm:flex-row items-start justify-between gap-4"
+                          : "flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-4"
                       }
                     >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <div className="flex items-start gap-2 sm:gap-3 flex-1 min-w-0 w-full">
                         {isAdmin && (
                           <input
                             type="checkbox"
-                            className="mt-1"
+                            className="mt-1 shrink-0"
                             checked={selectedIds.includes(c.id)}
                             onChange={(e) => {
                               if (e.target.checked) {
@@ -784,7 +823,11 @@ export default function CaseList({
                         </div>
                       </div>
 
-                      <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 w-full sm:w-auto shrink-0">
+                      <div className={
+                        isAdmin
+                          ? "grid grid-cols-2 gap-2 w-full sm:flex sm:flex-col sm:items-end sm:w-auto shrink-0"
+                          : "flex w-full sm:w-auto shrink-0"
+                      }>
                         <Link href={`${caseDetailBasePath}/${c.id}?scope=${caseScope}`} className="w-full sm:w-auto">
                           <Button
                             variant="outline"

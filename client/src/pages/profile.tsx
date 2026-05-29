@@ -5,6 +5,7 @@ import { apiRequest, apiRequestForm } from "../lib/queryClient";
 import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
 import { useToast } from "../hooks/use-toast";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
+import { UserAvatar } from "@/components/user-avatar";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Label } from "../components/ui/label";
@@ -392,13 +393,6 @@ export default function ProfilePage() {
     }
   }
 
-  const initials = fullName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-
   const statusLabel = user.approved ? "Active" : "Pending Approval";
 
   const roleLabel = (user.role || "pending")
@@ -433,19 +427,12 @@ export default function ProfilePage() {
       <Card>
         <CardContent className="pt-5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="relative h-14 w-14 shrink-0 rounded-full overflow-hidden border border-border bg-muted">
-              {user.profilePhotoUrl ? (
-                <img
-                  src={user.profilePhotoUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="h-full w-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
-                  {initials || "U"}
-                </div>
-              )}
-            </div>
+            <UserAvatar
+              photoUrl={user.profilePhotoUrl}
+              name={fullName || user.username}
+              size={56}
+              tone="tinted"
+            />
             <div className="space-y-1">
               <p className="text-base font-semibold">{fullName || user.username}</p>
               <p className="text-sm text-muted-foreground capitalize">

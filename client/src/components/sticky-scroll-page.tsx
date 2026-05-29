@@ -50,6 +50,11 @@ export const StickyScrollPage = forwardRef<HTMLDivElement, StickyScrollPageProps
         <div
           className={cn(
             "sticky top-0 z-30 -mx-3 px-3 sm:-mx-4 sm:px-4 pb-2 sm:pb-3 mb-1 border-b border-border/60 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/85 shadow-sm",
+            // When a caller opts into a max-height (e.g. case-list caps the
+            // sticky bar at ~40vh on mobile so it doesn't push cases off-
+            // screen), the inner overflow paints a scrollbar lane. Always
+            // hide that visual lane — the area still scrolls, just no bar.
+            "scrollbar-none",
             stickyClassName,
           )}
         >

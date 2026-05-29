@@ -32,6 +32,7 @@ import DashboardPage from "@/pages/dashboard";
 import HospitalDashboardPage from "@/pages/hospital-dashboard";
 import NotFound from "@/pages/not-found";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
+import { AdminNotificationCenter } from "@/components/admin-notification-center";
 import ProfilePage from "@/pages/profile";
 
 function ProtectedRoutes() {
@@ -75,6 +76,13 @@ function ProtectedRoutes() {
   // Logged-in routes
   return (
     <div className="min-h-screen flex flex-col">
+      {/*
+        Invisible component: polls admin notifications every 30s while the
+        tab is visible and fires a toast + plays the configured sound on new
+        items. Mounting here (instead of inside Welcome) means admins hear
+        sounds and see toasts on EVERY page, not only on `/`.
+      */}
+      <AdminNotificationCenter />
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Welcome} />

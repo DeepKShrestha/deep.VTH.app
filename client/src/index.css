@@ -259,6 +259,39 @@
   padding-right: 0.22rem;
 }
 
+/*
+  Print preview on phones (<640px): the report tables are designed as
+  fixed-width 5–6 column grids that mimic A4 (210mm). On a 360px phone the
+  whole A4 layout is force-fit into ~352px, which makes each column ~50–
+  60px wide — long values like owner names, addresses, breed, etc. get
+  truncated with an ellipsis (e.g. "Cani…", "Deep Ku…", "Bharatp…").
+  Below `sm` we relax the constraints so cells reflow:
+    - `table-layout: auto` lets columns size to their content instead of
+      being forced into an even 6-way split.
+    - `white-space: normal` + `overflow: visible` + `text-overflow: clip`
+      defeat the inline `whitespace-nowrap overflow-hidden text-ellipsis`
+      classes on individual `<td>`s.
+    - `overflow-wrap: anywhere` ensures even long single words break
+      gracefully rather than overflowing.
+  This only affects the on-screen preview at narrow widths. Actual print
+  output is unchanged (the `@media print` rules above already wrap), and
+  the desktop preview keeps its tighter fixed layout.
+*/
+@media (max-width: 639px) {
+  .print-a4 .print-table {
+    table-layout: auto !important;
+  }
+  .print-a4 .print-table td,
+  .print-a4 .print-table th {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+  }
+}
+
 @layer utilities {
   input[type="search"]::-webkit-search-cancel-button {
     @apply hidden;
@@ -327,5 +360,22 @@
   .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
+  }
+
+  /*
+    Hide native scrollbars on opt-in containers. Used on the mobile sticky
+    cap (StickyScrollPage / case-list) where the scrollbar lane on the
+    right side draws an ugly grey gutter next to the page content. The
+    container still scrolls — touch and trackpad work as expected — it just
+    doesn't paint a bar.
+  */
+  .scrollbar-none {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* Legacy Edge / IE */
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* WebKit / Blink */
   }
 }

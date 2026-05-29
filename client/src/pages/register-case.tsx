@@ -718,10 +718,6 @@ export default function RegisterCase({
     () => (mode === "hospital" ? getHospitalToggleDefaults() : null),
     [mode, toggleDefaultsVersion],
   );
-  const defaultQuickRegisterMode =
-    mode === "hospital"
-      ? (hospitalToggleDefaults?.quickRegisterMode ?? false)
-      : astToggleDefaults.quickRegisterMode;
   const defaultHideOptionalFields =
     mode === "hospital"
       ? (hospitalToggleDefaults?.hideOptionalFields ?? false)
@@ -864,7 +860,6 @@ export default function RegisterCase({
   const [autoMode, setAutoMode] = useState(
     mode === "hospital" ? true : astToggleDefaults.autoMode,
   );
-  const [quickRegisterMode, setQuickRegisterMode] = useState(defaultQuickRegisterMode);
   const [hideOptionalFields, setHideOptionalFields] = useState(defaultHideOptionalFields);
 
   // Re-apply the settings-page defaults whenever they change. `useState` above
@@ -878,9 +873,6 @@ export default function RegisterCase({
   useEffect(() => {
     setHideOptionalFields(defaultHideOptionalFields);
   }, [defaultHideOptionalFields]);
-  useEffect(() => {
-    setQuickRegisterMode(defaultQuickRegisterMode);
-  }, [defaultQuickRegisterMode]);
 
     // NEW: toggle to use preset antibiotics
   const [usePresetAntibiotics, setUsePresetAntibiotics] = useState(
@@ -2422,7 +2414,7 @@ export default function RegisterCase({
             placeholder={
               data.isIntern
                 ? "Intern name"
-                : "Veterinarian name (select suggestion or type)"
+                : "Veterinarian name"
             }
             customMode={data.customMode}
             onCustomModeChange={(next) => {
@@ -2749,7 +2741,7 @@ export default function RegisterCase({
                       label: option,
                       searchText: option,
                     }))}
-                    placeholder="Medication (select suggestion or type custom)"
+                    placeholder="Medication"
                     customMode={false}
                     onCustomModeChange={() => {}}
                     onChange={(value) => updateMedicationRow(rowId, { medication: value })}
@@ -3421,22 +3413,6 @@ export default function RegisterCase({
         <Card>
           <CardContent className="pt-4 pb-3 space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">Larger fields on this form</p>
-                <p className="text-xs text-muted-foreground">
-                  Bumps every input on this page to a bigger touch target. The
-                  rest of the app already uses bigger fields on phones and
-                  tablets; turn this on if you want the desktop view to look
-                  the same when working from a touchscreen.
-                </p>
-              </div>
-              <Switch
-                checked={quickRegisterMode}
-                onCheckedChange={setQuickRegisterMode}
-                data-testid="switch-quick-register-mode"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
                 Hide optional fields
               </p>
@@ -3459,7 +3435,7 @@ export default function RegisterCase({
               <Label htmlFor="billNumber">Hospital Bill / Registration Number</Label>
               <Input
                 id="billNumber"
-                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                 value={billNumber}
                 onChange={(e) => setBillNumber(e.target.value)}
                 placeholder="Enter hospital bill or registration number"
@@ -3763,7 +3739,7 @@ export default function RegisterCase({
                     )}
                     <AutoGrowTextarea
                       id={`section-answer-${section.key}`}
-                      className={quickRegisterMode ? "text-base" : ""}
+
                       value={sectionAnswers[section.key] ?? ""}
                       onChange={(e) => {
                         const nextValue = e.target.value;
@@ -3842,7 +3818,7 @@ export default function RegisterCase({
                             )}
                             <Input
                               id="ownerName"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={ownerName}
                               onChange={(e) => setOwnerName(e.target.value)}
                               onBlur={(e) => setOwnerName(toTitleCase(e.target.value))}
@@ -3861,7 +3837,7 @@ export default function RegisterCase({
                             )}
                             <Input
                               id="ownerPhone"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={ownerPhone}
                               onChange={(e) => setOwnerPhone(e.target.value)}
                               placeholder="e.g. 98XXXXXXXX"
@@ -3878,7 +3854,7 @@ export default function RegisterCase({
                               </Label>
                             )}
                             <Select value={species} onValueChange={setSpecies}>
-                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-species">
+                              <SelectTrigger  data-testid="select-species">
                                 <SelectValue placeholder="Select species" />
                               </SelectTrigger>
                               <SelectContent>
@@ -3891,7 +3867,7 @@ export default function RegisterCase({
                             </Select>
                             {species === "Other" && (
                               <Input
-                                className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
+                                className="mt-2"
                                 value={customSpecies}
                                 onChange={(e) => setCustomSpecies(e.target.value)}
                                 onBlur={(e) => setCustomSpecies(toTitleCase(e.target.value))}
@@ -3910,7 +3886,7 @@ export default function RegisterCase({
                               </Label>
                             )}
                             <Select value={breedChoice} onValueChange={setBreedChoice}>
-                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-breed">
+                              <SelectTrigger  data-testid="select-breed">
                                 <SelectValue placeholder="Select breed" />
                               </SelectTrigger>
                               <SelectContent>
@@ -3923,7 +3899,7 @@ export default function RegisterCase({
                             </Select>
                             {breedChoice === "Other" && (
                               <Input
-                                className={quickRegisterMode ? "mt-2 h-11 text-base" : "mt-2"}
+                                className="mt-2"
                                 value={customBreed}
                                 onChange={(e) => setCustomBreed(e.target.value)}
                                 onBlur={(e) => setCustomBreed(toTitleCase(e.target.value))}
@@ -3942,7 +3918,7 @@ export default function RegisterCase({
                               </Label>
                             )}
                             <Select value={sex} onValueChange={setSex}>
-                              <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""} data-testid="select-sex">
+                              <SelectTrigger  data-testid="select-sex">
                                 <SelectValue placeholder="Select" />
                               </SelectTrigger>
                               <SelectContent>
@@ -3976,7 +3952,7 @@ export default function RegisterCase({
                             )}
                             <Textarea
                               id="ownerAddress"
-                              className={quickRegisterMode ? "text-base" : ""}
+
                               value={ownerAddress}
                               onChange={(e) => setOwnerAddress(e.target.value)}
                               onBlur={(e) => setOwnerAddress(toTitleCase(e.target.value))}
@@ -3996,7 +3972,7 @@ export default function RegisterCase({
                             )}
                             <Input
                               id="cultureResult"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={cultureResult}
                               onChange={(e) => setCultureResult(e.target.value)}
                               onBlur={(e) => setCultureResult(toTitleCase(e.target.value))}
@@ -4009,7 +3985,7 @@ export default function RegisterCase({
                         return (
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             <AutoGrowTextarea
-                              className={quickRegisterMode ? "text-base" : ""}
+
                               value={remarks}
                               onChange={(e) => setRemarks(e.target.value)}
                               onBlur={(e) => setRemarks(toSentenceCase(e.target.value))}
@@ -4039,7 +4015,7 @@ export default function RegisterCase({
                             </div>
                             <AutoGrowTextarea
                               id="historyNotes"
-                              className={quickRegisterMode ? "text-base" : ""}
+
                               value={historyNotes}
                               onChange={(e) => setHistoryNotes(e.target.value)}
                               onBlur={(e) => {
@@ -4076,7 +4052,7 @@ export default function RegisterCase({
                             </div>
                             <AutoGrowTextarea
                               id="previousMedicationNotes"
-                              className={quickRegisterMode ? "text-base" : ""}
+
                               value={previousMedicationNotes}
                               onChange={(e) => setPreviousMedicationNotes(e.target.value)}
                               onBlur={(e) => {
@@ -4113,7 +4089,7 @@ export default function RegisterCase({
                             </div>
                             <AutoGrowTextarea
                               id="clinicalSignsSymptomsNotes"
-                              className={quickRegisterMode ? "text-base" : ""}
+
                               value={clinicalSignsSymptomsNotes}
                               onChange={(e) => setClinicalSignsSymptomsNotes(e.target.value)}
                               onBlur={(e) => {
@@ -4137,7 +4113,7 @@ export default function RegisterCase({
                                 id="temperature"
                                 type="number"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={temperatureValue}
                                 onChange={(e) => setTemperatureValue(e.target.value)}
                                 data-testid="input-temperature"
@@ -4146,7 +4122,7 @@ export default function RegisterCase({
                                 value={temperatureUnit}
                                 onValueChange={(v) => setTemperatureUnit(v as "C" | "F")}
                               >
-                                <SelectTrigger className={quickRegisterMode ? "h-11 text-base w-[120px]" : "w-[120px]"}>
+                                <SelectTrigger className="w-[120px]">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -4168,7 +4144,7 @@ export default function RegisterCase({
                                 id="crt"
                                 type="number"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={crtValue}
                                 onChange={(e) => setCrtValue(e.target.value)}
                                 data-testid="input-crt"
@@ -4188,7 +4164,7 @@ export default function RegisterCase({
                                 id="dehydrationPercentage"
                                 type="number"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={dehydrationPercentage}
                                 onChange={(e) => setDehydrationPercentage(e.target.value)}
                                 data-testid="input-dehydration-percentage"
@@ -4205,7 +4181,7 @@ export default function RegisterCase({
                             </Label>
                             <Input
                               id="animalName"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={animalName}
                               onChange={(e) => setAnimalName(e.target.value)}
                               onBlur={(e) => setAnimalName(toTitleCase(e.target.value))}
@@ -4225,7 +4201,7 @@ export default function RegisterCase({
                               type="number"
                               min="0"
                               step="1"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={avianFlockSize}
                               onChange={(e) => setAvianFlockSize(e.target.value)}
                               data-testid="input-avian-flock-size"
@@ -4240,7 +4216,7 @@ export default function RegisterCase({
                             </Label>
                             <Input
                               id="hatchery"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={avianHatchery}
                               onChange={(e) => setAvianHatchery(e.target.value)}
                               onBlur={(e) => setAvianHatchery(toEnglishSentence(e.target.value))}
@@ -4256,7 +4232,7 @@ export default function RegisterCase({
                             </Label>
                             <Input
                               id="feedSupplier"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={avianFeedSupplier}
                               onChange={(e) => setAvianFeedSupplier(e.target.value)}
                               onBlur={(e) => setAvianFeedSupplier(toEnglishSentence(e.target.value))}
@@ -4276,7 +4252,7 @@ export default function RegisterCase({
                                 type="number"
                                 min="0"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={avianFeedIntake}
                                 onChange={(e) => setAvianFeedIntake(e.target.value)}
                                 data-testid="input-avian-feed-intake"
@@ -4299,7 +4275,7 @@ export default function RegisterCase({
                                 type="number"
                                 min="0"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={avianWaterIntake}
                                 onChange={(e) => setAvianWaterIntake(e.target.value)}
                                 data-testid="input-avian-water-intake"
@@ -4322,7 +4298,7 @@ export default function RegisterCase({
                                 type="number"
                                 min="0"
                                 step="1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={avianMortality}
                                 onChange={(e) => setAvianMortality(e.target.value)}
                                 data-testid="input-avian-mortality"
@@ -4375,7 +4351,7 @@ export default function RegisterCase({
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
-                              className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
+                              className="min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none"
                               value={xrayDetails}
                               onChange={(e) => setXrayDetails(e.target.value)}
                               onBlur={(e) => setXrayDetails(toEnglishSentence(e.target.value))}
@@ -4389,7 +4365,7 @@ export default function RegisterCase({
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
-                              className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
+                              className="min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none"
                               value={biopsyDetails}
                               onChange={(e) => setBiopsyDetails(e.target.value)}
                               onBlur={(e) => setBiopsyDetails(toEnglishSentence(e.target.value))}
@@ -4403,7 +4379,7 @@ export default function RegisterCase({
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
-                              className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
+                              className="min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none"
                               value={cytologyDetails}
                               onChange={(e) => setCytologyDetails(e.target.value)}
                               onBlur={(e) => setCytologyDetails(toEnglishSentence(e.target.value))}
@@ -4417,7 +4393,7 @@ export default function RegisterCase({
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
-                              className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
+                              className="min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none"
                               value={ultrasoundDetails}
                               onChange={(e) => setUltrasoundDetails(e.target.value)}
                               onBlur={(e) => setUltrasoundDetails(toEnglishSentence(e.target.value))}
@@ -4431,7 +4407,7 @@ export default function RegisterCase({
                           <div className="space-y-1.5 sm:col-span-2" key={q.key}>
                             {showLabel && <Label>{q.label} {required && <span className="text-destructive">*</span>}</Label>}
                             <Textarea
-                              className={`${quickRegisterMode ? "text-base" : ""} min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none`}
+                              className="min-h-[2.5rem] max-h-[6.5rem] overflow-y-auto resize-none"
                               value={cultureDetails}
                               onChange={(e) => setCultureDetails(e.target.value)}
                               onBlur={(e) => setCultureDetails(toEnglishSentence(e.target.value))}
@@ -4453,7 +4429,7 @@ export default function RegisterCase({
                                 type="number"
                                 min="0"
                                 step="0.1"
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={ageValue}
                                 onChange={(e) => setAgeValue(e.target.value)}
                                 placeholder="e.g. 3"
@@ -4463,7 +4439,7 @@ export default function RegisterCase({
                                 value={ageUnit}
                                 onValueChange={(v) => setAgeUnit(v as "years" | "months" | "weeks" | "days")}
                               >
-                                <SelectTrigger className={quickRegisterMode ? "h-11 text-base w-[120px]" : "w-[120px]"}>
+                                <SelectTrigger className="w-[120px]">
                                   <SelectValue placeholder="Unit" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -4486,7 +4462,7 @@ export default function RegisterCase({
                             )}
                             <Input
                               id="sampleType"
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={sampleType}
                               onChange={(e) => setSampleType(e.target.value)}
                               onBlur={(e) => setSampleType(toTitleCase(e.target.value))}
@@ -4515,12 +4491,12 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="0.1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={temperatureValue}
                                     onChange={(e) => setTemperatureValue(e.target.value)}
                                   />
                                   <Select value={temperatureUnit} onValueChange={(v) => setTemperatureUnit(v as "C" | "F")}>
-                                    <SelectTrigger className={quickRegisterMode ? "h-11 text-base w-[120px]" : "w-[120px]"}>
+                                    <SelectTrigger className="w-[120px]">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -4540,7 +4516,7 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="0.1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={crtValue}
                                     onChange={(e) => setCrtValue(e.target.value)}
                                   />
@@ -4557,7 +4533,7 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="0.1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={dehydrationPercentage}
                                     onChange={(e) => setDehydrationPercentage(e.target.value)}
                                   />
@@ -4574,7 +4550,7 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4597,7 +4573,7 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4616,7 +4592,7 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="0.1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4635,14 +4611,14 @@ export default function RegisterCase({
                                   <Input
                                     type="number"
                                     step="0.1"
-                                    className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
                                     }
                                   />
                                   <Select value={weightUnit} onValueChange={(v) => setWeightUnit(v as "kg" | "g")}>
-                                    <SelectTrigger className={quickRegisterMode ? "h-11 text-base w-[100px]" : "w-[100px]"}>
+                                    <SelectTrigger className="w-[100px]">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -4678,7 +4654,7 @@ export default function RegisterCase({
                                   </div>
                                 </div>
                                 <AutoGrowTextarea
-                                  className={quickRegisterMode ? "text-base" : ""}
+
                                   value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                   onChange={(e) =>
                                     setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4706,7 +4682,7 @@ export default function RegisterCase({
                                 )}
                                 {isDiagnosis ? (
                                   <AutoGrowTextarea
-                                    className={quickRegisterMode ? "text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4714,7 +4690,7 @@ export default function RegisterCase({
                                   />
                                 ) : (
                                   <Textarea
-                                    className={quickRegisterMode ? "text-base" : ""}
+
                                     value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                     onChange={(e) =>
                                       setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4739,7 +4715,7 @@ export default function RegisterCase({
                                     setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))
                                   }
                                 >
-                                  <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""}>
+                                  <SelectTrigger >
                                     <SelectValue placeholder="Select" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -4762,7 +4738,7 @@ export default function RegisterCase({
                               )}
                               <Input
                                 type={q.inputType === "number" ? "number" : "text"}
-                                className={quickRegisterMode ? "h-11 text-base" : ""}
+
                                 value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                 onChange={(e) =>
                                   setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4782,7 +4758,7 @@ export default function RegisterCase({
                               )}
                               {isDiagnosis ? (
                                 <AutoGrowTextarea
-                                  className={quickRegisterMode ? "text-base" : ""}
+
                                   value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                   onChange={(e) =>
                                     setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4790,7 +4766,7 @@ export default function RegisterCase({
                                 />
                               ) : (
                                 <Textarea
-                                  className={quickRegisterMode ? "text-base" : ""}
+
                                   value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                                   onChange={(e) =>
                                     setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4815,7 +4791,7 @@ export default function RegisterCase({
                                   setCustomAnswers((prev) => ({ ...prev, [q.key]: v }))
                                 }
                               >
-                                <SelectTrigger className={quickRegisterMode ? "h-11 text-base" : ""}>
+                                <SelectTrigger >
                                   <SelectValue placeholder="Select" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -4838,7 +4814,7 @@ export default function RegisterCase({
                             )}
                             <Input
                               type={q.inputType === "number" ? "number" : "text"}
-                              className={quickRegisterMode ? "h-11 text-base" : ""}
+
                               value={typeof customAnswers[q.key] === "string" ? (customAnswers[q.key] as string) : ""}
                               onChange={(e) =>
                                 setCustomAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))
@@ -4861,7 +4837,7 @@ export default function RegisterCase({
             <Button
               type="button"
               variant="outline"
-              className={`${quickRegisterMode ? "h-11 px-5 text-base" : ""} w-full sm:w-auto`}
+              className="w-full sm:w-auto"
               data-testid="button-cancel"
             >
               Cancel
@@ -4870,7 +4846,7 @@ export default function RegisterCase({
           <Button
             type="submit"
             disabled={createMutation.isPending}
-            className={`gap-2 ${quickRegisterMode ? "h-11 px-5 text-base" : ""} w-full sm:w-auto`}
+            className="gap-2 w-full sm:w-auto"
             data-testid="button-submit"
           >
             <Save className="w-4 h-4" />
