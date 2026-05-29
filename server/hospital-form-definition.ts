@@ -138,3 +138,103 @@ export async function ensureHospitalVeterinarianDefinition() {
     sql`UPDATE form_questions SET form_scope = ${"hospital"} WHERE key = ${"attendingVeterinarian"}`,
   );
 }
+
+/**
+ * Canonical hospital vitals section + questions.
+ *
+ * Earlier versions of the seed loop in `server/routes.ts` referenced these
+ * fields but never actually inserted them, so fresh deploys (and any DB where
+ * the rows were dropped) ended up missing the Vitals section entirely even
+ * though the admin module treats it as a built-in, the register form expects
+ * to render it, and the hospital dashboard analytics aggregates it.
+ *
+ * Keys (chiefComplaint, temperature, heartRate, …) match what the rest of the
+ * code already reads — see `server/hospital-dashboard-analytics.ts` `VITALS`
+ * and the chief-complaint handling in `client/src/pages/register-case.tsx`.
+ */
+const HOSPITAL_VITALS_SECTION = {
+  key: "vitals",
+  title: "Vitals",
+  displayOrder: 2700,
+} as const;
+
+type VitalQuestionSeed = {
+  key: string;
+  label: string;
+  inputType: "text" | "textarea" | "number";
+  displayOrder: number;
+};
+
+const HOSPITAL_VITALS_QUESTIONS: ReadonlyArray<VitalQuestionSeed> = [
+  { key: "chiefComplaint", label: "Chief Complaint", inputType: "textarea", displayOrder: 1000 },
+  { key: "temperature", label: "Temperature", inputType: "number", displayOrder: 2000 },
+  { key: "heartRate", label: "Heart Rate", inputType: "number", displayOrder: 3000 },
+  { key: "respiratoryRate", label: "Respiration", inputType: "number", displayOrder: 4000 },
+  { key: "crt", label: "CRT", inputType: "text", displayOrder: 5000 },
+  { key: "dehydrationPercentage", label: "Dehydration percentage", inputType: "number", displayOrder: 6000 },
+  { key: "rumenMotility", label: "Rumen Motility", inputType: "text", displayOrder: 7000 },
+  { key: "weight", label: "Weight", inputType: "number", displayOrder: 8000 },
+  { key: "colour", label: "Colour", inputType: "text", displayOrder: 9000 },
+];
+
+export async function ensureHospitalVitalsDefinition() {
+  const section = await dbGet<{ key: string }>(
+    sql`SELECT key FROM form_sections WHERE key = ${HOSPITAL_VITALS_SECTION.key}`,
+  );
+  if (!section) {
+    await dbRun(
+      sql`INSERT INTO form_sections (key, title, display_order, form_scope)
+          VALUES (
+            ${HOSPITAL_VITALS_SECTION.key},
+            ${HOSPITAL_VITALS_SECTION.title},
+            ${HOSPITAL_VITALS_SECTION.displayOrder},
+            ${"hospital"}
+          )`,
+    );
+  } else {
+    // Ensure scope is set even if the row pre-dates the form_scope column.
+    await dbRun(
+      sql`UPDATE form_sections
+          SET form_scope = ${"hospital"}
+          WHERE key = ${HOSPITAL_VITALS_SECTION.key}`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  for (const q of HOSPITAL_VITALS_QUESTIONS) {
+    const existing = await dbGet<{ id: number }>(
+      sql`SELECT id FROM form_questions WHERE key = ${q.key}`,
+    );
+    if (!existing) {
+      await dbRun(
+        sql`INSERT INTO form_questions
+            (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at, form_scope)
+            VALUES (
+              ${q.key},
+              ${HOSPITAL_VITALS_SECTION.key},
+              ${q.label},
+              ${q.inputType},
+              ${null},
+              ${1},
+              ${0},
+              ${0},
+              ${q.displayOrder},
+              ${1},
+              ${now},
+              ${"hospital"}
+            )`,
+      );
+    } else {
+      // Heal legacy rows: pull stray vital fields back into the Vitals section
+      // and mark them as built-in/hospital scope. Does not touch enabled /
+      // required so an admin's customisation is preserved.
+      await dbRun(
+        sql`UPDATE form_questions
+            SET section_key = ${HOSPITAL_VITALS_SECTION.key},
+                is_builtin = ${1},
+                form_scope = ${"hospital"}
+            WHERE key = ${q.key}`,
+      );
+    }
+  }
+}

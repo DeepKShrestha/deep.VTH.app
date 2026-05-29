@@ -36,6 +36,7 @@ import { veterinarianRepo } from "../repos";
 import {
   ensureHospitalTreatmentDefinition,
   ensureHospitalVeterinarianDefinition,
+  ensureHospitalVitalsDefinition,
   mergeOrphanFormSections,
 } from "../hospital-form-definition";
 import {
@@ -1142,6 +1143,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     if (scope === "hospital") {
       await ensureHospitalTreatmentDefinition();
       await ensureHospitalVeterinarianDefinition();
+      await ensureHospitalVitalsDefinition();
     }
     let sections = await dbAll<{ key: string; title: string; display_order: number }>(
       sql`SELECT key, title, display_order FROM form_sections
