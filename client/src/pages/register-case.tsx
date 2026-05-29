@@ -1805,7 +1805,18 @@ export default function RegisterCase({
         if (normalized === "culturedetails" && hasMainSuggestedTest(testsSuggested, "culture")) {
           return !cultureDetails.trim();
         }
-        return false;
+        // Fallback for any other hospital built-in question that hasn't been
+        // covered by an explicit case above (heart rate, respiration, rumen
+        // motility, weight, chief complaint, custom diagnosis questions, etc.).
+        // These are stored in customAnswers[q.key] just like custom questions,
+        // so honour the Compulsory toggle from the form editor by validating
+        // against that same bucket. Without this fallback, marking those
+        // fields as Compulsory silently does nothing on save.
+        const fallbackValue = mergedCustomAnswers[q.key];
+        if (Array.isArray(fallbackValue)) {
+          return fallbackValue.length === 0;
+        }
+        return !String(fallbackValue ?? "").trim();
       });
 
     if (missingRequired || missingHospitalBuiltinRequired) {
@@ -2671,77 +2682,6 @@ export default function RegisterCase({
             </Label>
           )}
           <div className="space-y-3 rounded border p-3">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() =>
-                  setTreatmentAnswers((prev) => {
-                    const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
-                    const newId = createTreatmentEntryId("med");
-                    const nextRows = [
-                      ...existing.medications.map((row) => ({
-                        ...row,
-                        clientId: row.clientId ?? createTreatmentEntryId("med"),
-                        showNote: row.showNote ?? Boolean(row.note?.trim()),
-                      })),
-                      {
-                        clientId: newId,
-                        medication: "",
-                        dose: "",
-                        doseUnit: "",
-                        route: "",
-                        frequency: "",
-                        duration: "",
-                        note: "",
-                        showNote: false,
-                      },
-                    ];
-                    const nextOrder = [...(existing.entryOrder ?? []), { type: "medication" as const, id: newId }];
-                    return {
-                      ...prev,
-                      [q.key]: {
-                        ...existing,
-                        medications: nextRows,
-                        entryOrder: nextOrder,
-                      },
-                    };
-                  })
-                }
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add medication
-              </Button>
-              {!hasGeneralInstructionBlock && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={() =>
-                    setTreatmentAnswers((prev) => {
-                      const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
-                      const generalId = createTreatmentEntryId("general");
-                      return {
-                        ...prev,
-                        [q.key]: {
-                          ...existing,
-                          generalInstructionId: generalId,
-                          generalInstructions: existing.generalInstructions ?? "",
-                          entryOrder: [...(existing.entryOrder ?? []), { type: "general", id: generalId }],
-                        },
-                      };
-                    })
-                  }
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add general instruction
-                </Button>
-              )}
-            </div>
-
             {normalizedOrder.map((item) => {
               if (item.type === "general") {
                 return (
@@ -2913,6 +2853,79 @@ export default function RegisterCase({
                 </div>
               );
             })}
+            {/* Add buttons sit BELOW the list so they stay close to the most
+                recently added medication / general instruction — no need to
+                scroll back to the top of the treatment card after each entry. */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() =>
+                  setTreatmentAnswers((prev) => {
+                    const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                    const newId = createTreatmentEntryId("med");
+                    const nextRows = [
+                      ...existing.medications.map((row) => ({
+                        ...row,
+                        clientId: row.clientId ?? createTreatmentEntryId("med"),
+                        showNote: row.showNote ?? Boolean(row.note?.trim()),
+                      })),
+                      {
+                        clientId: newId,
+                        medication: "",
+                        dose: "",
+                        doseUnit: "",
+                        route: "",
+                        frequency: "",
+                        duration: "",
+                        note: "",
+                        showNote: false,
+                      },
+                    ];
+                    const nextOrder = [...(existing.entryOrder ?? []), { type: "medication" as const, id: newId }];
+                    return {
+                      ...prev,
+                      [q.key]: {
+                        ...existing,
+                        medications: nextRows,
+                        entryOrder: nextOrder,
+                      },
+                    };
+                  })
+                }
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add medication
+              </Button>
+              {!hasGeneralInstructionBlock && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() =>
+                    setTreatmentAnswers((prev) => {
+                      const existing = prev[q.key] ?? { medications: [], generalInstructions: "" };
+                      const generalId = createTreatmentEntryId("general");
+                      return {
+                        ...prev,
+                        [q.key]: {
+                          ...existing,
+                          generalInstructionId: generalId,
+                          generalInstructions: existing.generalInstructions ?? "",
+                          entryOrder: [...(existing.entryOrder ?? []), { type: "general", id: generalId }],
+                        },
+                      };
+                    })
+                  }
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add general instruction
+                </Button>
+              )}
+            </div>
             <div className="rounded border border-dashed p-3 space-y-3">
               <div>
                 <p className="text-sm font-medium">Treatment attachments</p>

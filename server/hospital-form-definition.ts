@@ -173,8 +173,15 @@ const HOSPITAL_VITALS_QUESTIONS: ReadonlyArray<VitalQuestionSeed> = [
   { key: "dehydrationPercentage", label: "Dehydration percentage", inputType: "number", displayOrder: 5000 },
   { key: "rumenMotility", label: "Rumen Motility", inputType: "text", displayOrder: 6000 },
   { key: "weight", label: "Weight", inputType: "number", displayOrder: 7000 },
-  { key: "colour", label: "Colour", inputType: "text", displayOrder: 8000 },
 ];
+
+/**
+ * Built-in vital fields that used to be seeded but should no longer appear in
+ * the Vitals section. The cleanup DELETE is scoped to `is_builtin = 1` so any
+ * field an admin custom-added via the form editor is left alone — only our
+ * own previously-seeded row is removed.
+ */
+const HOSPITAL_VITALS_RETIRED_BUILTIN_KEYS = ["colour"] as const;
 
 export async function ensureHospitalVitalsDefinition() {
   const section = await dbGet<{ key: string }>(
@@ -235,6 +242,17 @@ export async function ensureHospitalVitalsDefinition() {
             WHERE key = ${q.key}`,
       );
     }
+  }
+
+  // Clean up vital fields we previously seeded but no longer want. Scoped to
+  // `is_builtin = 1` so admin-added custom rows with the same key are kept.
+  for (const retired of HOSPITAL_VITALS_RETIRED_BUILTIN_KEYS) {
+    await dbRun(
+      sql`DELETE FROM form_questions
+          WHERE key = ${retired}
+            AND section_key = ${HOSPITAL_VITALS_SECTION.key}
+            AND is_builtin = ${1}`,
+    );
   }
 }
 

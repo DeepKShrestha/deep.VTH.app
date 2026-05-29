@@ -22,8 +22,9 @@ const EXPECTED_VITAL_KEYS = [
   "dehydrationPercentage",
   "rumenMotility",
   "weight",
-  "colour",
 ] as const;
+
+const RETIRED_VITAL_KEYS = ["colour"] as const;
 
 function describeSqlChunks(args: unknown[]): string {
   const stmt = args[0] as { queryChunks?: unknown[] };
@@ -43,25 +44,27 @@ describe("ensureHospitalVitalsDefinition", () => {
     mockedRun.mockResolvedValue(undefined as never);
   });
 
-  it("inserts the Vitals section and all 8 vital questions on a fresh DB", async () => {
+  it("inserts the Vitals section and all current vital questions on a fresh DB", async () => {
     // Nothing exists: section lookup + every question lookup returns undefined.
     mockedGet.mockResolvedValue(undefined as never);
 
     await ensureHospitalVitalsDefinition();
 
-    // 1 section insert + 8 question inserts.
-    expect(mockedRun).toHaveBeenCalledTimes(1 + EXPECTED_VITAL_KEYS.length);
+    // 1 section insert + N question inserts + cleanup DELETE for each retired key.
+    expect(mockedRun).toHaveBeenCalledTimes(
+      1 + EXPECTED_VITAL_KEYS.length + RETIRED_VITAL_KEYS.length,
+    );
 
-    const inserts = mockedRun.mock.calls.map((args) => describeSqlChunks(args));
+    const stmts = mockedRun.mock.calls.map((args) => describeSqlChunks(args));
 
-    expect(inserts.some((s) => s.includes('"vitals"') && s.includes('"Vitals"'))).toBe(true);
+    expect(stmts.some((s) => s.includes('"vitals"') && s.includes('"Vitals"'))).toBe(true);
     for (const key of EXPECTED_VITAL_KEYS) {
-      expect(inserts.some((s) => s.includes(`"${key}"`))).toBe(true);
+      expect(stmts.some((s) => s.includes(`"${key}"`))).toBe(true);
     }
     // chiefComplaint must NOT be touched by the vitals ensurer — it now
     // lives in its own dedicated section managed by
     // ensureHospitalChiefComplaintDefinition.
-    expect(inserts.some((s) => s.includes('"chiefComplaint"'))).toBe(false);
+    expect(stmts.some((s) => s.includes('"chiefComplaint"'))).toBe(false);
   });
 
   it("updates existing rows without re-inserting when section + questions already exist", async () => {
@@ -70,8 +73,10 @@ describe("ensureHospitalVitalsDefinition", () => {
 
     await ensureHospitalVitalsDefinition();
 
-    // 1 section UPDATE + 8 question UPDATEs.
-    expect(mockedRun).toHaveBeenCalledTimes(1 + EXPECTED_VITAL_KEYS.length);
+    // 1 section UPDATE + N question UPDATEs + cleanup DELETE for each retired key.
+    expect(mockedRun).toHaveBeenCalledTimes(
+      1 + EXPECTED_VITAL_KEYS.length + RETIRED_VITAL_KEYS.length,
+    );
   });
 
   it("scopes every vitals operation to 'hospital'", async () => {
@@ -79,8 +84,28 @@ describe("ensureHospitalVitalsDefinition", () => {
 
     await ensureHospitalVitalsDefinition();
 
-    for (const args of mockedRun.mock.calls) {
-      expect(describeSqlChunks(args)).toContain('"hospital"');
+    // Section + question INSERT/UPDATE statements all carry "hospital" scope.
+    // The retired-cleanup DELETE doesn't carry a scope literal (it's an
+    // unconditional delete of our own built-in row), so check separately.
+    const stmts = mockedRun.mock.calls.map((args) => describeSqlChunks(args));
+    let scopedCount = 0;
+    for (const s of stmts) {
+      if (s.includes('"hospital"')) scopedCount += 1;
+    }
+    expect(scopedCount).toBe(1 + EXPECTED_VITAL_KEYS.length);
+  });
+
+  it("deletes retired built-in vitals (e.g. colour) so existing DBs self-heal", async () => {
+    mockedGet.mockResolvedValue(undefined as never);
+
+    await ensureHospitalVitalsDefinition();
+
+    const stmts = mockedRun.mock.calls.map((args) => describeSqlChunks(args));
+    for (const retired of RETIRED_VITAL_KEYS) {
+      const deleteStmt = stmts.find(
+        (s) => s.includes("DELETE FROM form_questions") && s.includes(`"${retired}"`),
+      );
+      expect(deleteStmt).toBeDefined();
     }
   });
 });

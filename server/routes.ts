@@ -878,7 +878,6 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     { key: "dehydrationPercentage", sectionKey: "vitals", label: "Dehydration percentage", inputType: "number", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
     { key: "rumenMotility", sectionKey: "vitals", label: "Rumen Motility", inputType: "text", enabled: 1, required: 0, displayOrder: 6000, isBuiltin: 1, optionsJson: null },
     { key: "weight", sectionKey: "vitals", label: "Weight", inputType: "number", enabled: 1, required: 0, displayOrder: 7000, isBuiltin: 1, optionsJson: null },
-    { key: "colour", sectionKey: "vitals", label: "Colour", inputType: "text", enabled: 1, required: 0, displayOrder: 8000, isBuiltin: 1, optionsJson: null },
     {
       key: "testsSuggested",
       sectionKey: "tests_suggested",
