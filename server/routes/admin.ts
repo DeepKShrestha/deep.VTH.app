@@ -7,7 +7,9 @@ import { dbAll, dbGet, dbRun } from "../db-query";
 import {
   getIdParam,
   getPaginationParams,
+  isAstExportVisibleForRole,
   isDashboardVisibleForRole,
+  isHospitalExportVisibleForRole,
   isVthDashboardVisibleForRole,
   isAdminRole,
   requireAuth,
@@ -536,6 +538,148 @@ export function registerAdminRoutes(app: Express) {
             )`,
       );
       return res.json({ role, dashboardVisible });
+    },
+  );
+
+  /**
+   * AST export visibility — list current per-role flags for the admin UI.
+   * Mirrors the dashboard visibility endpoint shape so the client can reuse
+   * the same component patterns.
+   */
+  app.get(
+    "/api/admin/feature-visibility/ast-export",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
+      const visibility = await Promise.all(
+        roles.map(async (role) => ({
+          role,
+          exportVisible: await isAstExportVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  /** Hospital (VTH) export visibility — list current per-role flags. */
+  app.get(
+    "/api/admin/feature-visibility/hospital-export",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
+      const visibility = await Promise.all(
+        roles.map(async (role) => ({
+          role,
+          exportVisible: await isHospitalExportVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  /**
+   * Toggle AST export visibility for a given role.
+   *
+   * Same safety rule as dashboard visibility (H-11): only a Super Admin can
+   * change the `superadmin` toggle, so a regular admin cannot lock out the
+   * owner from exporting their own data.
+   */
+  app.patch(
+    "/api/admin/feature-visibility/ast-export/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const exportVisible = Boolean(req.body?.exportVisible);
+      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin export visibility" });
+      }
+      try {
+        await dbGet(sql`SELECT ast_export_visible FROM role_feature_visibility LIMIT 1`);
+      } catch {
+        await dbRun(
+          sql`ALTER TABLE role_feature_visibility ADD COLUMN ast_export_visible INTEGER NOT NULL DEFAULT 1`,
+        );
+      }
+      await dbRun(
+        sql`INSERT INTO role_feature_visibility (role, ast_export_visible, updated_at)
+            VALUES (${role}, ${exportVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              ast_export_visible = excluded.ast_export_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_ast_export_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ exportVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, exportVisible });
+    },
+  );
+
+  /** Toggle Hospital (VTH) export visibility for a given role. */
+  app.patch(
+    "/api/admin/feature-visibility/hospital-export/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const exportVisible = Boolean(req.body?.exportVisible);
+      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin export visibility" });
+      }
+      try {
+        await dbGet(sql`SELECT hospital_export_visible FROM role_feature_visibility LIMIT 1`);
+      } catch {
+        await dbRun(
+          sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
+        );
+      }
+      await dbRun(
+        sql`INSERT INTO role_feature_visibility (role, hospital_export_visible, updated_at)
+            VALUES (${role}, ${exportVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              hospital_export_visible = excluded.hospital_export_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_hospital_export_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ exportVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, exportVisible });
     },
   );
 

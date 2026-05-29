@@ -325,6 +325,18 @@ export default function AdminPanel({
     queryKey: ["/api/admin/feature-visibility/vth-dashboard"],
     enabled: mode === "full",
   });
+  const { data: astExportVisibility = [] } = useQuery<
+    Array<{ role: string; exportVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/ast-export"],
+    enabled: mode === "full",
+  });
+  const { data: hospitalExportVisibility = [] } = useQuery<
+    Array<{ role: string; exportVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/hospital-export"],
+    enabled: mode === "full",
+  });
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
     queryFn: async () => {
@@ -850,6 +862,60 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to update VTH visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateAstExportVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; exportVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/ast-export/${encodeURIComponent(payload.role)}`,
+        { exportVisible: payload.exportVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/ast-export"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          astExportVisible: vars.exportVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "AST export visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update AST export visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateHospitalExportVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; exportVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/hospital-export/${encodeURIComponent(payload.role)}`,
+        { exportVisible: payload.exportVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/hospital-export"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          hospitalExportVisible: vars.exportVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "Hospital export visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update Hospital export visibility",
         variant: "destructive",
       });
     },
@@ -1972,6 +2038,104 @@ export default function AdminPanel({
                   No role visibility settings found yet.
                 </p>
               )}
+            </CardContent>
+          </Card>
+          <Card data-editor-collapsible="true">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">AST Export Visibility by Role</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Control which roles can access the AST export / download tools. This is an
+                extra gate on top of existing rules — staff/intern still need the
+                <code className="mx-1">ast.download</code> capability, and students still
+                need an approved download request.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {astExportVisibility.map((row) => (
+                  <div
+                    key={`ast-export-role-${row.role}`}
+                    className="flex items-center justify-between rounded border px-2.5 py-2"
+                  >
+                    <div className="text-xs font-medium truncate pr-2">
+                      {row.role === "superadmin"
+                        ? "Super Admin"
+                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={row.exportVisible ? "default" : "outline"}
+                      className="h-6 text-[11px] px-2"
+                      onClick={() =>
+                        updateAstExportVisibilityMutation.mutate({
+                          role: row.role,
+                          exportVisible: !row.exportVisible,
+                        })
+                      }
+                    >
+                      {row.exportVisible ? "On" : "Off"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {astExportVisibility.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No role visibility settings found yet.
+                </p>
+              )}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Note: users may need to log out and back in for a toggle change to take
+                effect on their current session.
+              </p>
+            </CardContent>
+          </Card>
+          <Card data-editor-collapsible="true">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Hospital Export Visibility by Role</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Control which roles can access the Hospital (VTH) export / download tools.
+                Acts as an extra gate on top of existing rules.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {hospitalExportVisibility.map((row) => (
+                  <div
+                    key={`hospital-export-role-${row.role}`}
+                    className="flex items-center justify-between rounded border px-2.5 py-2"
+                  >
+                    <div className="text-xs font-medium truncate pr-2">
+                      {row.role === "superadmin"
+                        ? "Super Admin"
+                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={row.exportVisible ? "default" : "outline"}
+                      className="h-6 text-[11px] px-2"
+                      onClick={() =>
+                        updateHospitalExportVisibilityMutation.mutate({
+                          role: row.role,
+                          exportVisible: !row.exportVisible,
+                        })
+                      }
+                    >
+                      {row.exportVisible ? "On" : "Off"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {hospitalExportVisibility.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No role visibility settings found yet.
+                </p>
+              )}
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Note: users may need to log out and back in for a toggle change to take
+                effect on their current session.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

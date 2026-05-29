@@ -31,8 +31,10 @@ vi.mock("../auth-session-repo", () => ({
 import { authSessionRepo } from "../auth-session-repo";
 import { invalidateAll as invalidateCurrentUserCache } from "../current-user-cache";
 import { findApprovedDownloadRequest } from "../download-request-auth";
+import { dbGet } from "../db-query";
 import {
   canDownload,
+  canDownloadHospital,
   canRegister,
   getIdParam,
   requireAuth,
@@ -41,6 +43,18 @@ import {
 } from "./context";
 import { MESSAGES } from "./messages";
 import type { AuthenticatedRequest } from "./types";
+
+/**
+ * Flush enough microtasks for the canDownload async chain to settle. The
+ * middleware now performs (1) a visibility lookup, then (2) the download
+ * request lookup (for students), each behind an `await`. A handful of
+ * `Promise.resolve()` flushes is more than enough.
+ */
+async function flushMicrotasks() {
+  for (let i = 0; i < 8; i++) {
+    await Promise.resolve();
+  }
+}
 
 function makeRes() {
   const res = {
@@ -140,7 +154,8 @@ describe("route context middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("canDownload approves staff directly", () => {
+  it("canDownload approves staff directly when visibility is on", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 1 });
     const req = {
       currentUser: { id: 3, role: "staff", approved: true, designation: "lab_assistant" },
     } as unknown as Request;
@@ -148,10 +163,61 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
+    await flushMicrotasks();
     expect(next).toHaveBeenCalled();
   });
 
+  it("canDownload denies staff when AST export visibility is off for their role", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 0 });
+    const req = {
+      currentUser: { id: 3, role: "staff", approved: true, designation: "lab_assistant" },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canDownload(req, res, next);
+    await flushMicrotasks();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("canDownload denies student when AST export visibility is off (even with approval)", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 0 });
+    // findApprovedDownloadRequest should NOT be consulted once visibility = false.
+    vi.mocked(findApprovedDownloadRequest).mockResolvedValue({ id: 7, status: "approved" });
+
+    const req = {
+      currentUser: { id: 9, role: "student", approved: true, designation: "student" },
+      query: { dateFrom: "2082-05-01", dateTo: "2082-05-31" },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canDownload(req, res, next);
+    await flushMicrotasks();
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+    expect(findApprovedDownloadRequest).not.toHaveBeenCalled();
+  });
+
+  it("canDownloadHospital denies staff when Hospital export visibility is off", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ hospital_export_visible: 0 });
+    const req = {
+      currentUser: { id: 4, role: "staff", approved: true, designation: "lab_assistant" },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canDownloadHospital(req, res, next);
+    await flushMicrotasks();
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it("canDownload denies student without approved request", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 1 });
     vi.mocked(findApprovedDownloadRequest).mockResolvedValue(undefined);
 
     const req = {
@@ -162,14 +228,14 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
   });
 
   it("canDownload attaches approved request for student", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 1 });
     vi.mocked(findApprovedDownloadRequest).mockResolvedValue({ id: 11, status: "approved" });
 
     const req = {
@@ -180,8 +246,7 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(next).toHaveBeenCalled();
     expect(req.approvedDownloadRequest?.id).toBe(11);
@@ -240,6 +305,7 @@ describe("route context middleware", () => {
   });
 
   it("canDownload denies student when export dates are missing for a bounded approval", async () => {
+    vi.mocked(dbGet).mockResolvedValue({ ast_export_visible: 1 });
     vi.mocked(findApprovedDownloadRequest).mockResolvedValue(undefined);
 
     const req = {
@@ -250,8 +316,7 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canDownload(req, res, next);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(findApprovedDownloadRequest).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -263,6 +328,20 @@ describe("route context middleware", () => {
     );
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("canDownload defaults to visible when no row exists in role_feature_visibility", async () => {
+    // dbGet returns undefined → helper returns true (back-compat).
+    vi.mocked(dbGet).mockResolvedValue(undefined);
+    const req = {
+      currentUser: { id: 3, role: "staff", approved: true, designation: "lab_assistant" },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canDownload(req, res, next);
+    await flushMicrotasks();
+    expect(next).toHaveBeenCalled();
   });
 
 });

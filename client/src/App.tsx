@@ -43,7 +43,8 @@ function ProtectedRoutes() {
     canRegisterHospitalCase,
     canViewAstCases,
     canViewHospitalCases,
-    canDownloadAst,
+    canExportAst,
+    canExportHospital,
     canViewDashboard,
     canViewVthDashboard,
     canManageAstAdmin,
@@ -188,10 +189,10 @@ function ProtectedRoutes() {
             <Redirect to="/ast-report/cases" />
           </Route>
           <Route path="/export">
-            {canDownloadAst || isStudent ? <ExportDataPage /> : <Redirect to="/ast-report" />}
+            {canExportAst ? <ExportDataPage /> : <Redirect to="/ast-report" />}
           </Route>
           <Route path="/new-case/export">
-            {canDownloadAst || isStudent ? <HospitalExportDataPage /> : <Redirect to="/new-case" />}
+            {canExportHospital ? <HospitalExportDataPage /> : <Redirect to="/new-case" />}
           </Route>
           {canManageAstAdmin && <Route path="/breakpoints" component={BreakpointsPage} />}
           {isAdmin && (

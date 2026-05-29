@@ -9,7 +9,7 @@ import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { ArrowLeft, ClipboardPlus, FolderSearch, Settings2, Download, BarChart3 } from "lucide-react";
 
 export default function NewCaseHome() {
-  const { canManageAstAdmin, canDownload, isStudent, canViewVthDashboard } = useAuth();
+  const { canManageAstAdmin, canExportHospital, canViewVthDashboard } = useAuth();
   const queryClient = useQueryClient();
   const prefetchCaseHistory = () => {
     void queryClient.prefetchQuery({
@@ -92,7 +92,7 @@ export default function NewCaseHome() {
           </CardContent>
         </Card>
 
-        {(canDownload || isStudent) && (
+        {canExportHospital && (
           <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">

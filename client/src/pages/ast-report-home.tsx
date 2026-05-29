@@ -20,7 +20,7 @@ export default function AstReportHome() {
     canManageAstAdmin,
     canRegisterAstCase,
     canViewAstCases,
-    canDownloadAst,
+    canExportAst,
     canViewDashboard,
     isStudent,
   } = useAuth();
@@ -104,7 +104,7 @@ export default function AstReportHome() {
           </Card>
         )}
 
-        {(canDownloadAst || isStudent) && (
+        {canExportAst && (
           <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">

@@ -10,7 +10,9 @@ import bcrypt from "bcryptjs";
 import {
   generateToken,
   resolveCapabilitiesForRole,
+  isAstExportVisibleForRole,
   isDashboardVisibleForRole,
+  isHospitalExportVisibleForRole,
   isVthDashboardVisibleForRole,
   requireAuth,
   sessions,
@@ -281,6 +283,8 @@ export function registerAuthRoutes(app: Express) {
         dashboardVisible: await isDashboardVisibleForRole(user.role),
         astDashboardVisible: await isDashboardVisibleForRole(user.role),
         vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
+        astExportVisible: await isAstExportVisibleForRole(user.role),
+        hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
@@ -328,6 +332,8 @@ export function registerAuthRoutes(app: Express) {
         dashboardVisible: await isDashboardVisibleForRole(user.role),
         astDashboardVisible: await isDashboardVisibleForRole(user.role),
         vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
+        astExportVisible: await isAstExportVisibleForRole(user.role),
+        hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
@@ -492,6 +498,8 @@ export function registerAuthRoutes(app: Express) {
       dashboardVisible: await isDashboardVisibleForRole(user.role),
       astDashboardVisible: await isDashboardVisibleForRole(user.role),
       vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
+      astExportVisible: await isAstExportVisibleForRole(user.role),
+      hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
       capabilities: resolveCapabilitiesForRole(user.role),
     });
   });

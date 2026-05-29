@@ -24,6 +24,8 @@ type AuthUser = SafeUser & {
   dashboardVisible?: boolean;
   astDashboardVisible?: boolean;
   vthDashboardVisible?: boolean;
+  astExportVisible?: boolean;
+  hospitalExportVisible?: boolean;
   capabilities?: PermissionCapability[];
 };
 
@@ -190,6 +192,10 @@ interface AuthContextType {
   canRegisterAstCase: boolean;
   canViewAstCases: boolean;
   canDownloadAst: boolean;
+  /** Admin per-role toggle for the AST export tile/route. */
+  canExportAst: boolean;
+  /** Admin per-role toggle for the Hospital export tile/route. */
+  canExportHospital: boolean;
   canManageAstAdmin: boolean;
 }
 
@@ -451,6 +457,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canViewVthDashboard = Boolean(
     user?.vthDashboardVisible ?? user?.dashboardVisible ?? false,
   );
+  // Admin-driven per-role export visibility acts as an EXTRA gate on top of
+  // capability + student-approval. Mirrors server `canDownloadBySource`:
+  //   eligible = staff/intern/admin with `ast.download`, or any student
+  //   allowed = eligible AND admin toggle (default true if flag missing)
+  const astExportEligible = canDownloadAst || isStudent;
+  const hospitalExportEligible = canDownloadAst || isStudent;
+  const astExportFlag = user?.astExportVisible ?? true;
+  const hospitalExportFlag = user?.hospitalExportVisible ?? true;
+  const canExportAst = Boolean(astExportEligible && astExportFlag);
+  const canExportHospital = Boolean(hospitalExportEligible && hospitalExportFlag);
 
   const setInactivityTimeout = useCallback(
     (value: InactivityTimeoutOption) => {
@@ -565,6 +581,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     canRegisterAstCase,
     canViewAstCases,
     canDownloadAst,
+    canExportAst,
+    canExportHospital,
     canManageAstAdmin,
   };
 

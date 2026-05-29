@@ -162,6 +162,68 @@ export async function isVthDashboardVisibleForRole(role: string): Promise<boolea
   }
 }
 
+/**
+ * Whether AST module **export / download** is allowed for the given role.
+ *
+ * This is a per-role admin toggle (in `role_feature_visibility.ast_export_visible`)
+ * that acts as an extra gate on top of the existing capability/approval rules
+ * (`ast.download` for staff/intern/admin, and the request-approval flow for
+ * students). If admin turns this off for a role, the API will deny exports
+ * even if the role would otherwise be allowed.
+ *
+ * Returns `true` for a missing row so existing installations default to the
+ * pre-toggle behavior (visible) until an admin explicitly turns it off.
+ */
+export async function isAstExportVisibleForRole(role: string): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ ast_export_visible: boolean | number }>(
+      "SELECT ast_export_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.ast_export_visible);
+  }
+  try {
+    const row = await dbGet<{ ast_export_visible: number }>(
+      sql`SELECT ast_export_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.ast_export_visible);
+  } catch {
+    // Old DBs that haven't migrated yet behave as visible.
+    return true;
+  }
+}
+
+/**
+ * Whether Hospital (VTH) module **export / download** is allowed for the
+ * given role. See `isAstExportVisibleForRole` for the full rationale — same
+ * pattern, different column.
+ */
+export async function isHospitalExportVisibleForRole(role: string): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ hospital_export_visible: boolean | number }>(
+      "SELECT hospital_export_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.hospital_export_visible);
+  }
+  try {
+    const row = await dbGet<{ hospital_export_visible: number }>(
+      sql`SELECT hospital_export_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.hospital_export_visible);
+  } catch {
+    return true;
+  }
+}
+
 export function getIdParam(req: Request): number {
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -230,42 +292,66 @@ function canDownloadBySource(source: "ast_report" | "hospital_case") {
     const user = (req as AuthenticatedRequest).currentUser;
     if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
 
+    // Hard capability/role gate first (matches pre-toggle behaviour).
     if (user.role !== "student" && !hasCapability(user.role, "ast.download")) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
     }
 
-    if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
-      return next();
-    }
-
+    // Admin-configurable per-role visibility toggle. Acts as an EXTRA gate on
+    // top of the capability/approval rules: even a staff member with
+    // `ast.download` is blocked if admin turned the toggle off for their role.
+    // Reads happen in an async chain because we may also need to check the
+    // download-request approval below.
     void (async () => {
-      const exportFrom =
-        typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
-      const exportTo =
-        typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
-      const approved = await findApprovedDownloadRequest({
-        userId: user.id,
-        source,
-        exportDateFrom: exportFrom || null,
-        exportDateTo: exportTo || null,
-      });
-      if (!approved) {
-        return res.status(403).json({
-          message:
-            "Download access not approved for this date range, or approval was already used. Submit a new download request.",
+      try {
+        const visible =
+          source === "hospital_case"
+            ? await isHospitalExportVisibleForRole(user.role)
+            : await isAstExportVisibleForRole(user.role);
+        if (!visible) {
+          return res.status(403).json({
+            message:
+              "Export is disabled for your role. Contact an administrator if you need access.",
+          });
+        }
+
+        if (isAdminRole(user.role) || user.role === "staff" || user.role === "intern") {
+          return next();
+        }
+
+        // Students: still require an approved download request that covers
+        // the requested date range — the toggle only ADDS a gate, it does
+        // not remove the approval flow.
+        const exportFrom =
+          typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
+        const exportTo =
+          typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
+        const approved = await findApprovedDownloadRequest({
+          userId: user.id,
+          source,
+          exportDateFrom: exportFrom || null,
+          exportDateTo: exportTo || null,
+        });
+        if (!approved) {
+          return res.status(403).json({
+            message:
+              "Download access not approved for this date range, or approval was already used. Submit a new download request.",
+          });
+        }
+        (req as AuthenticatedRequest).approvedDownloadRequest = {
+          id: approved.id,
+          status: approved.status,
+        };
+        return next();
+      } catch (error) {
+        return res.status(500).json({
+          message: "Failed to validate download permissions",
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
-      (req as AuthenticatedRequest).approvedDownloadRequest = {
-        id: approved.id,
-        status: approved.status,
-      };
-      return next();
-    })().catch((error) =>
-      res.status(500).json({
-        message: "Failed to validate download permissions",
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-    );
+    })().catch(() => {
+      // Last-resort guard; outer try/catch already responds.
+    });
   };
 }
 

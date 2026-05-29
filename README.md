@@ -703,6 +703,19 @@ Current effective capability model:
   - `hospital.case.create`, `hospital.case.view`, `ast.case.view`
   - **Data scope:** students see **all cases** in both modules — list, detail, print, patient‑history, and exports (after admin approval). This is intentional so students can learn from cases handled by other clinicians (diagnosis, treatment approach, etc.). The per-user filter lives in `caseViewerAccess()` in `server/routes/cases.ts`; tighten that one function if you ever need to scope students again (e.g. batch‑scoped data).
   - note: bulk downloads for students still go through the request‑approval flow in `canDownload`; only the per‑user row filter has been lifted.
+
+### Per-role feature visibility toggles
+
+Admins can toggle visibility per role for these features from **Admin → Access Control**. Toggles are persisted in `role_feature_visibility` and act as an **extra gate** on top of capabilities — turning a toggle off blocks a role even if their capability would normally allow it.
+
+| Feature | Column | Server gate |
+|--------|--------|-------------|
+| AST Dashboard | `dashboard_visible` | `isDashboardVisibleForRole()` |
+| VTH Dashboard | `vth_dashboard_visible` | `isVthDashboardVisibleForRole()` |
+| AST Export / Download | `ast_export_visible` | `isAstExportVisibleForRole()` (extra gate in `canDownload`) |
+| Hospital Export / Download | `hospital_export_visible` | `isHospitalExportVisibleForRole()` (extra gate in `canDownloadHospital`) |
+
+Defaults: all flags default to `1` (visible). A missing row in `role_feature_visibility` is treated as visible for backward compatibility. Only a Super Admin can change the `superadmin` toggles (audit H‑11). Toggle changes are recorded in `form_edit_audit_logs`. Users may need to log out and back in for a freshly toggled flag to take effect on their current session, because the session-issued flags are read at login.
 - `pending`
   - no case-view/create capabilities (blocked from AST/Hospital case flows)
 

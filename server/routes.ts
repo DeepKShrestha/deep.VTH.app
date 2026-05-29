@@ -179,6 +179,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     role TEXT PRIMARY KEY,
     dashboard_visible INTEGER NOT NULL DEFAULT 1,
     vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
+    ast_export_visible INTEGER NOT NULL DEFAULT 1,
+    hospital_export_visible INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
   )`);
   try {
@@ -191,6 +193,20 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       sql`UPDATE role_feature_visibility
           SET vth_dashboard_visible = dashboard_visible
           WHERE role IS NOT NULL`,
+    );
+  }
+  try {
+    await dbRun(sql`SELECT ast_export_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN ast_export_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  try {
+    await dbRun(sql`SELECT hospital_export_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
     );
   }
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
@@ -594,10 +610,18 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       role TEXT PRIMARY KEY,
       dashboard_visible INTEGER NOT NULL DEFAULT 1,
       vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
+      ast_export_visible INTEGER NOT NULL DEFAULT 1,
+      hospital_export_visible INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL
     )`);
     await dbRun(
       sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS vth_dashboard_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS ast_export_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
     );
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
       notification_key TEXT PRIMARY KEY,
@@ -1206,8 +1230,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     if (!exists) {
       await dbRun(
-        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, vth_dashboard_visible, updated_at)
-            VALUES (${role}, ${1}, ${1}, ${new Date().toISOString()})`,
+        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, vth_dashboard_visible, ast_export_visible, hospital_export_visible, updated_at)
+            VALUES (${role}, ${1}, ${1}, ${1}, ${1}, ${new Date().toISOString()})`,
       );
     }
   }
