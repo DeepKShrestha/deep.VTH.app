@@ -941,6 +941,29 @@ free -h
 - DO console → Snapshots → pick one → "Restore Droplet" (creates a new Droplet from the snapshot; you can then destroy the old one and point DNS at the new one).
 
 ### Deploy a new version
+
+Easiest path — run the bundled deploy script as root. It always executes
+`git`, `npm ci`, and `npm run build` as the `vth-app` user (so `/opt/vth-app`
+never gets root-owned files and Git never trips the "dubious ownership"
+check), then restarts the service and verifies it came up healthy:
+
+```bash
+sudo bash /opt/vth-app/scripts/deploy.sh
+```
+
+Useful flags:
+
+| Flag | Effect |
+|------|--------|
+| `--branch <name>` | Deploy a non-`main` branch (e.g. `--branch hotfix`). |
+| `--verify` | Run `npm run verify` (tests + typecheck + build) instead of just `npm run build`. Slower; safer. |
+| `--no-restart` | Build only, leave the running service alone. |
+| `--no-tail` | Skip the post-restart `journalctl` peek. |
+
+The script auto-heals `/opt/vth-app` ownership (root → `vth-app`) if a
+previous deploy was run as the wrong user. If you'd rather run the steps
+by hand:
+
 ```bash
 cd /opt/vth-app
 sudo -u vth-app git fetch

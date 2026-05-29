@@ -1,0 +1,4 @@
+# Force LF on shell scripts so they remain runnable on Linux even when
+# checked out on Windows machines. Without this, the auto-CRLF setting
+# turns scripts/*.sh into /bin/bash^M and breaks `bash deploy.sh`.
+*.sh text eol=lf

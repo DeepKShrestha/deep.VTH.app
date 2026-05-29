@@ -609,8 +609,23 @@ df -h /var/lib/vth-app          # disk for DB + uploads
 
 ### 16.1 Standard upgrade
 
+The one-liner:
+
 ```bash
-# On the server, in /opt/vth-app:
+sudo bash /opt/vth-app/scripts/deploy.sh           # main branch, npm run build
+sudo bash /opt/vth-app/scripts/deploy.sh --verify  # also run tests + typecheck
+```
+
+`scripts/deploy.sh` runs `git pull`, `npm ci`, `npm run build`, and
+`systemctl restart vth-app` — always executing the git/npm steps as the
+`vth-app` user so root never owns files under `/opt/vth-app`. It also
+auto-heals ownership if a previous deploy was run incorrectly. Run
+`scripts/deploy.sh --help` for all flags.
+
+If you'd rather drive it by hand:
+
+```bash
+cd /opt/vth-app
 sudo -u vth-app git fetch
 sudo -u vth-app git checkout <new-tag-or-commit>
 sudo -u vth-app npm ci
