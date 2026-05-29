@@ -909,37 +909,48 @@ export default function PrintReport() {
           </div>
         )}
 
-        {isHospitalCase && (
-          <div className="print-section mt-4 mb-3 flex justify-end">
-            <div className="text-[10px] text-black text-right w-[11rem] shrink-0 space-y-0.5">
-              <div className="border-b-2 border-gray-800 min-h-[1.75rem] w-full max-w-[11rem] ml-auto" />
-              <div className="pt-0.5 space-y-0.5 leading-snug">
-                <p className="text-[11px] font-semibold">
-                  {caseData.veterinarianName?.trim() ? (
-                    caseData.veterinarianName.trim()
-                  ) : (
-                    <span className="inline-block w-full border-b border-gray-400 min-h-[1em]" />
+        {isHospitalCase && (() => {
+          // Interns are saved as { veterinarianId: null, veterinarianNvc: null,
+          // veterinarianDepartment: "Intern" } (see register-case.tsx). For
+          // them, suppress the "NVC no. ___" line so the signature block reads
+          // cleanly as Name / Intern instead of leaving an empty NVC placeholder.
+          const departmentDisplay =
+            formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment);
+          const isInternVet = departmentDisplay.toLowerCase() === "intern";
+          return (
+            <div className="print-section mt-4 mb-3 flex justify-end">
+              <div className="text-[10px] text-black text-right w-[11rem] shrink-0 space-y-0.5">
+                <div className="border-b-2 border-gray-800 min-h-[1.75rem] w-full max-w-[11rem] ml-auto" />
+                <div className="pt-0.5 space-y-0.5 leading-snug">
+                  <p className="text-[11px] font-semibold">
+                    {caseData.veterinarianName?.trim() ? (
+                      caseData.veterinarianName.trim()
+                    ) : (
+                      <span className="inline-block w-full border-b border-gray-400 min-h-[1em]" />
+                    )}
+                  </p>
+                  {!isInternVet && (
+                    <p className="text-[10px]">
+                      <span className="text-gray-700">NVC no.</span>{" "}
+                      {caseData.veterinarianNvc?.trim() ? (
+                        caseData.veterinarianNvc.trim()
+                      ) : (
+                        <span className="inline-block w-16 border-b border-gray-300 align-bottom" />
+                      )}
+                    </p>
                   )}
-                </p>
-                <p className="text-[10px]">
-                  <span className="text-gray-700">NVC no.</span>{" "}
-                  {caseData.veterinarianNvc?.trim() ? (
-                    caseData.veterinarianNvc.trim()
-                  ) : (
-                    <span className="inline-block w-16 border-b border-gray-300 align-bottom" />
-                  )}
-                </p>
-                <p className="text-[10px]">
-                  {formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment) ? (
-                    formatVeterinarianDepartmentDisplay(caseData.veterinarianDepartment)
-                  ) : (
-                    <span className="inline-block w-full border-b border-gray-300 min-h-[1em]" />
-                  )}
-                </p>
+                  <p className="text-[10px]">
+                    {departmentDisplay ? (
+                      departmentDisplay
+                    ) : (
+                      <span className="inline-block w-full border-b border-gray-300 min-h-[1em]" />
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Signature Area */}
         {!isHospitalCase && (
