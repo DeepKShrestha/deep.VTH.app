@@ -11,7 +11,7 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerBreakpointRoutes } from "./routes/breakpoints";
 import { registerCaseAndDownloadRoutes, registerExportRoutes } from "./routes/cases";
 import { SEED_BREAKPOINTS } from "./routes/context";
-import { dbGet, dbRun } from "./db-query";
+import { dbAll, dbGet, dbRun } from "./db-query";
 import { authSessionRepo } from "./auth-session-repo";
 import { domainRepo } from "./domain-repo";
 import { runPendingMigrations } from "./migration-runner";
@@ -240,6 +240,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     register_visible INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (scope, batch)
+  )`);
+  // Canonical list of valid student batches the signup dropdown is
+  // restricted to. See migrations/0021_student_batches.sql for design.
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS student_batches (
+    batch INTEGER PRIMARY KEY,
+    updated_at TEXT NOT NULL
   )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
     notification_key TEXT PRIMARY KEY,
@@ -671,6 +677,10 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       register_visible INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (scope, batch)
+    )`);
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS student_batches (
+      batch INTEGER PRIMARY KEY,
+      updated_at TEXT NOT NULL
     )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
       notification_key TEXT PRIMARY KEY,
@@ -1283,6 +1293,43 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
             VALUES (${role}, ${1}, ${1}, ${1}, ${1}, ${new Date().toISOString()})`,
       );
     }
+  }
+
+  // Seed the canonical batch list from distinct student_batch values that
+  // already exist on `users`. Runs only when the table is empty so it
+  // doesn't undo subsequent admin removals — once an admin has curated
+  // the list, this block is a no-op.
+  //
+  // Why this matters: the new signup validation rejects any
+  // studentBatch not in this table. Without the seed, every previously
+  // approved student's batch would become "invalid" the moment the
+  // table existed, which would silently misclassify them in the per-
+  // batch register override resolver. Seeding guarantees their batches
+  // remain known on first deploy.
+  try {
+    const existingBatchRow = await dbGet<{ batch: number }>(
+      sql`SELECT batch FROM student_batches LIMIT 1`,
+    );
+    if (!existingBatchRow) {
+      const distinctBatches = await dbAll<{ batch: number }>(
+        sql`SELECT DISTINCT student_batch AS batch
+            FROM users
+            WHERE student_batch IS NOT NULL
+            ORDER BY student_batch ASC`,
+      );
+      const nowIso = new Date().toISOString();
+      for (const row of distinctBatches) {
+        const value = Number(row.batch);
+        if (!Number.isInteger(value) || value <= 0) continue;
+        await dbRun(
+          sql`INSERT INTO student_batches (batch, updated_at)
+              VALUES (${value}, ${nowIso})
+              ON CONFLICT(batch) DO NOTHING`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn("[bootstrap] failed to seed student_batches", err);
   }
 
   const existingUsers = await authSessionRepo.getUsers();

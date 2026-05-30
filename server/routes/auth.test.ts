@@ -52,6 +52,7 @@ vi.mock("../user-preferences-store", () => ({
 }));
 
 import { authSessionRepo } from "../auth-session-repo";
+import { db } from "../db";
 import { registerAuthRoutes } from "./auth";
 
 type Handler = (req: Request, res: Response, next?: () => void) => void | Promise<void>;
@@ -134,6 +135,10 @@ describe("auth routes", () => {
     registerAuthRoutes(app as unknown as any);
 
     vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(makeUser());
+    // New signup path consults `student_batches` for student
+    // designations. Mock a successful lookup so the request reaches the
+    // duplicate-username branch this test is exercising.
+    vi.mocked(db.get).mockReturnValue({ batch: 9 } as any);
 
     const req = {
       body: {
@@ -161,6 +166,50 @@ describe("auth routes", () => {
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith({ message: "Username already taken" });
+  });
+
+  it("signup rejects student whose batch is not in the allowed list", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+
+    // No batch row → dbGet returns undefined → server rejects with 400.
+    // Username lookup must NOT happen for this case — the batch gate
+    // sits before it. We assert that to make the ordering explicit, so
+    // clear the call history left behind by sibling tests in this file.
+    vi.mocked(authSessionRepo.getUserByUsername).mockClear();
+    vi.mocked(db.get).mockReturnValue(undefined as any);
+
+    const req = {
+      body: {
+        fullName: "User",
+        address: "Address",
+        phone: "9800000000",
+        email: "user@example.com",
+        designation: "student",
+        // Within the schema's 1-99 range so it passes Zod, but not in
+        // the (mocked-empty) student_batches table → our new gate fires.
+        studentBatch: 42,
+        username: "user1",
+        password: "Secret12",
+      },
+    } as Request;
+    const res = makeRes();
+
+    const signupHandlers = app.routes.post.get("/api/auth/signup")!;
+    let calledNext = false;
+    await signupHandlers[0](req, res, () => {
+      calledNext = true;
+    });
+    if (calledNext) {
+      await signupHandlers[1](req, res);
+    }
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message:
+        "That batch isn't enabled for signup. Please contact an admin if your batch is missing.",
+    });
+    expect(authSessionRepo.getUserByUsername).not.toHaveBeenCalled();
   });
 
   it("login sets token and returns safe user", async () => {

@@ -25,6 +25,28 @@ const DESIGNATIONS = [
   { value: "student", label: "Student" },
 ];
 
+function ordinalBatch(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return `${n}th batch`;
+  const s = String(n);
+  const lastChar = s.slice(-1);
+  const lastTwoChars = s.slice(-2);
+
+  if (lastTwoChars === "11" || lastTwoChars === "12" || lastTwoChars === "13") {
+    return `${n}th batch`;
+  }
+
+  switch (lastChar) {
+    case "1":
+      return `${n}st batch`;
+    case "2":
+      return `${n}nd batch`;
+    case "3":
+      return `${n}rd batch`;
+    default:
+      return `${n}th batch`;
+  }
+}
+
 export default function SignupPage() {
   const { signup } = useAuth();
   const { toast } = useToast();
@@ -46,6 +68,37 @@ export default function SignupPage() {
   const [photoInputKey, setPhotoInputKey] = useState(0);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const photoObjectUrlRef = useRef<string | null>(null);
+
+  // Admin-curated list of valid batches. We always fetch (cheap, public),
+  // but only render the dropdown once the user picks "student". Loading
+  // state is separated so we can show a clear "Contact admin" empty
+  // state when the list is configured-empty vs. still in-flight — those
+  // two need different copy to avoid confusing a new student.
+  const [batchOptions, setBatchOptions] = useState<number[]>([]);
+  const [batchOptionsLoaded, setBatchOptionsLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/student-batches")
+      .then((r) => (r.ok ? r.json() : { batches: [] }))
+      .then((data: { batches?: number[] }) => {
+        if (cancelled) return;
+        const arr = Array.isArray(data?.batches) ? data.batches : [];
+        setBatchOptions(
+          arr
+            .map((v) => Number(v))
+            .filter((v) => Number.isInteger(v) && v > 0)
+            .sort((a, b) => a - b),
+        );
+        setBatchOptionsLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setBatchOptionsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (profilePhotoFile) {
@@ -104,17 +157,17 @@ export default function SignupPage() {
     let normalizedBatch: number | null = null;
     if (designation === "student") {
       normalizedBatch = Number.parseInt(studentBatch.trim(), 10);
-    }
-    if (designation === "student") {
+      // Client-side validation mirrors the server gate so the user
+      // sees the failure before submitting. The server check below is
+      // still authoritative (a tampered request is rejected too).
       if (
         !studentBatch.trim() ||
         normalizedBatch == null ||
         !Number.isInteger(normalizedBatch) ||
-        normalizedBatch < 1 ||
-        normalizedBatch > 99
+        !batchOptions.includes(normalizedBatch)
       ) {
         toast({
-          title: "Student batch must be a number between 1 and 99",
+          title: "Please pick a valid batch from the list.",
           variant: "destructive",
         });
         return;
@@ -233,17 +286,35 @@ export default function SignupPage() {
                 {designation === "student" && (
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label htmlFor="studentBatch">Batch <span className="text-destructive">*</span></Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="studentBatch"
+                    {batchOptions.length > 0 ? (
+                      <Select
                         value={studentBatch}
-                        onChange={(e) => setStudentBatch(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="e.g. 9"
-                        inputMode="numeric"
-                        data-testid="input-signup-student-batch"
-                      />
-                      <span className="text-sm text-muted-foreground whitespace-nowrap">th batch</span>
-                    </div>
+                        onValueChange={(value) => setStudentBatch(value)}
+                      >
+                        <SelectTrigger
+                          id="studentBatch"
+                          data-testid="select-signup-student-batch"
+                        >
+                          <SelectValue placeholder="Choose your batch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {batchOptions.map((b) => (
+                            <SelectItem key={b} value={String(b)}>
+                              {ordinalBatch(b)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div
+                        className="rounded-md border border-dashed bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+                        data-testid="text-signup-batch-empty"
+                      >
+                        {batchOptionsLoaded
+                          ? "No batches are enabled for student signup yet. Please contact an administrator."
+                          : "Loading available batches\u2026"}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="space-y-1.5">

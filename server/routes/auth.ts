@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
 import { sql } from "drizzle-orm";
-import { dbRun } from "../db-query";
+import { dbAll, dbGet, dbRun } from "../db-query";
 import { insertUserSchema, validateStrongPassword } from "@shared/schema";
 import type { User } from "@shared/schema";
 import bcrypt from "bcryptjs";
@@ -141,6 +141,33 @@ function signupMultipartMaybe(req: Request, res: Response, next: NextFunction) {
 const BCRYPT_COST = 10;
 
 export function registerAuthRoutes(app: Express) {
+  /**
+   * Public endpoint that powers the batch dropdown on the signup form.
+   * Returns the admin-curated list of valid student batches. Public on
+   * purpose — the user has to be able to see the options before they're
+   * authenticated. The list cannot leak any sensitive information (just
+   * batch numbers like 9, 10, 11), so no auth needed.
+   *
+   * The server-side signup validator below re-checks against the same
+   * table, so even a tampered client can't sneak an off-list batch in.
+   */
+  app.get("/api/student-batches", async (_req, res) => {
+    try {
+      const rows = await dbAll<{ batch: number }>(
+        sql`SELECT batch FROM student_batches ORDER BY batch ASC`,
+      );
+      const batches = rows
+        .map((r) => Number(r.batch))
+        .filter((v) => Number.isInteger(v) && v > 0);
+      return res.json({ batches });
+    } catch {
+      // Pre-migration DB (no table yet) shouldn't crash signup. Treat as
+      // "no batches configured" → signup UI shows the contact-admin
+      // empty state, which is the right behaviour.
+      return res.json({ batches: [] });
+    }
+  });
+
   app.post("/api/auth/signup", signupMultipartMaybe, async (req, res) => {
     const rawBody = { ...(req.body as Record<string, unknown>) };
     if (typeof rawBody.studentBatch === "string" && rawBody.studentBatch.trim() !== "") {
@@ -159,6 +186,35 @@ export function registerAuthRoutes(app: Express) {
     const { password, ...userData } = parsed.data;
     const studentBatch =
       userData.designation === "student" ? userData.studentBatch ?? null : null;
+
+    // Server-side gate against typo'd batches like "111111". The client
+    // dropdown is just UX — this is what actually prevents the bad
+    // value from reaching `users.student_batch`. Anything not in the
+    // admin-curated list is rejected with a clear message so the user
+    // knows to contact an admin (rather than seeing a confusing
+    // generic 400).
+    if (userData.designation === "student") {
+      if (studentBatch == null || !Number.isInteger(studentBatch)) {
+        return res
+          .status(400)
+          .json({ message: "Please pick a valid batch from the list." });
+      }
+      try {
+        const match = await dbGet<{ batch: number }>(
+          sql`SELECT batch FROM student_batches WHERE batch = ${studentBatch}`,
+        );
+        if (!match) {
+          return res.status(400).json({
+            message:
+              "That batch isn't enabled for signup. Please contact an admin if your batch is missing.",
+          });
+        }
+      } catch {
+        return res.status(503).json({
+          message: "Student signup is temporarily unavailable. Please try again shortly.",
+        });
+      }
+    }
 
     const passwordError = validateStrongPassword(password);
     if (passwordError) {

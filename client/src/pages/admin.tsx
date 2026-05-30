@@ -31,6 +31,7 @@ import {
   Users,
   Clock,
   Copy,
+  X,
 } from "lucide-react";
 import type { SafeUser, DownloadRequest, PasswordResetRequest } from "@shared/schema";
 import { adToBs } from "@/lib/nepali-date";
@@ -387,6 +388,24 @@ export default function AdminPanel({
   });
   const astBatchVisibility = astBatchVisibilityResponse?.items ?? [];
   const hospitalBatchVisibility = hospitalBatchVisibilityResponse?.items ?? [];
+  /**
+   * Admin-curated canonical batch list. Drives the signup dropdown (via
+   * the public `/api/student-batches` endpoint) AND the rows that show
+   * up in the per-batch register override cards below. `inUseByUsers`
+   * lets the admin see how many active accounts a batch represents
+   * before removing it — purely informational, not a hard block.
+   */
+  const { data: studentBatchesResponse, refetch: refetchStudentBatches } = useQuery<{
+    items: Array<{ batch: number; inUseByUsers: number }>;
+  }>({
+    queryKey: ["/api/admin/student-batches"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/student-batches");
+      return res.json();
+    },
+    enabled: mode === "full",
+  });
+  const studentBatches = studentBatchesResponse?.items ?? [];
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
     queryFn: async () => {
@@ -1070,6 +1089,51 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to update Hospital batch override",
+        variant: "destructive",
+      });
+    },
+  });
+  const addStudentBatchMutation = useMutation({
+    mutationFn: async (batch: number) => {
+      await apiRequest("POST", "/api/admin/student-batches", { batch });
+    },
+    onSuccess: () => {
+      // Invalidate both the canonical list AND the per-batch override
+      // lists so the new batch shows up in the BatchOverrideRow grids
+      // without a manual refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/student-batches"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "ast"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "hospital"],
+      });
+      toast({ title: "Batch added" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to add batch",
+        variant: "destructive",
+      });
+    },
+  });
+  const removeStudentBatchMutation = useMutation({
+    mutationFn: async (batch: number) => {
+      await apiRequest("DELETE", `/api/admin/student-batches/${batch}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/student-batches"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "ast"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "hospital"],
+      });
+      toast({ title: "Batch removed" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to remove batch",
         variant: "destructive",
       });
     },
@@ -2158,7 +2222,24 @@ export default function AdminPanel({
             grid of large cards so the whole panel fits on a single
             laptop screen with room to spare — much denser than the
             previous four-card stack while still being scannable.
+
+            The first card defines the canonical batch list itself: which
+            batch numbers a new student can pick at signup. We render it
+            ABOVE the module cards on purpose — the per-batch override
+            rows in those cards read from this same list, so visually it
+            reads top-down: "first decide what batches exist, then decide
+            who can do what".
           */}
+          <AllowedBatchesCard
+            batches={studentBatches}
+            onAdd={(batch) => addStudentBatchMutation.mutate(batch)}
+            onRemove={(batch) => removeStudentBatchMutation.mutate(batch)}
+            adding={addStudentBatchMutation.isPending}
+            removing={removeStudentBatchMutation.isPending}
+            onRefresh={() => {
+              void refetchStudentBatches();
+            }}
+          />
           <ModuleAccessControlCard
             title="AST Module"
             description="Toggles below control AST module access for each role. Per-batch overrides under the Student row only further restrict — the role toggle is the master switch."
@@ -3312,6 +3393,22 @@ function roleDisplayLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function ordinalBatch(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return `${n}th batch`;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th batch`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st batch`;
+    case 2:
+      return `${n}nd batch`;
+    case 3:
+      return `${n}rd batch`;
+    default:
+      return `${n}th batch`;
+  }
+}
+
 /**
  * Single feature × roles row in the Access Control panel.
  *
@@ -3411,12 +3508,13 @@ function BatchOverrideRow({
   return (
     <div className="rounded border bg-muted/10 px-3 py-2">
       {/*
-        Same outer shape as AccessControlRoleRow (label column + grid) so
-        the indentation lines up visually with the rows above. Batches use
-        a 2/4-column grid (instead of 2/5) so the pills are slightly wider
-        and don't look randomly spaced when there are only 2-3 batches.
-        Pills still align to a column grid so multiple batches show as a
-        neat row, not a ragged flex-wrap.
+        Identical outer shape AND grid column count as AccessControlRoleRow
+        so each batch pill lines up exactly under a role pill in the rows
+        above (e.g. 9th batch sits under Super Admin, 11th under Admin).
+        We keep the 5-column grid even when only 2-3 batches are present;
+        the trailing columns stay empty rather than letting the pills
+        re-flow to a wider width. That asymmetry is what the user
+        flagged in the screenshot.
       */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="sm:w-24 sm:shrink-0">
@@ -3427,10 +3525,10 @@ function BatchOverrideRow({
         </div>
         {batches.length === 0 ? (
           <span className="text-[11px] text-muted-foreground italic">
-            No student batches found in the user list yet.
+            No batches enabled yet. Add one in the Allowed Student Batches card above.
           </span>
         ) : (
-          <div className="grid w-full flex-1 grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2">
+          <div className="grid w-full flex-1 grid-cols-2 gap-1.5 sm:grid-cols-5 sm:gap-2">
             {batches.map((row) => (
               <button
                 key={row.batch}
@@ -3451,6 +3549,168 @@ function BatchOverrideRow({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Curates the canonical list of student batch numbers. This list is the
+ * source of truth for:
+ *   1. The signup dropdown (public /api/student-batches).
+ *   2. The per-batch override rows in each module card below.
+ *
+ * UX choices:
+ *   - Add via a small inline form (number input + Add button) rather
+ *     than a modal — there's almost nothing to configure per row, so a
+ *     modal would be overkill.
+ *   - Remove is a small × button next to each chip. We DON'T confirm
+ *     removal here because the action is reversible (re-adding restores
+ *     the per-batch override row that was kept alive on delete), and
+ *     existing student accounts on that batch keep working — only
+ *     future signups are blocked.
+ *   - `inUseByUsers` shows next to each chip so an admin can tell at a
+ *     glance which batches are tied to active accounts.
+ */
+function AllowedBatchesCard({
+  batches,
+  onAdd,
+  onRemove,
+  adding,
+  removing,
+  onRefresh,
+}: {
+  batches: Array<{ batch: number; inUseByUsers: number }>;
+  onAdd: (batch: number) => void;
+  onRemove: (batch: number) => void;
+  adding: boolean;
+  removing: boolean;
+  onRefresh: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAdd = () => {
+    setError(null);
+    const trimmed = draft.trim();
+    const value = Number.parseInt(trimmed, 10);
+    if (!trimmed || !Number.isInteger(value) || value < 1 || value > 99) {
+      setError("Enter a whole number between 1 and 99.");
+      return;
+    }
+    if (batches.some((b) => b.batch === value)) {
+      setError("That batch is already on the list.");
+      return;
+    }
+    onAdd(value);
+    setDraft("");
+  };
+
+  return (
+    <Card data-editor-collapsible="true">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Allowed Student Batches</CardTitle>
+        <p className="text-xs text-muted-foreground leading-snug">
+          Students can only pick a batch from this list when signing up.
+          Existing accounts on a removed batch keep working — only future
+          signups are blocked.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="add-student-batch"
+              className="text-[11px] font-medium text-muted-foreground"
+            >
+              Add batch number
+            </label>
+            <Input
+              id="add-student-batch"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={99}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value.replace(/[^0-9]/g, ""));
+                if (error) setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAdd();
+                }
+              }}
+              placeholder="e.g. 9"
+              className="h-8 w-28 text-sm"
+              data-testid="input-add-student-batch"
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleAdd}
+            disabled={adding}
+            data-testid="button-add-student-batch"
+          >
+            {adding ? "Adding\u2026" : "Add"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onRefresh}
+            className="text-xs"
+          >
+            Refresh
+          </Button>
+          {error ? (
+            <span className="text-[11px] text-destructive" role="alert">
+              {error}
+            </span>
+          ) : null}
+        </div>
+
+        {batches.length === 0 ? (
+          <div
+            className="rounded border border-dashed bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground"
+            data-testid="text-allowed-batches-empty"
+          >
+            No batches enabled yet. Students cannot sign up until at least
+            one batch is added here.
+          </div>
+        ) : (
+          <div
+            className="flex flex-wrap gap-1.5"
+            data-testid="list-allowed-batches"
+          >
+            {batches.map((b) => (
+              <span
+                key={b.batch}
+                className="inline-flex items-center gap-1 rounded-full border bg-background pl-2.5 pr-1 py-0.5 text-[11px]"
+                data-testid={`chip-allowed-batch-${b.batch}`}
+              >
+                <span className="font-medium">{ordinalBatch(b.batch)}</span>
+                <span className="text-muted-foreground">
+                  {b.inUseByUsers === 0
+                    ? "(no users)"
+                    : `(${b.inUseByUsers} user${b.inUseByUsers === 1 ? "" : "s"})`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemove(b.batch)}
+                  disabled={removing}
+                  aria-label={`Remove ${b.batch}th batch`}
+                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  data-testid={`button-remove-batch-${b.batch}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

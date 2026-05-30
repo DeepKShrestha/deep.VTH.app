@@ -828,12 +828,23 @@ export function registerAdminRoutes(app: Express) {
     async (req, res) => {
       const scopeRaw = String(req.query.scope ?? "").trim().toLowerCase();
       const scope = scopeRaw === "hospital" ? "hospital" : "ast";
-      const batchRows = await dbAll<{ batch: number }>(
-        sql`SELECT DISTINCT student_batch AS batch
-            FROM users
-            WHERE student_batch IS NOT NULL
-            ORDER BY student_batch ASC`,
+      // Source from the canonical student_batches list (the same table
+      // the signup dropdown reads from) so an admin can configure
+      // overrides for a brand-new batch the moment they add it, without
+      // having to wait for the first student of that batch to register.
+      // Fall back to distinct user batches if the table is somehow
+      // empty so the UI never goes blank during transition.
+      let batchRows = await dbAll<{ batch: number }>(
+        sql`SELECT batch FROM student_batches ORDER BY batch ASC`,
       );
+      if (batchRows.length === 0) {
+        batchRows = await dbAll<{ batch: number }>(
+          sql`SELECT DISTINCT student_batch AS batch
+              FROM users
+              WHERE student_batch IS NOT NULL
+              ORDER BY student_batch ASC`,
+        );
+      }
       const batches = batchRows
         .map((r) => Number(r.batch))
         .filter((v) => Number.isFinite(v) && v > 0);
@@ -884,6 +895,111 @@ export function registerAdminRoutes(app: Express) {
             )`,
       );
       return res.json({ scope, batch, registerVisible });
+    },
+  );
+
+  /**
+   * Admin-curated list of valid student batches.
+   *
+   * Why this lives in admin (and not public): writes must be gated, but
+   * reads also include `inUseByUsers` so the admin can see which
+   * batches are tied to live accounts before removing them. The signup
+   * dropdown uses the public `/api/student-batches` instead — that
+   * endpoint just returns the bare list.
+   */
+  app.get(
+    "/api/admin/student-batches",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const rows = await dbAll<{ batch: number }>(
+        sql`SELECT batch FROM student_batches ORDER BY batch ASC`,
+      );
+      const usageRows = await dbAll<{ batch: number; count: number }>(
+        sql`SELECT student_batch AS batch, COUNT(*) AS count
+            FROM users
+            WHERE student_batch IS NOT NULL
+            GROUP BY student_batch`,
+      );
+      const usage = new Map<number, number>();
+      for (const u of usageRows) {
+        const k = Number(u.batch);
+        if (Number.isInteger(k)) usage.set(k, Number(u.count) || 0);
+      }
+      const items = rows
+        .map((r) => Number(r.batch))
+        .filter((v) => Number.isInteger(v) && v > 0)
+        .map((batch) => ({ batch, inUseByUsers: usage.get(batch) ?? 0 }));
+      return res.json({ items });
+    },
+  );
+
+  app.post(
+    "/api/admin/student-batches",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const raw = (req.body as { batch?: unknown })?.batch;
+      const batch = typeof raw === "number" ? raw : Number.parseInt(String(raw ?? ""), 10);
+      if (!Number.isInteger(batch) || batch < 1 || batch > 99) {
+        return res
+          .status(400)
+          .json({ message: "Batch must be an integer between 1 and 99." });
+      }
+      const existing = await dbGet<{ batch: number }>(
+        sql`SELECT batch FROM student_batches WHERE batch = ${batch}`,
+      );
+      if (existing) {
+        return res.status(409).json({ message: "That batch is already on the list." });
+      }
+      await dbRun(
+        sql`INSERT INTO student_batches (batch, updated_at)
+            VALUES (${batch}, ${new Date().toISOString()})`,
+      );
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "add_student_batch",
+        targetType: "student_batch",
+        targetId: batch,
+        details: { batch },
+      });
+      return res.status(201).json({ batch });
+    },
+  );
+
+  app.delete(
+    "/api/admin/student-batches/:batch",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const batch = Number.parseInt(String(req.params.batch ?? ""), 10);
+      if (!Number.isInteger(batch) || batch <= 0) {
+        return res.status(400).json({ message: "Batch must be a positive integer." });
+      }
+      const existing = await dbGet<{ batch: number }>(
+        sql`SELECT batch FROM student_batches WHERE batch = ${batch}`,
+      );
+      if (!existing) {
+        return res.status(404).json({ message: "That batch isn't on the list." });
+      }
+      // Removing a batch only prevents *future* signups; existing
+      // student accounts keep working — we never touch `users` here.
+      // The per-batch register override row (if any) is left alone so
+      // re-adding the same batch later restores its previous toggle
+      // state automatically.
+      await dbRun(sql`DELETE FROM student_batches WHERE batch = ${batch}`);
+      await logAdminAction({
+        actorUserId: currentUser.id,
+        actorRole: currentUser.role,
+        actionType: "remove_student_batch",
+        targetType: "student_batch",
+        targetId: batch,
+        details: { batch },
+      });
+      return res.json({ batch });
     },
   );
 
