@@ -95,7 +95,7 @@ import {
 export default function Welcome() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { user, logout, canRegisterHospitalCase, confirmBeforeLogout, isAdmin } = useAuth();
+  const { user, logout, confirmBeforeLogout, isAdmin } = useAuth();
   const [enableToastAlerts, setEnableToastAlerts] = useState(true);
   // Default ON. The actual play happens in `<AdminNotificationCenter />` so
   // sounds fire on every page; this Welcome page just controls the prefs UI.
@@ -694,17 +694,21 @@ export default function Welcome() {
               <p className="text-sm text-muted-foreground max-sm:max-w-[280px]">
                 Add patient details, diagnosis, tests, and treatment plan for a new hospital case.
               </p>
-              {canRegisterHospitalCase ? (
-                <Link href="/new-case" className="mt-auto">
-                  <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-register-case">
-                    Open Case Registration
-                  </Button>
-                </Link>
-              ) : (
-                <Button className="w-full mt-auto" disabled>
-                  Registration permission required
+              {/*
+                The VTH module tile must NOT be gated on canRegisterHospitalCase.
+                /new-case is the module landing page; it contains View Previous
+                Cases, Export, Dashboard, and Settings — features a user may
+                still legitimately have access to even when an admin has
+                turned off case registration for their role or batch. The
+                Register card *inside* /new-case is the right place to gate
+                registration (mirrors the AST module pattern below — note
+                that the AST tile here is also ungated).
+              */}
+              <Link href="/new-case" className="mt-auto">
+                <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-register-case">
+                  Open Case Registration
                 </Button>
-              )}
+              </Link>
             </CardContent>
           </Card>
 

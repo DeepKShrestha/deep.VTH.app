@@ -9,7 +9,12 @@ import { StickyScrollPage } from "@/components/sticky-scroll-page";
 import { ArrowLeft, ClipboardPlus, FolderSearch, Settings2, Download, BarChart3 } from "lucide-react";
 
 export default function NewCaseHome() {
-  const { canManageAstAdmin, canExportHospital, canViewVthDashboard } = useAuth();
+  const {
+    canManageAstAdmin,
+    canExportHospital,
+    canViewVthDashboard,
+    canRegisterHospitalCase,
+  } = useAuth();
   const queryClient = useQueryClient();
   const prefetchCaseHistory = () => {
     void queryClient.prefetchQuery({
@@ -49,24 +54,34 @@ export default function NewCaseHome() {
       }
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <ClipboardPlus className="w-4 h-4 text-primary shrink-0" />
-              Register New Case
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              Open the complete hospital case entry form for a new patient.
-            </p>
-            <Link href="/new-case/register" className="mt-auto">
-              <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-open-new-case-registration">
+        {/*
+          The Register card is the ONLY one gated on `canRegisterHospitalCase`
+          — keeping the rest of the module landing (View Cases, Dashboard,
+          Export, Settings) reachable even when an admin has turned off
+          registration for a role or batch. This matches the AST module
+          landing and the policy that admin toggles disable only the
+          feature they name, not the entire module.
+        */}
+        {canRegisterHospitalCase && (
+          <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ClipboardPlus className="w-4 h-4 text-primary shrink-0" />
                 Register New Case
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-1 flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                Open the complete hospital case entry form for a new patient.
+              </p>
+              <Link href="/new-case/register" className="mt-auto">
+                <Button className="w-full min-h-10 sm:min-h-9" data-testid="button-open-new-case-registration">
+                  Register New Case
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="h-full flex flex-col border-border/80 shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 rounded-lg">
           <CardHeader className="pb-2">

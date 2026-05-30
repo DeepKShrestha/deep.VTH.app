@@ -8,8 +8,11 @@ import {
   getIdParam,
   getPaginationParams,
   isAstExportVisibleForRole,
+  isAstRegisterVisibleForRole,
+  isBatchRegisterVisible,
   isDashboardVisibleForRole,
   isHospitalExportVisibleForRole,
+  isHospitalRegisterVisibleForRole,
   isVthDashboardVisibleForRole,
   isAdminRole,
   requireAuth,
@@ -93,6 +96,17 @@ const HIDDEN_SUPERADMIN_EMAIL =
 const hiddenSuperadminEnabled = process.env.HIDDEN_SUPERADMIN_ENABLED === "true";
 const ALLOWED_USER_ROLES = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
 type AllowedUserRole = (typeof ALLOWED_USER_ROLES)[number];
+
+/**
+ * Roles that can actually log in and therefore have a meaningful
+ * dashboard / export / register visibility setting. `pending` is excluded
+ * because the auth handler in server/routes/auth.ts rejects any login
+ * attempt where `user.approved` is false, and pending users are by
+ * definition unapproved — any toggle stored against the `pending` row
+ * could never take effect, so we don't surface it in the admin UI or
+ * accept it via the visibility PATCH endpoints.
+ */
+const FEATURE_VISIBILITY_ROLES = ["superadmin", "admin", "staff", "intern", "student"] as const;
 
 function parseAllowedUserRole(raw: unknown): AllowedUserRole | null {
   const role = String(raw ?? "").trim().toLowerCase();
@@ -200,6 +214,73 @@ async function logAdminAction(args: {
   );
 }
 
+
+/**
+ * Shared PATCH handler for AST/Hospital per-role register visibility.
+ *
+ * Three semantics worth flagging:
+ *  - Like dashboard/export H-11: only a Super Admin can mutate the
+ *    superadmin row, so a regular admin can't lock superadmin out of
+ *    registration.
+ *  - `registerVisible: null` clears the override → resolver falls back to
+ *    capability. Useful for "reset to default" without deleting the row.
+ *  - We write the per-role audit event into form_edit_audit_logs (same
+ *    pattern as export visibility) so super admins can trace toggle
+ *    changes from the existing audit UI.
+ */
+async function handleRegisterRolePatch(
+  req: import("express").Request,
+  res: import("express").Response,
+  scope: "ast" | "hospital",
+) {
+  const currentUser = (req as AuthenticatedRequest).currentUser;
+  const role = String(req.params.role ?? "").trim();
+  if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
+    return res.status(400).json({ message: "Unsupported role" });
+  }
+  if (role === "superadmin" && currentUser.role !== "superadmin") {
+    return res
+      .status(403)
+      .json({ message: "Only Super Admin can change Super Admin registration visibility" });
+  }
+  const raw = req.body?.registerVisible;
+  const valueForDb: number | null =
+    raw == null ? null : Boolean(raw) ? 1 : 0;
+  const column = scope === "ast" ? "ast_register_visible" : "hospital_register_visible";
+  // INSERT ... ON CONFLICT DO UPDATE rather than a plain UPDATE because the
+  // role row may not exist yet (we only seed the dashboard/export columns
+  // by default — see roleVisibilityDefaults in server/routes.ts).
+  await dbRun(
+    column === "ast_register_visible"
+      ? sql`INSERT INTO role_feature_visibility (role, ast_register_visible, updated_at)
+            VALUES (${role}, ${valueForDb}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              ast_register_visible = excluded.ast_register_visible,
+              updated_at = excluded.updated_at`
+      : sql`INSERT INTO role_feature_visibility (role, hospital_register_visible, updated_at)
+            VALUES (${role}, ${valueForDb}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              hospital_register_visible = excluded.hospital_register_visible,
+              updated_at = excluded.updated_at`,
+  );
+  await dbRun(
+    sql`INSERT INTO form_edit_audit_logs
+        (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+        VALUES (
+          ${currentUser.id},
+          ${currentUser.role},
+          ${scope === "ast" ? "set_ast_register_visibility_by_role" : "set_hospital_register_visibility_by_role"},
+          ${role},
+          ${null},
+          ${JSON.stringify({ registerVisible: valueForDb == null ? null : Boolean(valueForDb) })},
+          ${new Date().toISOString()}
+        )`,
+  );
+  return res.json({
+    role,
+    registerVisible: valueForDb == null ? null : Boolean(valueForDb),
+  });
+}
 
 function toPasswordResetRequest(row: PasswordResetRequestRow) {
   return {
@@ -421,15 +502,13 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (_req, res) => {
-      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
       const visibility = await Promise.all(
-        roles.map(async (role) => ({
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
           role,
           dashboardVisible: await isDashboardVisibleForRole(role),
         })),
       );
-      const items = visibility;
-      return res.json(items);
+      return res.json(visibility);
     },
   );
 
@@ -438,9 +517,8 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (_req, res) => {
-      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
       const visibility = await Promise.all(
-        roles.map(async (role) => ({
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
           role,
           dashboardVisible: await isVthDashboardVisibleForRole(role),
         })),
@@ -457,8 +535,7 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const role = String(req.params.role ?? "").trim();
       const dashboardVisible = Boolean(req.body?.dashboardVisible);
-      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
-      if (!allowedRoles.includes(role)) {
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
       }
       // Only a Super Admin can change Super Admin visibility. Otherwise a
@@ -501,8 +578,7 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const role = String(req.params.role ?? "").trim();
       const dashboardVisible = Boolean(req.body?.dashboardVisible);
-      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
-      if (!allowedRoles.includes(role)) {
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
       }
       if (role === "superadmin" && currentUser.role !== "superadmin") {
@@ -551,9 +627,8 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (_req, res) => {
-      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
       const visibility = await Promise.all(
-        roles.map(async (role) => ({
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
           role,
           exportVisible: await isAstExportVisibleForRole(role),
         })),
@@ -568,9 +643,8 @@ export function registerAdminRoutes(app: Express) {
     requireAuth,
     requireRole("superadmin", "admin"),
     async (_req, res) => {
-      const roles = ["superadmin", "admin", "staff", "intern", "student", "pending"] as const;
       const visibility = await Promise.all(
-        roles.map(async (role) => ({
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
           role,
           exportVisible: await isHospitalExportVisibleForRole(role),
         })),
@@ -594,8 +668,7 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const role = String(req.params.role ?? "").trim();
       const exportVisible = Boolean(req.body?.exportVisible);
-      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
-      if (!allowedRoles.includes(role)) {
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
       }
       if (role === "superadmin" && currentUser.role !== "superadmin") {
@@ -643,8 +716,7 @@ export function registerAdminRoutes(app: Express) {
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const role = String(req.params.role ?? "").trim();
       const exportVisible = Boolean(req.body?.exportVisible);
-      const allowedRoles = ["superadmin", "admin", "staff", "intern", "student", "pending"];
-      if (!allowedRoles.includes(role)) {
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
         return res.status(400).json({ message: "Unsupported role" });
       }
       if (role === "superadmin" && currentUser.role !== "superadmin") {
@@ -680,6 +752,138 @@ export function registerAdminRoutes(app: Express) {
             )`,
       );
       return res.json({ role, exportVisible });
+    },
+  );
+
+  /**
+   * Register-visibility endpoints — per-role admin toggles for "can register
+   * a new case". UNLIKE the export toggles, these can BOTH grant and revoke
+   * access (a missing/NULL row falls back to the role's intrinsic
+   * capability — see context.ts `resolveRegisterColumn`).
+   *
+   * Allowed roles intentionally exclude "superadmin" from the GRANT side
+   * because superadmin already inherits both create capabilities; the
+   * superadmin row is still listed in the response so the UI can show a
+   * locked-on toggle for parity, but the PATCH refuses to mutate it
+   * (mirrors the H-11 dashboard guard).
+   */
+  app.get(
+    "/api/admin/feature-visibility/ast-register",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const visibility = await Promise.all(
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
+          role,
+          registerVisible: await isAstRegisterVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  app.get(
+    "/api/admin/feature-visibility/hospital-register",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const visibility = await Promise.all(
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
+          role,
+          registerVisible: await isHospitalRegisterVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  app.patch(
+    "/api/admin/feature-visibility/ast-register/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      return handleRegisterRolePatch(req, res, "ast");
+    },
+  );
+
+  app.patch(
+    "/api/admin/feature-visibility/hospital-register/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      return handleRegisterRolePatch(req, res, "hospital");
+    },
+  );
+
+  /**
+   * List known student batches (distinct values from users.student_batch),
+   * paired with the current per-batch register toggle for the given scope.
+   * Used by the admin UI to render per-batch checkboxes under the
+   * student section of the per-module register card.
+   */
+  app.get(
+    "/api/admin/feature-visibility/register-batches",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const scopeRaw = String(req.query.scope ?? "").trim().toLowerCase();
+      const scope = scopeRaw === "hospital" ? "hospital" : "ast";
+      const batchRows = await dbAll<{ batch: number }>(
+        sql`SELECT DISTINCT student_batch AS batch
+            FROM users
+            WHERE student_batch IS NOT NULL
+            ORDER BY student_batch ASC`,
+      );
+      const batches = batchRows
+        .map((r) => Number(r.batch))
+        .filter((v) => Number.isFinite(v) && v > 0);
+      const items = await Promise.all(
+        batches.map(async (batch) => ({
+          batch,
+          registerVisible: await isBatchRegisterVisible(scope, batch),
+        })),
+      );
+      return res.json({ scope, items });
+    },
+  );
+
+  app.patch(
+    "/api/admin/feature-visibility/register-batches/:scope/:batch",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const scopeRaw = String(req.params.scope ?? "").trim().toLowerCase();
+      const scope = scopeRaw === "hospital" ? "hospital" : scopeRaw === "ast" ? "ast" : null;
+      if (!scope) {
+        return res.status(400).json({ message: "scope must be 'ast' or 'hospital'" });
+      }
+      const batch = Number.parseInt(String(req.params.batch ?? ""), 10);
+      if (!Number.isFinite(batch) || batch <= 0) {
+        return res.status(400).json({ message: "batch must be a positive integer" });
+      }
+      const registerVisible = Boolean(req.body?.registerVisible);
+      await dbRun(
+        sql`INSERT INTO student_batch_feature_visibility (scope, batch, register_visible, updated_at)
+            VALUES (${scope}, ${batch}, ${registerVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(scope, batch) DO UPDATE SET
+              register_visible = excluded.register_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${scope === "ast" ? "set_ast_register_visibility_by_batch" : "set_hospital_register_visibility_by_batch"},
+              ${`batch:${batch}`},
+              ${null},
+              ${JSON.stringify({ registerVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ scope, batch, registerVisible });
     },
   );
 

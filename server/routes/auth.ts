@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import {
   generateToken,
   resolveCapabilitiesForRole,
+  canCreateCaseInScope,
   isAstExportVisibleForRole,
   isDashboardVisibleForRole,
   isHospitalExportVisibleForRole,
@@ -285,6 +286,8 @@ export function registerAuthRoutes(app: Express) {
         vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
         astExportVisible: await isAstExportVisibleForRole(user.role),
         hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
+        astRegisterVisible: await canCreateCaseInScope(user, "ast"),
+        hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
@@ -334,6 +337,8 @@ export function registerAuthRoutes(app: Express) {
         vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
         astExportVisible: await isAstExportVisibleForRole(user.role),
         hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
+        astRegisterVisible: await canCreateCaseInScope(user, "ast"),
+        hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
         capabilities: resolveCapabilitiesForRole(user.role),
       },
     });
@@ -500,6 +505,8 @@ export function registerAuthRoutes(app: Express) {
       vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
       astExportVisible: await isAstExportVisibleForRole(user.role),
       hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
+      astRegisterVisible: await canCreateCaseInScope(user, "ast"),
+      hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
       capabilities: resolveCapabilitiesForRole(user.role),
     });
   });

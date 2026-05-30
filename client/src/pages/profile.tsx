@@ -128,13 +128,18 @@ export default function ProfilePage() {
     return "bg-muted text-muted-foreground border-border";
   }, [user?.role]);
 
+  // `canManageAstAdmin` is the `ast.admin` capability, which today gates
+  // the *entire* admin panel (it controls Hospital settings, user
+  // management, access control, audit logs, etc. — not just AST-specific
+  // tools). Label it accordingly so the profile page doesn't undersell
+  // what the capability actually unlocks.
   const capabilityItems = [
     { label: "Register VTH cases", allowed: canRegisterHospitalCase },
     { label: "View VTH case history", allowed: canViewHospitalCases },
     { label: "Register AST cases", allowed: canRegisterAstCase },
     { label: "View AST case history", allowed: canViewAstCases },
     { label: "Download AST reports", allowed: canDownloadAst },
-    { label: "Access AST admin settings", allowed: canManageAstAdmin },
+    { label: "Access admin settings", allowed: canManageAstAdmin },
   ];
 
   const passwordStrength = (() => {

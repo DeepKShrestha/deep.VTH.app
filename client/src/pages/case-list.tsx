@@ -118,7 +118,7 @@ export default function CaseList({
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showCaseLogs, setShowCaseLogs] = useState(false);
   const [caseLogsFilter, setCaseLogsFilter] = useState("");
-  const { isAdmin, isStudent, canRegisterAstCase, canRegisterHospitalCase } = useAuth();
+  const { isAdmin, canRegisterAstCase, canRegisterHospitalCase } = useAuth();
   const { toast } = useToast();
   const [path, setLocation] = useLocation();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -326,9 +326,14 @@ export default function CaseList({
   const caseLogScope: "hospital" | "ast" = isHospitalHistory ? "hospital" : "ast";
   const caseDetailBasePath =
     caseScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
+  // The legacy `&& !isStudent` on the AST branch was a redundant guard
+  // from when students could never register AST cases. With the admin
+  // toggle in place, `canRegisterAstCase` already encodes the right
+  // answer (role toggle + batch override), so the exclusion would only
+  // mis-hide the button for students whom an admin had granted access.
   const canCreateFromThisList = isHospitalHistory
     ? canRegisterHospitalCase
-    : canRegisterAstCase && !isStudent;
+    : canRegisterAstCase;
   const createCaseHref = isHospitalHistory ? "/new-case/register" : "/register";
   const emptyStateCaseLabel = isHospitalHistory ? "VTH case" : "AST case";
   type CaseChangeLog = {

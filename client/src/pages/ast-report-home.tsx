@@ -22,9 +22,13 @@ export default function AstReportHome() {
     canViewAstCases,
     canExportAst,
     canViewDashboard,
-    isStudent,
   } = useAuth();
-  const canRegisterAstFromHome = canRegisterAstCase && !isStudent;
+  // `canRegisterAstCase` already factors in the admin per-role toggle and
+  // the per-student-batch override (see client/src/lib/auth.tsx). The
+  // previous `&& !isStudent` exclusion silently blocked students whom an
+  // admin had granted AST registration to via the new toggle, so it had
+  // to go.
+  const canRegisterAstFromHome = canRegisterAstCase;
   const queryClient = useQueryClient();
   const prefetchCaseHistory = () => {
     void queryClient.prefetchQuery({

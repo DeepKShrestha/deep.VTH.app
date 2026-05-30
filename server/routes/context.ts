@@ -74,6 +74,10 @@ async function getCurrentUser(req: Request) {
     role: user.role,
     approved: user.approved,
     designation: user.designation,
+    // Carry studentBatch so per-batch register middleware doesn't have to
+    // re-query the users table on every POST /api/cases. Null for non-
+    // students; integer (e.g. 76) for students.
+    studentBatch: user.studentBatch ?? null,
   };
   rememberCurrentUser(token, snapshot);
   return snapshot;
@@ -198,6 +202,132 @@ export async function isAstExportVisibleForRole(role: string): Promise<boolean> 
 }
 
 /**
+ * Whether Hospital (VTH) module **registration** is allowed for the given
+ * role, per the admin toggle. UNLIKE the export toggle, the column is
+ * nullable: a missing/NULL value means "inherit the role's intrinsic
+ * capability" (`hospital.case.create`). Non-null is an explicit admin
+ * override. This is what lets admins grant AST registration to students
+ * (who don't have `ast.case.create`) without rewriting the capability
+ * matrix, and conversely lock down registration for a role that normally
+ * has it. The per-batch refinement is layered on top in
+ * `canCreateCaseInScope`.
+ */
+export async function isHospitalRegisterVisibleForRole(role: string): Promise<boolean> {
+  return resolveRegisterColumn(
+    role,
+    "hospital_register_visible",
+    "hospital.case.create",
+  );
+}
+
+/** AST twin of `isHospitalRegisterVisibleForRole`. */
+export async function isAstRegisterVisibleForRole(role: string): Promise<boolean> {
+  return resolveRegisterColumn(
+    role,
+    "ast_register_visible",
+    "ast.case.create",
+  );
+}
+
+async function resolveRegisterColumn(
+  role: string,
+  column: "ast_register_visible" | "hospital_register_visible",
+  fallbackCapability: PermissionCapability,
+): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    try {
+      const result = await getPgPool().query<{ value: boolean | number | null }>(
+        `SELECT ${column} AS value FROM role_feature_visibility WHERE role = $1 LIMIT 1`,
+        [role],
+      );
+      const row = result.rows[0];
+      if (!row || row.value == null) return hasCapability(role, fallbackCapability);
+      return Boolean(row.value);
+    } catch {
+      // Pre-migration DB without the column yet — behave as if there were
+      // no override row and let the capability matrix decide.
+      return hasCapability(role, fallbackCapability);
+    }
+  }
+  try {
+    const row = await dbGet<{ value: number | null }>(
+      column === "ast_register_visible"
+        ? sql`SELECT ast_register_visible AS value FROM role_feature_visibility WHERE role = ${role} LIMIT 1`
+        : sql`SELECT hospital_register_visible AS value FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row || row.value == null) return hasCapability(role, fallbackCapability);
+    return Boolean(row.value);
+  } catch {
+    return hasCapability(role, fallbackCapability);
+  }
+}
+
+/**
+ * Per-batch override for student registration. Returns:
+ *   - `true`  → explicit admin allow (or default if no row)
+ *   - `false` → explicit admin deny for this batch
+ *
+ * A missing row inherits the role-level decision (returns `true`). The role
+ * toggle is the master switch — this only ever narrows further. See
+ * migrations/0020_role_register_visibility.sql for the rationale.
+ */
+export async function isBatchRegisterVisible(
+  scope: "ast" | "hospital",
+  batch: number,
+): Promise<boolean> {
+  if (!Number.isFinite(batch) || batch <= 0) return true;
+  if (DB_PROVIDER === "postgres") {
+    try {
+      const result = await getPgPool().query<{ register_visible: boolean | number }>(
+        "SELECT register_visible FROM student_batch_feature_visibility WHERE scope = $1 AND batch = $2 LIMIT 1",
+        [scope, batch],
+      );
+      const row = result.rows[0];
+      if (!row) return true;
+      return Boolean(row.register_visible);
+    } catch {
+      return true;
+    }
+  }
+  try {
+    const row = await dbGet<{ register_visible: number }>(
+      sql`SELECT register_visible FROM student_batch_feature_visibility
+          WHERE scope = ${scope} AND batch = ${batch} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.register_visible);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Single source of truth for "can this user create a new case in this
+ * scope right now". Combines:
+ *   1. Per-role admin toggle (with capability fallback when null).
+ *   2. Per-batch override (students only; can narrow but not widen).
+ *
+ * Used by both the server route middlewares (canRegister / canRegisterHospital)
+ * AND by the auth payload so the client and server agree on what the
+ * "Register New Case" button does.
+ */
+export async function canCreateCaseInScope(
+  user: { role: string; studentBatch?: number | null },
+  scope: "ast" | "hospital",
+): Promise<boolean> {
+  const roleAllows =
+    scope === "ast"
+      ? await isAstRegisterVisibleForRole(user.role)
+      : await isHospitalRegisterVisibleForRole(user.role);
+  if (!roleAllows) return false;
+  if (user.role === "student" && typeof user.studentBatch === "number") {
+    return await isBatchRegisterVisible(scope, user.studentBatch);
+  }
+  return true;
+}
+
+/**
  * Whether Hospital (VTH) module **export / download** is allowed for the
  * given role. See `isAstExportVisibleForRole` for the full rationale — same
  * pattern, different column.
@@ -265,22 +395,54 @@ export function getPaginationParams(
   };
 }
 
+/**
+ * AST case-registration gate. Combines the per-role admin toggle (with
+ * capability fallback) AND the per-batch student override. This replaced
+ * the old "just check `hasCapability`" check so admins can grant or revoke
+ * AST registration without code changes — see
+ * `canCreateCaseInScope` and migrations/0020_role_register_visibility.sql.
+ */
 export function canRegister(req: Request, res: Response, next: NextFunction) {
   const user = (req as AuthenticatedRequest).currentUser;
   if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
-  if (hasCapability(user.role, "ast.case.create")) {
-    return next();
-  }
-  return res.status(403).json({ message: "Insufficient permissions for AST registration" });
+  void (async () => {
+    try {
+      const allowed = await canCreateCaseInScope(user, "ast");
+      if (!allowed) {
+        return res
+          .status(403)
+          .json({ message: "AST registration is disabled for your role or batch." });
+      }
+      next();
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to validate registration permissions",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })().catch(() => {});
 }
 
+/** Hospital twin of `canRegister`. */
 export function canRegisterHospital(req: Request, res: Response, next: NextFunction) {
   const user = (req as AuthenticatedRequest).currentUser;
   if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
-  if (hasCapability(user.role, "hospital.case.create")) {
-    return next();
-  }
-  return res.status(403).json({ message: "Insufficient permissions for hospital case registration" });
+  void (async () => {
+    try {
+      const allowed = await canCreateCaseInScope(user, "hospital");
+      if (!allowed) {
+        return res
+          .status(403)
+          .json({ message: "Hospital registration is disabled for your role or batch." });
+      }
+      next();
+    } catch (error) {
+      return res.status(500).json({
+        message: "Failed to validate registration permissions",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  })().catch(() => {});
 }
 
 export function canDownload(req: Request, res: Response, next: NextFunction) {

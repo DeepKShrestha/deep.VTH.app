@@ -181,6 +181,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
     ast_export_visible INTEGER NOT NULL DEFAULT 1,
     hospital_export_visible INTEGER NOT NULL DEFAULT 1,
+    ast_register_visible INTEGER,
+    hospital_register_visible INTEGER,
     updated_at TEXT NOT NULL
   )`);
   try {
@@ -209,6 +211,36 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
     );
   }
+  // Register-visibility toggles (per-module "can register a new case").
+  // See migrations/0020_role_register_visibility.sql for the rationale.
+  // We probe with a SELECT instead of relying on the CREATE TABLE column
+  // list because deployments that bootstrapped before this change already
+  // have the table but not the column.
+  // Register-visibility toggles are intentionally nullable: NULL means
+  // "inherit role capability", non-NULL means an admin explicitly chose a
+  // value. That semantic is what lets us *grant* AST registration to
+  // students without touching the capability matrix — see context.ts.
+  try {
+    await dbRun(sql`SELECT ast_register_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN ast_register_visible INTEGER`,
+    );
+  }
+  try {
+    await dbRun(sql`SELECT hospital_register_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_register_visible INTEGER`,
+    );
+  }
+  await dbRun(sql`CREATE TABLE IF NOT EXISTS student_batch_feature_visibility (
+    scope TEXT NOT NULL,
+    batch INTEGER NOT NULL,
+    register_visible INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (scope, batch)
+  )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
     notification_key TEXT PRIMARY KEY,
     is_read INTEGER NOT NULL DEFAULT 0,
@@ -612,6 +644,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
       ast_export_visible INTEGER NOT NULL DEFAULT 1,
       hospital_export_visible INTEGER NOT NULL DEFAULT 1,
+      ast_register_visible INTEGER,
+      hospital_register_visible INTEGER,
       updated_at TEXT NOT NULL
     )`);
     await dbRun(
@@ -623,6 +657,21 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(
       sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
     );
+    // Register-visibility toggles must be nullable so a missing/NULL value
+    // means "inherit role capability" — see context.ts resolver.
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS ast_register_visible INTEGER`,
+    );
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS hospital_register_visible INTEGER`,
+    );
+    await dbRun(sql`CREATE TABLE IF NOT EXISTS student_batch_feature_visibility (
+      scope TEXT NOT NULL,
+      batch INTEGER NOT NULL,
+      register_visible INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (scope, batch)
+    )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS notification_states (
       notification_key TEXT PRIMARY KEY,
       is_read INTEGER NOT NULL DEFAULT 0,

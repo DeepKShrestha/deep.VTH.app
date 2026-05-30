@@ -26,6 +26,16 @@ type AuthUser = SafeUser & {
   vthDashboardVisible?: boolean;
   astExportVisible?: boolean;
   hospitalExportVisible?: boolean;
+  /**
+   * Per-user resolved "can register a new case" flags, sent by the server
+   * on login/me. They already factor in the per-role admin toggle AND the
+   * per-batch student override, so the client can treat them as the
+   * authoritative gate without re-running the resolver. When missing
+   * (legacy session before the toggle shipped), the client falls back to
+   * the static capability matrix to preserve old behaviour.
+   */
+  astRegisterVisible?: boolean;
+  hospitalRegisterVisible?: boolean;
   capabilities?: PermissionCapability[];
 };
 
@@ -443,9 +453,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const capabilities = new Set(
     (user?.capabilities?.length ? user.capabilities : resolveCapabilitiesForRole(user?.role ?? "")),
   );
-  const canRegisterHospitalCase = capabilities.has("hospital.case.create");
+  // The "register a new case" capability has TWO layers from the server:
+  //   1. Static capability matrix (what the role intrinsically allows).
+  //   2. Admin-driven per-role + per-batch override carried on the user
+  //      payload as `astRegisterVisible` / `hospitalRegisterVisible`.
+  //
+  // If the server sent the flag (modern session) we trust it as the
+  // authoritative answer. If it's missing (older session that hasn't been
+  // refreshed since this feature shipped) we fall back to the capability
+  // matrix, which matches the historical behaviour and prevents a forced
+  // logout. The server still enforces both gates on POST so a stale client
+  // can never *actually* create a case it shouldn't.
+  const canRegisterHospitalCase =
+    user?.hospitalRegisterVisible ?? capabilities.has("hospital.case.create");
   const canViewHospitalCases = capabilities.has("hospital.case.view");
-  const canRegisterAstCase = capabilities.has("ast.case.create");
+  const canRegisterAstCase =
+    user?.astRegisterVisible ?? capabilities.has("ast.case.create");
   const canViewAstCases = capabilities.has("ast.case.view");
   const canDownloadAst = capabilities.has("ast.download");
   const canManageAstAdmin = capabilities.has("ast.admin");

@@ -141,7 +141,12 @@ describe("route context middleware", () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it("canRegister rejects student role", () => {
+  it("canRegister rejects student role by default (no admin override)", async () => {
+    // No override row in role_feature_visibility → resolver returns
+    // undefined → falls back to capability. Students don't have
+    // `ast.case.create` intrinsically, so this denies. Asynchronous now
+    // because the middleware does a DB lookup for the toggle column.
+    vi.mocked(dbGet).mockResolvedValueOnce(undefined);
     const req = {
       currentUser: { id: 2, role: "student", approved: true, designation: "student" },
     } as unknown as Request;
@@ -149,6 +154,75 @@ describe("route context middleware", () => {
     const next = vi.fn();
 
     canRegister(req, res, next);
+    await flushMicrotasks();
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("canRegister allows student when admin turns on AST register toggle", async () => {
+    // First dbGet — role override row exists with value=1 → resolver
+    // returns true regardless of the capability matrix.
+    // Second dbGet — no batch row → batch lookup returns true (inherit).
+    // Result: middleware calls next().
+    vi.mocked(dbGet)
+      .mockResolvedValueOnce({ value: 1 })
+      .mockResolvedValueOnce(undefined);
+    const req = {
+      currentUser: {
+        id: 9,
+        role: "student",
+        approved: true,
+        designation: "student",
+        studentBatch: 76,
+      },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canRegister(req, res, next);
+    await flushMicrotasks();
+
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("canRegister denies student when batch override is off, even with role toggle on", async () => {
+    vi.mocked(dbGet)
+      .mockResolvedValueOnce({ value: 1 })
+      .mockResolvedValueOnce({ register_visible: 0 });
+    const req = {
+      currentUser: {
+        id: 9,
+        role: "student",
+        approved: true,
+        designation: "student",
+        studentBatch: 76,
+      },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canRegister(req, res, next);
+    await flushMicrotasks();
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("canRegister denies staff when admin explicitly turns off AST register toggle", async () => {
+    // Explicit override = 0 takes precedence over the role's intrinsic
+    // `ast.case.create` capability. This is the "lock down a role" use
+    // case the toggle adds on top of the capability matrix.
+    vi.mocked(dbGet).mockResolvedValueOnce({ value: 0 });
+    const req = {
+      currentUser: { id: 3, role: "staff", approved: true, designation: "lab_assistant" },
+    } as unknown as Request;
+    const res = makeRes();
+    const next = vi.fn();
+
+    canRegister(req, res, next);
+    await flushMicrotasks();
 
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();

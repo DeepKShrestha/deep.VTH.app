@@ -39,7 +39,6 @@ function ProtectedRoutes() {
   const {
     user,
     isAdmin,
-    isStudent,
     canRegisterAstCase,
     canRegisterHospitalCase,
     canViewAstCases,
@@ -136,7 +135,15 @@ function ProtectedRoutes() {
             <Route path="/ast-report/form-editor" component={AstFormEditorPage} />
           )}
           <Route path="/profile" component={ProfilePage} />
-          {canRegisterAstCase && !isStudent && (
+          {/*
+            `canRegisterAstCase` already factors in the admin per-role
+            toggle and the per-student-batch override (see
+            client/src/lib/auth.tsx). The legacy `&& !isStudent` exclusion
+            was a redundant guard from when students could never register
+            AST cases — it now incorrectly blocked students whom an admin
+            had explicitly granted access via the toggle.
+          */}
+          {canRegisterAstCase && (
             <Route path="/register">
               <RegisterCase
                 createEndpoint="/api/ast/cases"

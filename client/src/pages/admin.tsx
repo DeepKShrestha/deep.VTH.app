@@ -338,6 +338,55 @@ export default function AdminPanel({
     queryKey: ["/api/admin/feature-visibility/hospital-export"],
     enabled: mode === "full",
   });
+  // Per-role admin toggles for "can register a new case" in each module.
+  // The shape mirrors the export endpoints so the same renderRoleRow helper
+  // can reuse the layout without an inheritance dance.
+  const { data: astRegisterVisibility = [] } = useQuery<
+    Array<{ role: string; registerVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/ast-register"],
+    enabled: mode === "full",
+  });
+  const { data: hospitalRegisterVisibility = [] } = useQuery<
+    Array<{ role: string; registerVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/hospital-register"],
+    enabled: mode === "full",
+  });
+  // Per-batch register overrides. The endpoint returns the list of known
+  // student batches (distinct values from users.student_batch) paired with
+  // their current toggle. Newly enrolled batches just inherit the role
+  // decision — they don't need a row here to work.
+  const { data: astBatchVisibilityResponse } = useQuery<{
+    scope: string;
+    items: Array<{ batch: number; registerVisible: boolean }>;
+  }>({
+    queryKey: ["/api/admin/feature-visibility/register-batches", "ast"],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        "/api/admin/feature-visibility/register-batches?scope=ast",
+      );
+      return res.json();
+    },
+    enabled: mode === "full",
+  });
+  const { data: hospitalBatchVisibilityResponse } = useQuery<{
+    scope: string;
+    items: Array<{ batch: number; registerVisible: boolean }>;
+  }>({
+    queryKey: ["/api/admin/feature-visibility/register-batches", "hospital"],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        "/api/admin/feature-visibility/register-batches?scope=hospital",
+      );
+      return res.json();
+    },
+    enabled: mode === "full",
+  });
+  const astBatchVisibility = astBatchVisibilityResponse?.items ?? [];
+  const hospitalBatchVisibility = hospitalBatchVisibilityResponse?.items ?? [];
   const { data: breedOptions = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["/api/admin/breed-options", selectedBreedSpecies],
     queryFn: async () => {
@@ -917,6 +966,110 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to update Hospital export visibility",
+        variant: "destructive",
+      });
+    },
+  });
+
+  /**
+   * Register-visibility mutations. Same shape as the export ones; they
+   * also push the resolved value into the local `currentUser` cache so
+   * the "Register a new case" button on the welcome page flips state
+   * instantly without waiting for a re-login. The server still has the
+   * final word on the actual POST.
+   */
+  const updateAstRegisterVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; registerVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/ast-register/${encodeURIComponent(payload.role)}`,
+        { registerVisible: payload.registerVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/ast-register"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          astRegisterVisible: vars.registerVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "AST registration visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update AST registration visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateHospitalRegisterVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; registerVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/hospital-register/${encodeURIComponent(payload.role)}`,
+        { registerVisible: payload.registerVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/hospital-register"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          hospitalRegisterVisible: vars.registerVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "Hospital registration visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update Hospital registration visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateAstBatchVisibilityMutation = useMutation({
+    mutationFn: async (payload: { batch: number; registerVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/register-batches/ast/${payload.batch}`,
+        { registerVisible: payload.registerVisible },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "ast"],
+      });
+      toast({ title: "AST batch override updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update AST batch override",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateHospitalBatchVisibilityMutation = useMutation({
+    mutationFn: async (payload: { batch: number; registerVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/register-batches/hospital/${payload.batch}`,
+        { registerVisible: payload.registerVisible },
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/register-batches", "hospital"],
+      });
+      toast({ title: "Hospital batch override updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update Hospital batch override",
         variant: "destructive",
       });
     },
@@ -1993,190 +2146,63 @@ export default function AdminPanel({
         </TabsContent>
 
         <TabsContent value="access-control" className="space-y-3 mt-4">
-          <Card data-editor-collapsible="true">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">AST Dashboard Visibility by Role</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Control which roles can access the AST dashboard page.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {dashboardVisibility.map((row) => (
-                  <div
-                    key={`dashboard-role-${row.role}`}
-                    className="flex items-center justify-between rounded border px-2.5 py-2"
-                  >
-                    <div className="text-xs font-medium truncate pr-2">
-                      {row.role === "superadmin"
-                        ? "Super Admin"
-                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={row.dashboardVisible ? "default" : "outline"}
-                      className="h-6 text-[11px] px-2"
-                      onClick={() =>
-                        updateDashboardVisibilityMutation.mutate({
-                          role: row.role,
-                          dashboardVisible: !row.dashboardVisible,
-                        })
-                      }
-                    >
-                      {row.dashboardVisible ? "On" : "Off"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {dashboardVisibility.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No role visibility settings found yet.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          <Card data-editor-collapsible="true">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">VTH Dashboard Visibility by Role</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Control which roles can access the VTH dashboard page.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {vthDashboardVisibility.map((row) => (
-                  <div
-                    key={`vth-dashboard-role-${row.role}`}
-                    className="flex items-center justify-between rounded border px-2.5 py-2"
-                  >
-                    <div className="text-xs font-medium truncate pr-2">
-                      {row.role === "superadmin"
-                        ? "Super Admin"
-                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={row.dashboardVisible ? "default" : "outline"}
-                      className="h-6 text-[11px] px-2"
-                      onClick={() =>
-                        updateVthDashboardVisibilityMutation.mutate({
-                          role: row.role,
-                          dashboardVisible: !row.dashboardVisible,
-                        })
-                      }
-                    >
-                      {row.dashboardVisible ? "On" : "Off"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {vthDashboardVisibility.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No role visibility settings found yet.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          <Card data-editor-collapsible="true">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">AST Export Visibility by Role</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Control which roles can access the AST export / download tools. This is an
-                extra gate on top of existing rules — staff/intern still need the
-                <code className="mx-1">ast.download</code> capability, and students still
-                need an approved download request.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {astExportVisibility.map((row) => (
-                  <div
-                    key={`ast-export-role-${row.role}`}
-                    className="flex items-center justify-between rounded border px-2.5 py-2"
-                  >
-                    <div className="text-xs font-medium truncate pr-2">
-                      {row.role === "superadmin"
-                        ? "Super Admin"
-                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={row.exportVisible ? "default" : "outline"}
-                      className="h-6 text-[11px] px-2"
-                      onClick={() =>
-                        updateAstExportVisibilityMutation.mutate({
-                          role: row.role,
-                          exportVisible: !row.exportVisible,
-                        })
-                      }
-                    >
-                      {row.exportVisible ? "On" : "Off"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {astExportVisibility.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No role visibility settings found yet.
-                </p>
-              )}
-              <p className="text-[11px] text-muted-foreground pt-1">
-                Note: users may need to log out and back in for a toggle change to take
-                effect on their current session.
-              </p>
-            </CardContent>
-          </Card>
-          <Card data-editor-collapsible="true">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Hospital Export Visibility by Role</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Control which roles can access the Hospital (VTH) export / download tools.
-                Acts as an extra gate on top of existing rules.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {hospitalExportVisibility.map((row) => (
-                  <div
-                    key={`hospital-export-role-${row.role}`}
-                    className="flex items-center justify-between rounded border px-2.5 py-2"
-                  >
-                    <div className="text-xs font-medium truncate pr-2">
-                      {row.role === "superadmin"
-                        ? "Super Admin"
-                        : row.role.charAt(0).toUpperCase() + row.role.slice(1)}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={row.exportVisible ? "default" : "outline"}
-                      className="h-6 text-[11px] px-2"
-                      onClick={() =>
-                        updateHospitalExportVisibilityMutation.mutate({
-                          role: row.role,
-                          exportVisible: !row.exportVisible,
-                        })
-                      }
-                    >
-                      {row.exportVisible ? "On" : "Off"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {hospitalExportVisibility.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No role visibility settings found yet.
-                </p>
-              )}
-              <p className="text-[11px] text-muted-foreground pt-1">
-                Note: users may need to log out and back in for a toggle change to take
-                effect on their current session.
-              </p>
-            </CardContent>
-          </Card>
+          {/*
+            The Access Control panel groups settings by MODULE (AST vs.
+            Hospital) rather than by FEATURE so an admin configuring one
+            module sees all of its toggles in one place. Each module card
+            contains three compact sub-sections (Dashboard, Export, Register)
+            laid out as label + horizontal role chips, and Register adds a
+            per-batch override row for the student role.
+
+            Each sub-section is a single inline row instead of a 3-column
+            grid of large cards so the whole panel fits on a single
+            laptop screen with room to spare — much denser than the
+            previous four-card stack while still being scannable.
+          */}
+          <ModuleAccessControlCard
+            title="AST Module"
+            description="Toggles below control AST module access for each role. Per-batch overrides under the Student row only further restrict — the role toggle is the master switch."
+            dashboard={dashboardVisibility}
+            onDashboardToggle={(role, dashboardVisible) =>
+              updateDashboardVisibilityMutation.mutate({ role, dashboardVisible })
+            }
+            export_={astExportVisibility}
+            onExportToggle={(role, exportVisible) =>
+              updateAstExportVisibilityMutation.mutate({ role, exportVisible })
+            }
+            register={astRegisterVisibility}
+            onRegisterToggle={(role, registerVisible) =>
+              updateAstRegisterVisibilityMutation.mutate({ role, registerVisible })
+            }
+            batches={astBatchVisibility}
+            onBatchToggle={(batch, registerVisible) =>
+              updateAstBatchVisibilityMutation.mutate({ batch, registerVisible })
+            }
+          />
+          <ModuleAccessControlCard
+            title="Hospital Module"
+            description="Toggles below control Hospital (VTH) module access for each role. Per-batch overrides under the Student row only further restrict — the role toggle is the master switch."
+            dashboard={vthDashboardVisibility}
+            onDashboardToggle={(role, dashboardVisible) =>
+              updateVthDashboardVisibilityMutation.mutate({ role, dashboardVisible })
+            }
+            export_={hospitalExportVisibility}
+            onExportToggle={(role, exportVisible) =>
+              updateHospitalExportVisibilityMutation.mutate({ role, exportVisible })
+            }
+            register={hospitalRegisterVisibility}
+            onRegisterToggle={(role, registerVisible) =>
+              updateHospitalRegisterVisibilityMutation.mutate({ role, registerVisible })
+            }
+            batches={hospitalBatchVisibility}
+            onBatchToggle={(batch, registerVisible) =>
+              updateHospitalBatchVisibilityMutation.mutate({ batch, registerVisible })
+            }
+          />
+          <p className="text-[11px] text-muted-foreground px-1">
+            Note: users may need to log out and back in for a toggle change
+            to take effect on their current session.
+          </p>
         </TabsContent>
 
         {mode === "full" && isSuperAdmin && (
@@ -3263,6 +3289,223 @@ function AdminAuditLogPanel() {
             </table>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Access Control — per-module card                                          */
+/* ------------------------------------------------------------------------ */
+
+const ACCESS_CONTROL_ROLE_ORDER = [
+  "superadmin",
+  "admin",
+  "staff",
+  "intern",
+  "student",
+  "pending",
+] as const;
+
+function roleDisplayLabel(role: string): string {
+  if (role === "superadmin") return "Super Admin";
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/**
+ * Single feature × roles row in the Access Control panel.
+ *
+ * Layout rationale:
+ *  - Pills are placed in a CSS GRID (not a flex-wrap) so a given role
+ *    occupies the same column across all three rows in a card
+ *    (Dashboard / Export / Register). Previously the row used flex-wrap
+ *    and each pill auto-sized to its "Role On" / "Role Off" text, so
+ *    columns drifted between rows and the panel was hard to scan.
+ *  - 2 columns on phones (so "Super Admin On" never truncates on a 320px
+ *    viewport) → 5 columns from `sm` upwards (one cell per visible role
+ *    after we removed `pending`). Each pill fills its cell with
+ *    `w-full`, locking horizontal alignment regardless of label width.
+ *  - The label column is fixed-width (`sm:w-24`) on desktop so the grid
+ *    starts at the same x across all rows. On mobile the label stacks
+ *    above the grid because there isn't room for both inline.
+ *  - The per-row description blurb was removed — it duplicated the
+ *    card-level explainer and pushed the grid down. The feature name
+ *    alone ("Dashboard", "Export", "Register") is self-evident.
+ *
+ * `data-testid` is preserved exactly so existing UI tests keep working.
+ */
+function AccessControlRoleRow({
+  label,
+  items,
+  onToggle,
+}: {
+  label: string;
+  items: Array<{ role: string; value: boolean }>;
+  onToggle: (role: string, next: boolean) => void;
+}) {
+  const sorted = [...items].sort((a, b) => {
+    const ai = ACCESS_CONTROL_ROLE_ORDER.indexOf(a.role as (typeof ACCESS_CONTROL_ROLE_ORDER)[number]);
+    const bi = ACCESS_CONTROL_ROLE_ORDER.indexOf(b.role as (typeof ACCESS_CONTROL_ROLE_ORDER)[number]);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+  return (
+    <div className="rounded border bg-muted/10 px-3 py-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <div className="sm:w-24 sm:shrink-0">
+          <div className="text-xs font-semibold">{label}</div>
+        </div>
+        {sorted.length === 0 ? (
+          <span className="text-[11px] text-muted-foreground italic">
+            No roles configured yet.
+          </span>
+        ) : (
+          <div className="grid w-full flex-1 grid-cols-2 gap-1.5 sm:grid-cols-5 sm:gap-2">
+            {sorted.map((row) => (
+              <button
+                key={row.role}
+                type="button"
+                onClick={() => onToggle(row.role, !row.value)}
+                className={`flex w-full items-center justify-between gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                  row.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground hover:bg-muted"
+                }`}
+                data-testid={`toggle-${label.toLowerCase().replace(/\s+/g, "-")}-${row.role}`}
+              >
+                <span className="truncate">{roleDisplayLabel(row.role)}</span>
+                <span className="shrink-0 opacity-80">{row.value ? "On" : "Off"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Per-batch override row, rendered nested under the Register section when
+ * the role-level Student toggle is ON. We intentionally hide this whole
+ * block when the role-level toggle is OFF — letting an admin click a
+ * "batch override" while the master switch is off would just silently
+ * have no effect, which is confusing. The empty-state copy nudges the
+ * admin towards the right place to look.
+ */
+function BatchOverrideRow({
+  studentRoleEnabled,
+  batches,
+  onToggle,
+}: {
+  studentRoleEnabled: boolean;
+  batches: Array<{ batch: number; registerVisible: boolean }>;
+  onToggle: (batch: number, next: boolean) => void;
+}) {
+  if (!studentRoleEnabled) {
+    return (
+      <div className="rounded border border-dashed bg-muted/5 px-3 py-2 text-[11px] text-muted-foreground">
+        Per-batch overrides are inactive while the role-level Student toggle
+        is off. Turn it on above to manage individual batches.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded border bg-muted/10 px-3 py-2">
+      {/*
+        Same outer shape as AccessControlRoleRow (label column + grid) so
+        the indentation lines up visually with the rows above. Batches use
+        a 2/4-column grid (instead of 2/5) so the pills are slightly wider
+        and don't look randomly spaced when there are only 2-3 batches.
+        Pills still align to a column grid so multiple batches show as a
+        neat row, not a ragged flex-wrap.
+      */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <div className="sm:w-24 sm:shrink-0">
+          <div className="text-xs font-semibold">Batches</div>
+          <div className="text-[10px] text-muted-foreground leading-snug">
+            New batches inherit automatically.
+          </div>
+        </div>
+        {batches.length === 0 ? (
+          <span className="text-[11px] text-muted-foreground italic">
+            No student batches found in the user list yet.
+          </span>
+        ) : (
+          <div className="grid w-full flex-1 grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2">
+            {batches.map((row) => (
+              <button
+                key={row.batch}
+                type="button"
+                onClick={() => onToggle(row.batch, !row.registerVisible)}
+                className={`flex w-full items-center justify-between gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                  row.registerVisible
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground hover:bg-muted"
+                }`}
+                data-testid={`toggle-batch-${row.batch}`}
+              >
+                <span className="truncate">{row.batch}th batch</span>
+                <span className="shrink-0 opacity-80">{row.registerVisible ? "On" : "Off"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ModuleAccessControlCard({
+  title,
+  description,
+  dashboard,
+  onDashboardToggle,
+  export_,
+  onExportToggle,
+  register,
+  onRegisterToggle,
+  batches,
+  onBatchToggle,
+}: {
+  title: string;
+  description: string;
+  dashboard: Array<{ role: string; dashboardVisible: boolean }>;
+  onDashboardToggle: (role: string, next: boolean) => void;
+  export_: Array<{ role: string; exportVisible: boolean }>;
+  onExportToggle: (role: string, next: boolean) => void;
+  register: Array<{ role: string; registerVisible: boolean }>;
+  onRegisterToggle: (role: string, next: boolean) => void;
+  batches: Array<{ batch: number; registerVisible: boolean }>;
+  onBatchToggle: (batch: number, next: boolean) => void;
+}) {
+  const studentRow = register.find((r) => r.role === "student");
+  const studentRoleEnabled = Boolean(studentRow?.registerVisible);
+  return (
+    <Card data-editor-collapsible="true">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{title}</CardTitle>
+        <p className="text-xs text-muted-foreground leading-snug">{description}</p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <AccessControlRoleRow
+          label="Dashboard"
+          items={dashboard.map((r) => ({ role: r.role, value: r.dashboardVisible }))}
+          onToggle={(role, next) => onDashboardToggle(role, next)}
+        />
+        <AccessControlRoleRow
+          label="Export"
+          items={export_.map((r) => ({ role: r.role, value: r.exportVisible }))}
+          onToggle={(role, next) => onExportToggle(role, next)}
+        />
+        <AccessControlRoleRow
+          label="Register"
+          items={register.map((r) => ({ role: r.role, value: r.registerVisible }))}
+          onToggle={(role, next) => onRegisterToggle(role, next)}
+        />
+        <BatchOverrideRow
+          studentRoleEnabled={studentRoleEnabled}
+          batches={batches}
+          onToggle={onBatchToggle}
+        />
       </CardContent>
     </Card>
   );
