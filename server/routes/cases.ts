@@ -35,6 +35,7 @@ import { MESSAGES } from "./messages";
 import { veterinarianRepo } from "../repos";
 import {
   ensureHospitalChiefComplaintDefinition,
+  ensureHospitalVaccinationDefinition,
   ensureHospitalTreatmentDefinition,
   ensureHospitalVeterinarianDefinition,
   ensureHospitalVitalsDefinition,
@@ -1162,6 +1163,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
       await ensureHospitalVeterinarianDefinition();
       await ensureHospitalVitalsDefinition();
       await ensureHospitalChiefComplaintDefinition();
+      await ensureHospitalVaccinationDefinition();
     }
     let sections = await dbAll<{ key: string; title: string; display_order: number }>(
       sql`SELECT key, title, display_order FROM form_sections
@@ -1983,15 +1985,22 @@ export function registerExportRoutes(app: Express) {
     }
     if (!(await consumeStudentExportApproval(req, res))) return;
 
-    const { dateFrom, dateTo } = req.query as {
+    const { dateFrom, dateTo, species } = req.query as {
       dateFrom?: string;
       dateTo?: string;
+      species?: string;
     };
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const viewer = caseViewerAccess(currentUser);
-    const casesData = await caseRepo.getCasesByDateRangeAndScope("ast", dateFrom, dateTo, viewer);
+    const casesData = await caseRepo.getCasesByDateRangeAndScope(
+      "ast",
+      dateFrom,
+      dateTo,
+      viewer,
+      species,
+    );
     console.info(
-      `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} matched=${casesData.length}`,
+      `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species?.trim() || "*"} matched=${casesData.length}`,
     );
     const format =
       typeof (req.query as { format?: string }).format === "string"
@@ -2007,6 +2016,7 @@ export function registerExportRoutes(app: Express) {
       dateFrom,
       dateTo,
       astLayout: format === "long" ? "long" : "wide",
+      species,
     }).replace(/\.csv$/i, "");
 
     res.setHeader("X-Export-Row-Count", String(rows.length));
@@ -2043,9 +2053,10 @@ export function registerExportRoutes(app: Express) {
       }
       if (!(await consumeStudentExportApproval(req, res))) return;
 
-      const { dateFrom, dateTo } = req.query as {
+      const { dateFrom, dateTo, species } = req.query as {
         dateFrom?: string;
         dateTo?: string;
+        species?: string;
       };
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const viewer = caseViewerAccess(currentUser);
@@ -2054,17 +2065,20 @@ export function registerExportRoutes(app: Express) {
         dateFrom,
         dateTo,
         viewer,
+        species,
       );
       console.info(
-        `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} matched=${casesData.length}`,
+        `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species?.trim() || "*"} matched=${casesData.length}`,
       );
       const rows = toHospitalExportRows(casesData);
       const columnOrder = hospitalExportColumnOrder(rows);
 
-      const baseName = buildExportCsvFilename({ scope: "hospital", dateFrom, dateTo }).replace(
-        /\.csv$/i,
-        "",
-      );
+      const baseName = buildExportCsvFilename({
+        scope: "hospital",
+        dateFrom,
+        dateTo,
+        species,
+      }).replace(/\.csv$/i, "");
 
       res.setHeader("X-Export-Row-Count", String(rows.length));
 

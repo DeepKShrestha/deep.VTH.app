@@ -13,6 +13,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd } from "@/lib/nepali-date";
 import {
@@ -45,6 +52,16 @@ export default function HospitalExportDataPage() {
   const [dateTo, setDateTo] = useState(today.bs);
   const [dateToAd, setDateToAd] = useState(today.ad);
   const [reason, setReason] = useState("");
+  const [speciesFilter, setSpeciesFilter] = useState("");
+
+  const { data: caseFilterOptions } = useQuery<{ species: string[] }>({
+    queryKey: ["/api/cases/filter-options", "hospital"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/cases/filter-options?scope=hospital");
+      return res.json();
+    },
+  });
+  const speciesFilterOptions = caseFilterOptions?.species ?? [];
 
   const { data: myRequests = [] } = useQuery<DownloadRequest[]>({
     queryKey: ["/api/download-requests/mine"],
@@ -111,6 +128,7 @@ export default function HospitalExportDataPage() {
     const params = new URLSearchParams();
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
+    if (speciesFilter.trim()) params.set("species", speciesFilter.trim());
     if (kind === "xlsx") params.set("output", "xlsx");
 
     const token = getAuthToken();
@@ -211,6 +229,28 @@ export default function HospitalExportDataPage() {
               label="To"
               testIdPrefix="hospital-export-to"
             />
+          </div>
+          <div className="mt-4 space-y-1.5">
+            <Label htmlFor="hospital-export-species">Species (optional)</Label>
+            <Select
+              value={speciesFilter.trim() || "__all__"}
+              onValueChange={(v) => setSpeciesFilter(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger id="hospital-export-species" data-testid="select-export-species">
+                <SelectValue placeholder="All species" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All species</SelectItem>
+                {speciesFilterOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Limit export to one species, or leave as all species.
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -8,7 +8,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { BS_MONTHS, bsToAd, isValidBsDate, getDaysInBsMonth, formatAdDate } from "@/lib/nepali-date";
+import {
+  BS_MONTHS,
+  BS_YEAR_MAX,
+  BS_YEAR_MIN,
+  bsToAd,
+  isValidBsDate,
+  getDaysInBsMonth,
+  formatAdDate,
+} from "@/lib/nepali-date";
 
 interface BsDateInputProps {
   value: string; // BS date YYYY-MM-DD
@@ -55,15 +63,22 @@ export function BsDateInput({ value, onChange, label = "Date (BS)", required, te
     }
   }, [year, month, day]);
 
-  // Generate year options (current BS year ± 5)
-  const currentBsYear = parseInt(value?.split("-")[0] || "2082");
+  // Full supported BS range (2070–2090 per calendar library) — not just ±5 around today.
   const yearOptions = useMemo(() => {
+    const selectedYear = year ? parseInt(year, 10) : NaN;
     const years: number[] = [];
-    for (let y = currentBsYear - 5; y <= currentBsYear + 5; y++) {
+    for (let y = BS_YEAR_MIN; y <= BS_YEAR_MAX; y++) {
       years.push(y);
     }
+    if (
+      Number.isFinite(selectedYear) &&
+      (selectedYear < BS_YEAR_MIN || selectedYear > BS_YEAR_MAX)
+    ) {
+      years.push(selectedYear);
+      years.sort((a, b) => a - b);
+    }
     return years;
-  }, [currentBsYear]);
+  }, [year]);
 
   // Generate day options
   const dayOptions = useMemo(() => {
@@ -87,7 +102,7 @@ export function BsDateInput({ value, onChange, label = "Date (BS)", required, te
           <SelectTrigger data-testid={`${testIdPrefix}-year`} className="h-9">
             <SelectValue placeholder="Year" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-60">
             {yearOptions.map((y) => (
               <SelectItem key={y} value={String(y)}>
                 {y}

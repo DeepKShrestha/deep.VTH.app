@@ -13,6 +13,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd } from "@/lib/nepali-date";
 import {
@@ -46,6 +53,16 @@ export default function ExportDataPage() {
   const [dateToAd, setDateToAd] = useState(today.ad);
   const [reason, setReason] = useState("");
   const [longAstCsv, setLongAstCsv] = useState(false);
+  const [speciesFilter, setSpeciesFilter] = useState("");
+
+  const { data: caseFilterOptions } = useQuery<{ species: string[] }>({
+    queryKey: ["/api/cases/filter-options", "ast"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/cases/filter-options?scope=ast");
+      return res.json();
+    },
+  });
+  const speciesFilterOptions = caseFilterOptions?.species ?? [];
 
   const { data: myRequests = [] } = useQuery<DownloadRequest[]>({
     queryKey: ["/api/download-requests/mine"],
@@ -117,6 +134,7 @@ export default function ExportDataPage() {
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
     if (longAstCsv) params.set("format", "long");
+    if (speciesFilter.trim()) params.set("species", speciesFilter.trim());
     if (kind === "xlsx") params.set("output", "xlsx");
 
     const token = getAuthToken();
@@ -225,6 +243,25 @@ export default function ExportDataPage() {
               label="To"
               testIdPrefix="export-to"
             />
+          </div>
+          <div className="mt-4 space-y-1.5">
+            <Label htmlFor="ast-export-species">Species (optional)</Label>
+            <Select
+              value={speciesFilter.trim() || "__all__"}
+              onValueChange={(v) => setSpeciesFilter(v === "__all__" ? "" : v)}
+            >
+              <SelectTrigger id="ast-export-species" data-testid="select-export-species">
+                <SelectValue placeholder="All species" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All species</SelectItem>
+                {speciesFilterOptions.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>

@@ -14,7 +14,13 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { ArrowLeft, Printer, Trash2, Sparkles } from "lucide-react";
+import { printCaseAttachmentImage } from "@/lib/print-case-attachment-image";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
+import {
+  buildVaccinationDisplayRows,
+  filterNonVaccinationCustomEntries,
+} from "@shared/hospital-vaccination-history";
+import { VaccinationHistorySummary } from "@/components/vaccination-history-fields";
 import { useAuth } from "@/lib/auth";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
@@ -270,15 +276,31 @@ export default function CaseView() {
         string,
         string | string[] | number
       >;
-      return Object.entries(parsed).filter(([, value]) =>
-        Array.isArray(value)
-          ? value.length > 0
-          : String(value ?? "").trim().length > 0,
+      return filterNonVaccinationCustomEntries(
+        Object.entries(parsed).filter(([, value]) =>
+          Array.isArray(value)
+            ? value.length > 0
+            : String(value ?? "").trim().length > 0,
+        ),
       );
     } catch {
       return [] as CustomEntry[];
     }
   }, [caseData?.customFields]);
+  const vaccinationDisplayRows = useMemo(() => {
+    if (!caseData?.customFields) return [];
+    try {
+      const parsed = JSON.parse(caseData.customFields) as Record<string, unknown>;
+      return buildVaccinationDisplayRows(
+        parsed,
+        caseData.species ?? "",
+        formatBsDate,
+        formatAdDate,
+      );
+    } catch {
+      return [];
+    }
+  }, [caseData?.customFields, caseData?.species]);
   const groupedHospitalCustomFields = useMemo(() => {
     const grouped: Record<
       HospitalSectionKey,
@@ -612,6 +634,17 @@ export default function CaseView() {
           </dl>
         </CardContent>
       </Card>
+
+      {isHospitalCase && vaccinationDisplayRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Vaccination History</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <VaccinationHistorySummary rows={vaccinationDisplayRows} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Sample Information */}
       {!isHospitalCase && (caseData.sampleType || caseData.sampleDate || caseData.cultureResult) && (
@@ -1033,7 +1066,7 @@ export default function CaseView() {
                       alt={caseAttachments[selectedAttachmentIndex].fileName}
                       className="max-h-[75vh] w-full object-contain bg-black/5 rounded"
                     />
-                    <div className="flex justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Button
                         type="button"
                         variant="outline"
@@ -1048,6 +1081,35 @@ export default function CaseView() {
                       >
                         Previous
                       </Button>
+                      {isHospitalCase ? (
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          className="gap-1.5"
+                          data-testid="button-print-attachment"
+                          onClick={() => {
+                            const att = caseAttachments[selectedAttachmentIndex];
+                            const result = printCaseAttachmentImage({
+                              imageUrl: att.url,
+                              caseNumber: caseData.caseNumber,
+                              caseDateBs: caseData.date,
+                              caseDateAd: caseData.dateAd,
+                            });
+                            if (!result.ok && result.reason === "popup_blocked") {
+                              toast({
+                                title: "Could not open print window",
+                                description:
+                                  "Allow pop-ups for this site, then try Print again.",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Print
+                        </Button>
+                      ) : null}
                       <Button
                         type="button"
                         variant="outline"

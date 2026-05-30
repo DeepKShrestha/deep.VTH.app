@@ -6,6 +6,10 @@ export const BS_MONTHS = [
   "Kartik", "Mangsir", "Poush", "Magh", "Falgun", "Chaitra",
 ] as const;
 
+import { BS_YEAR_MAX, BS_YEAR_MIN } from "@shared/nepali-date-bounds";
+
+export { BS_YEAR_MIN, BS_YEAR_MAX };
+
 /**
  * Get today's date in both BS and AD
  */
@@ -123,7 +127,7 @@ export function isValidBsDate(bsDate: string): boolean {
     if (isNaN(y) || isNaN(m) || isNaN(d)) return false;
     if (m < 1 || m > 12) return false;
     if (d < 1 || d > 32) return false;
-    if (y < 2000 || y > 2099) return false;
+    if (y < BS_YEAR_MIN || y > BS_YEAR_MAX) return false;
     // Try constructing — will throw if invalid
     const nd = new NepaliDate(y, m - 1, d);
     return nd.getYear() === y && nd.getMonth() === m - 1 && nd.getDate() === d;

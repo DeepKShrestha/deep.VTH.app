@@ -17,6 +17,7 @@ import { Microscope, UserPlus, CheckCircle, Eye, EyeOff } from "lucide-react";
 import { isPasswordPolicyMet, PASSWORD_MIN_LENGTH } from "@shared/schema";
 import { PasswordPolicyChecklist } from "@/components/password-policy-checklist";
 import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
+import { formatOrdinalBatch } from "@shared/ordinal-batch";
 
 const DESIGNATIONS = [
   { value: "veterinarian", label: "Veterinarian" },
@@ -24,28 +25,6 @@ const DESIGNATIONS = [
   { value: "intern", label: "Intern" },
   { value: "student", label: "Student" },
 ];
-
-function ordinalBatch(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return `${n}th batch`;
-  const s = String(n);
-  const lastChar = s.slice(-1);
-  const lastTwoChars = s.slice(-2);
-
-  if (lastTwoChars === "11" || lastTwoChars === "12" || lastTwoChars === "13") {
-    return `${n}th batch`;
-  }
-
-  switch (lastChar) {
-    case "1":
-      return `${n}st batch`;
-    case "2":
-      return `${n}nd batch`;
-    case "3":
-      return `${n}rd batch`;
-    default:
-      return `${n}th batch`;
-  }
-}
 
 export default function SignupPage() {
   const { signup } = useAuth();
@@ -300,7 +279,7 @@ export default function SignupPage() {
                         <SelectContent>
                           {batchOptions.map((b) => (
                             <SelectItem key={b} value={String(b)}>
-                              {ordinalBatch(b)}
+                              {formatOrdinalBatch(b)}
                             </SelectItem>
                           ))}
                         </SelectContent>

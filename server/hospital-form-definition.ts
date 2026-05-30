@@ -271,6 +271,82 @@ const HOSPITAL_CHIEF_COMPLAINT_SECTION = {
   displayOrder: 2400,
 } as const;
 
+const VACCINATION_OPTIONS_JSON = JSON.stringify(["Yes", "No", "Unknown"]);
+
+const HOSPITAL_VACCINATION_SECTION = {
+  key: "vaccination_history",
+  title: "Vaccination History",
+  displayOrder: 2550,
+} as const;
+
+const HOSPITAL_VACCINATION_QUESTIONS = [
+  { key: "canineRabies", label: "Rabies", displayOrder: 1000 },
+  { key: "canineDhppil", label: "DHPPiL", displayOrder: 2000 },
+  { key: "felineRabies", label: "Rabies", displayOrder: 3000 },
+  { key: "felineTricat", label: "TriCat", displayOrder: 4000 },
+] as const;
+
+export async function ensureHospitalVaccinationDefinition() {
+  const section = await dbGet<{ key: string }>(
+    sql`SELECT key FROM form_sections WHERE key = ${HOSPITAL_VACCINATION_SECTION.key}`,
+  );
+  if (!section) {
+    await dbRun(
+      sql`INSERT INTO form_sections (key, title, display_order, form_scope)
+          VALUES (
+            ${HOSPITAL_VACCINATION_SECTION.key},
+            ${HOSPITAL_VACCINATION_SECTION.title},
+            ${HOSPITAL_VACCINATION_SECTION.displayOrder},
+            ${"hospital"}
+          )`,
+    );
+  } else {
+    await dbRun(
+      sql`UPDATE form_sections
+          SET title = ${HOSPITAL_VACCINATION_SECTION.title},
+              form_scope = ${"hospital"}
+          WHERE key = ${HOSPITAL_VACCINATION_SECTION.key}`,
+    );
+  }
+
+  for (const q of HOSPITAL_VACCINATION_QUESTIONS) {
+    const existing = await dbGet<{ id: number }>(
+      sql`SELECT id FROM form_questions WHERE key = ${q.key}`,
+    );
+    if (!existing) {
+      await dbRun(
+        sql`INSERT INTO form_questions
+            (key, section_key, label, input_type, options_json, enabled, required, hide_label, display_order, is_builtin, created_at, form_scope)
+            VALUES (
+              ${q.key},
+              ${HOSPITAL_VACCINATION_SECTION.key},
+              ${q.label},
+              ${"singleSelect"},
+              ${VACCINATION_OPTIONS_JSON},
+              ${1},
+              ${0},
+              ${0},
+              ${q.displayOrder},
+              ${1},
+              ${new Date().toISOString()},
+              ${"hospital"}
+            )`,
+      );
+    } else {
+      await dbRun(
+        sql`UPDATE form_questions
+            SET section_key = ${HOSPITAL_VACCINATION_SECTION.key},
+                label = ${q.label},
+                input_type = ${"singleSelect"},
+                options_json = ${VACCINATION_OPTIONS_JSON},
+                is_builtin = ${1},
+                form_scope = ${"hospital"}
+            WHERE key = ${q.key}`,
+      );
+    }
+  }
+}
+
 export async function ensureHospitalChiefComplaintDefinition() {
   const section = await dbGet<{ key: string }>(
     sql`SELECT key FROM form_sections WHERE key = ${HOSPITAL_CHIEF_COMPLAINT_SECTION.key}`,

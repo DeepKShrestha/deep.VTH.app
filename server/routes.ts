@@ -904,6 +904,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     ["animal", "Animal Information", 2000],
     ["chief_complaint", "Chief Complaint", 2400],
     ["history", "History and Previous Medication", 2500],
+    ["vaccination_history", "Vaccination History", 2550],
     ["avian", "Avian Information", 2600],
     ["vitals", "Vitals", 2700],
     ["sample", "Sample Information", 3000],
@@ -947,6 +948,50 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     { key: "sex", sectionKey: "animal", label: "Sex", inputType: "sex", enabled: 1, required: 0, displayOrder: 5000, isBuiltin: 1, optionsJson: null },
     { key: "historyNotes", sectionKey: "history", label: "History", inputType: "textarea", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
     { key: "previousMedicationNotes", sectionKey: "history", label: "Previous Medication", inputType: "textarea", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
+    {
+      key: "canineRabies",
+      sectionKey: "vaccination_history",
+      label: "Rabies",
+      inputType: "singleSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 1000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify(["Yes", "No", "Unknown"]),
+    },
+    {
+      key: "canineDhppil",
+      sectionKey: "vaccination_history",
+      label: "DHPPiL",
+      inputType: "singleSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 2000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify(["Yes", "No", "Unknown"]),
+    },
+    {
+      key: "felineRabies",
+      sectionKey: "vaccination_history",
+      label: "Rabies",
+      inputType: "singleSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 3000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify(["Yes", "No", "Unknown"]),
+    },
+    {
+      key: "felineTricat",
+      sectionKey: "vaccination_history",
+      label: "TriCat",
+      inputType: "singleSelect",
+      enabled: 1,
+      required: 0,
+      displayOrder: 4000,
+      isBuiltin: 1,
+      optionsJson: JSON.stringify(["Yes", "No", "Unknown"]),
+    },
     { key: "flockSize", sectionKey: "avian", label: "Flock Size", inputType: "number", enabled: 1, required: 0, displayOrder: 1000, isBuiltin: 1, optionsJson: null },
     { key: "hatchery", sectionKey: "avian", label: "Hatchery", inputType: "text", enabled: 1, required: 0, displayOrder: 2000, isBuiltin: 1, optionsJson: null },
     { key: "feedSupplier", sectionKey: "avian", label: "Feed Supplier", inputType: "text", enabled: 1, required: 0, displayOrder: 3000, isBuiltin: 1, optionsJson: null },
@@ -1256,13 +1301,14 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   await dbRun(
     sql`UPDATE form_sections
         SET form_scope = 'hospital'
-        WHERE LOWER(key) IN ('history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
-           OR LOWER(REPLACE(REPLACE(REPLACE(title, ' ', ''), '-', ''), '_', '')) IN ('historyandpreviousmedication', 'avianinformation', 'vitals', 'testsuggested', 'testssuggested', 'diagnosis', 'treatmentprescription')`,
+        WHERE LOWER(key) IN ('history', 'vaccination_history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
+           OR LOWER(REPLACE(REPLACE(REPLACE(title, ' ', ''), '-', ''), '_', '')) IN ('historyandpreviousmedication', 'vaccinationhistory', 'avianinformation', 'vitals', 'testsuggested', 'testssuggested', 'diagnosis', 'treatmentprescription')`,
   );
   await dbRun(
     sql`UPDATE form_questions
         SET form_scope = 'hospital'
-        WHERE LOWER(section_key) IN ('history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
+        WHERE LOWER(section_key) IN ('history', 'vaccination_history', 'avian', 'vitals', 'tests_suggested', 'diagnosis', 'treatment')
+           OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) IN ('caninerabies', 'caninedhppil', 'felinerabies', 'felinetricat')
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%history%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%previousmedication%'
            OR LOWER(REPLACE(REPLACE(REPLACE(key, ' ', ''), '-', ''), '_', '')) LIKE '%testsuggested%'

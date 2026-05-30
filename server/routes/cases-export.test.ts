@@ -152,4 +152,53 @@ describe("cases export helpers", () => {
     expect(order).toContain("species (2)");
     expect(rows[0]["species (2)"]).toBe("from form");
   });
+
+  it("hospital export includes vet, treatment, and vaccination columns", () => {
+    const rows = toHospitalExportRows([
+      makeCase({
+        veterinarianName: "Dr. A",
+        veterinarianNvc: "123",
+        veterinarianDepartment: "Surgery",
+        treatmentDetails: JSON.stringify({
+          treatmentPrescription: {
+            medications: [
+              {
+                medication: "Amox",
+                dose: "10",
+                doseUnit: "mg",
+                route: "PO",
+                frequency: "BID",
+                duration: "5d",
+                note: "",
+              },
+            ],
+            generalInstructions: "Rest",
+          },
+        }),
+        customFields: JSON.stringify({
+          canineRabies: "Yes",
+          canineRabiesLastDate: "2082-01-15",
+          canineDhppil: "Unknown",
+        }),
+      }),
+    ]);
+    const order = hospitalExportColumnOrder(rows);
+    expect(order).toContain("attending_veterinarian_name");
+    expect(order).toContain("treatment_prescription");
+    expect(order).toContain("Rabies (vaccination status)");
+    expect(rows[0].attending_veterinarian_name).toBe("Dr. A");
+    expect(rows[0]["Rabies (vaccination status)"]).toBe("Yes");
+    expect(rows[0]["Rabies (last vaccination date BS)"]).toBe("2082-01-15");
+  });
+
+  it("buildExportCsvFilename includes species slug when set", () => {
+    expect(
+      buildExportCsvFilename({
+        scope: "hospital",
+        dateFrom: "2082-01-01",
+        dateTo: "2082-01-31",
+        species: "Canine",
+      }),
+    ).toBe("hospital-export_2082-01-01_to_2082-01-31_species-canine.csv");
+  });
 });

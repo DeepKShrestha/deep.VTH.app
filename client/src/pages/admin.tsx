@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
+import { formatOrdinalBatch } from "@shared/ordinal-batch";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -1149,7 +1150,7 @@ export default function AdminPanel({
       u.email,
       u.role,
       designationLabel(u.designation),
-      u.designation === "student" && u.studentBatch ? `${u.studentBatch}th` : "",
+      u.designation === "student" && u.studentBatch ? formatOrdinalBatch(u.studentBatch) : "",
       u.approved ? "Approved" : "Pending",
     ]);
     const csv = [headers, ...rows]
@@ -1444,7 +1445,7 @@ export default function AdminPanel({
                   <SelectItem value="all">All batches</SelectItem>
                   {availableStudentBatches.map((batch) => (
                     <SelectItem key={batch} value={String(batch)}>
-                      {batch}th batch
+                      {formatOrdinalBatch(batch)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1640,7 +1641,9 @@ export default function AdminPanel({
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         @{u.username} &middot; {designationLabel(u.designation)}
-                        {u.designation === "student" && u.studentBatch ? ` (${u.studentBatch}th batch)` : ""}
+                        {u.designation === "student" && u.studentBatch
+                          ? ` (${formatOrdinalBatch(u.studentBatch)})`
+                          : ""}
                         {" \u00b7 "}
                         {u.email}
                       </div>
@@ -3393,22 +3396,6 @@ function roleDisplayLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-function ordinalBatch(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return `${n}th batch`;
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 13) return `${n}th batch`;
-  switch (n % 10) {
-    case 1:
-      return `${n}st batch`;
-    case 2:
-      return `${n}nd batch`;
-    case 3:
-      return `${n}rd batch`;
-    default:
-      return `${n}th batch`;
-  }
-}
-
 /**
  * Single feature × roles row in the Access Control panel.
  *
@@ -3541,7 +3528,7 @@ function BatchOverrideRow({
                 }`}
                 data-testid={`toggle-batch-${row.batch}`}
               >
-                <span className="truncate">{row.batch}th batch</span>
+                <span className="truncate">{formatOrdinalBatch(row.batch)}</span>
                 <span className="shrink-0 opacity-80">{row.registerVisible ? "On" : "Off"}</span>
               </button>
             ))}
@@ -3689,7 +3676,7 @@ function AllowedBatchesCard({
                 className="inline-flex items-center gap-1 rounded-full border bg-background pl-2.5 pr-1 py-0.5 text-[11px]"
                 data-testid={`chip-allowed-batch-${b.batch}`}
               >
-                <span className="font-medium">{ordinalBatch(b.batch)}</span>
+                <span className="font-medium">{formatOrdinalBatch(b.batch)}</span>
                 <span className="text-muted-foreground">
                   {b.inUseByUsers === 0
                     ? "(no users)"
@@ -3699,7 +3686,7 @@ function AllowedBatchesCard({
                   type="button"
                   onClick={() => onRemove(b.batch)}
                   disabled={removing}
-                  aria-label={`Remove ${b.batch}th batch`}
+                  aria-label={`Remove ${formatOrdinalBatch(b.batch)}`}
                   className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                   data-testid={`button-remove-batch-${b.batch}`}
                 >

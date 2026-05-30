@@ -8,6 +8,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ArrowLeft, Printer } from "lucide-react";
 import { formatBsDate, formatAdDate } from "@/lib/nepali-date";
+import {
+  buildVaccinationDisplayRows,
+  filterNonVaccinationCustomEntries,
+} from "@shared/hospital-vaccination-history";
 import { buildHospitalTestsSuggestedLayout } from "@/lib/hospital-tests-suggested-layout";
 import { getAstToggleDefaults, getHospitalToggleDefaults } from "@/lib/module-toggle-defaults";
 import { formatVeterinarianDepartmentDisplay } from "@/lib/veterinarian-display";
@@ -272,15 +276,31 @@ export default function PrintReport() {
         string,
         string | string[] | number
       >;
-      return Object.entries(parsed).filter(([, value]) =>
-        Array.isArray(value)
-          ? value.length > 0
-          : String(value ?? "").trim().length > 0,
+      return filterNonVaccinationCustomEntries(
+        Object.entries(parsed).filter(([, value]) =>
+          Array.isArray(value)
+            ? value.length > 0
+            : String(value ?? "").trim().length > 0,
+        ),
       );
     } catch {
       return [] as CustomEntry[];
     }
   }, [caseData?.customFields]);
+  const vaccinationDisplayRows = useMemo(() => {
+    if (!caseData?.customFields) return [];
+    try {
+      const parsed = JSON.parse(caseData.customFields) as Record<string, unknown>;
+      return buildVaccinationDisplayRows(
+        parsed,
+        caseData.species ?? "",
+        formatBsDate,
+        formatAdDate,
+      );
+    } catch {
+      return [];
+    }
+  }, [caseData?.customFields, caseData?.species]);
   const groupedHospitalCustomFields = useMemo(() => {
     const grouped: Record<
       HospitalSectionKey,
@@ -494,6 +514,25 @@ export default function PrintReport() {
           {caseData.sex || "—"}
         </td>
       </tr>
+      {isHospitalCase && vaccinationDisplayRows.length > 0 && (
+        <tr className="border-b border-gray-400">
+          <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap align-top">
+            Vaccination
+          </td>
+          <td className="py-1 px-2 text-black leading-snug" colSpan={5}>
+            <span className="inline-flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] sm:text-[11px]">
+              {vaccinationDisplayRows.map((row) => (
+                <span key={row.vaccineLabel}>
+                  <span className="font-semibold">{row.vaccineLabel}:</span> {row.status}
+                  {row.lastDateDisplay ? (
+                    <span className="text-gray-600"> ({row.lastDateDisplay})</span>
+                  ) : null}
+                </span>
+              ))}
+            </span>
+          </td>
+        </tr>
+      )}
       {!isHospitalCase && caseData.sampleType && (
         <tr className="border-b border-gray-400">
           <td className="py-1 px-2 font-semibold bg-gray-50 text-black whitespace-nowrap">

@@ -1,4 +1,5 @@
 import NepaliDateImport from "nepali-date-converter";
+import { isBsYearInSupportedRange } from "@shared/nepali-date-bounds";
 
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
 
@@ -20,5 +21,5 @@ export function isLikelyBsYmd(value: string): boolean {
   const t = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
   const year = Number.parseInt(t.slice(0, 4), 10);
-  return year >= 2070 && year <= 2200;
+  return isBsYearInSupportedRange(year);
 }

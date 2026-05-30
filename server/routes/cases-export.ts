@@ -1,4 +1,5 @@
 import type { Case } from "@shared/schema";
+import { resolveHospitalExportFieldLabel } from "@shared/hospital-export-field-labels";
 
 type AstItem = {
   antibiotic?: string;
@@ -50,7 +51,18 @@ export const CORE_CASE_SNAKE_ORDER = [
   "last_updated_by_name",
 ] as const;
 
-const CORE_HEADER_RESERVED = new Set<string>(CORE_CASE_SNAKE_ORDER);
+/** Hospital-only columns (not in AST exports). */
+export const HOSPITAL_EXPORT_EXTRA_ORDER = [
+  "attending_veterinarian_name",
+  "attending_veterinarian_nvc",
+  "attending_veterinarian_department",
+  "treatment_prescription",
+] as const;
+
+const CORE_HEADER_RESERVED = new Set<string>([
+  ...CORE_CASE_SNAKE_ORDER,
+  ...HOSPITAL_EXPORT_EXTRA_ORDER,
+]);
 
 export type CoreCaseSnakeKey = (typeof CORE_CASE_SNAKE_ORDER)[number];
 
@@ -213,8 +225,54 @@ export function stringifyCustomValue(value: unknown): string {
  * CSV column header for a hospital custom field: use the JSON key (form label) as the header.
  * If it collides with a core column name or another custom label, append " (2)", " (3)", …
  */
+function hospitalCaseExtras(c: Case): Record<(typeof HOSPITAL_EXPORT_EXTRA_ORDER)[number], string> {
+  return {
+    attending_veterinarian_name: c.veterinarianName?.trim() ?? "",
+    attending_veterinarian_nvc: c.veterinarianNvc?.trim() ?? "",
+    attending_veterinarian_department: c.veterinarianDepartment?.trim() ?? "",
+    treatment_prescription: formatTreatmentDetailsExport(c.treatmentDetails),
+  };
+}
+
+function formatTreatmentDetailsExport(raw: string | null): string {
+  if (!raw?.trim()) return "";
+  try {
+    const parsed = JSON.parse(raw) as Record<
+      string,
+      { medications?: Array<Record<string, string>>; generalInstructions?: string }
+    >;
+    const chunks: string[] = [];
+    for (const block of Object.values(parsed)) {
+      if (!block || typeof block !== "object") continue;
+      if (Array.isArray(block.medications)) {
+        for (const med of block.medications) {
+          if (!med || typeof med !== "object") continue;
+          const line = [
+            med.medication,
+            med.dose,
+            med.doseUnit,
+            med.route,
+            med.frequency,
+            med.duration,
+            med.note,
+          ]
+            .map((x) => String(x ?? "").trim())
+            .filter(Boolean)
+            .join(" ");
+          if (line) chunks.push(line);
+        }
+      }
+      const gi = String(block.generalInstructions ?? "").trim();
+      if (gi) chunks.push(gi);
+    }
+    return chunks.join(" | ");
+  } catch {
+    return raw.trim();
+  }
+}
+
 function uniqueHospitalCustomHeader(originalKey: string, used: Set<string>): string {
-  const raw = (originalKey.replace(/\r?\n/g, " ").trim() || "Unnamed field").slice(0, 200);
+  const raw = resolveHospitalExportFieldLabel(originalKey).slice(0, 200);
   let candidate = raw;
   let n = 2;
   while (CORE_HEADER_RESERVED.has(candidate) || used.has(candidate)) {
@@ -247,7 +305,7 @@ export function toHospitalExportRows(casesData: Case[]): ExportRow[] {
   const labelToHeader = buildHospitalCustomHeaderMap(orderedLabels);
 
   return casesData.map((c, index) => {
-    const row: ExportRow = { ...caseCoreSnake(c) };
+    const row: ExportRow = { ...caseCoreSnake(c), ...hospitalCaseExtras(c) };
     const customFields = parsedCustomFields[index] ?? {};
     for (const label of orderedLabels) {
       const header = labelToHeader.get(label)!;
@@ -263,12 +321,17 @@ export function hospitalExportColumnOrder(rows: ExportRow[]): string[] {
   // even when no rows match. The previous behavior returned [], which
   // produced a completely empty download and made empty filters look
   // like a server failure to end users.
-  if (rows.length === 0) return [...CORE_CASE_SNAKE_ORDER];
-  const coreSet = new Set<string>(CORE_CASE_SNAKE_ORDER);
+  if (rows.length === 0) {
+    return [...CORE_CASE_SNAKE_ORDER, ...HOSPITAL_EXPORT_EXTRA_ORDER];
+  }
+  const fixedSet = new Set<string>([
+    ...CORE_CASE_SNAKE_ORDER,
+    ...HOSPITAL_EXPORT_EXTRA_ORDER,
+  ]);
   const dynamicKeys = Object.keys(rows[0])
-    .filter((k) => !coreSet.has(k))
+    .filter((k) => !fixedSet.has(k))
     .sort((a, b) => a.localeCompare(b));
-  return [...CORE_CASE_SNAKE_ORDER, ...dynamicKeys];
+  return [...CORE_CASE_SNAKE_ORDER, ...HOSPITAL_EXPORT_EXTRA_ORDER, ...dynamicKeys];
 }
 
 /**
@@ -279,11 +342,21 @@ export function buildExportCsvFilename(options: {
   dateFrom?: string;
   dateTo?: string;
   astLayout?: "wide" | "long";
+  species?: string;
 }): string {
   const sanitizeDate = (s: string | undefined) => {
     if (!s?.trim()) return "any";
     const t = s.trim().replace(/[^\d-]/g, "");
     return t.length > 0 ? t : "any";
+  };
+  const sanitizeSpecies = (s: string | undefined) => {
+    if (!s?.trim()) return "";
+    const t = s
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return t ? `_species-${t}` : "";
   };
   const layout =
     options.scope === "ast"
@@ -291,7 +364,7 @@ export function buildExportCsvFilename(options: {
         ? "-long"
         : "-wide"
       : "";
-  return `${options.scope}-export${layout}_${sanitizeDate(options.dateFrom)}_to_${sanitizeDate(options.dateTo)}.csv`;
+  return `${options.scope}-export${layout}_${sanitizeDate(options.dateFrom)}_to_${sanitizeDate(options.dateTo)}${sanitizeSpecies(options.species)}.csv`;
 }
 
 /**

@@ -84,6 +84,17 @@ import {
   shouldIncludeTestsSuggestedFormQuestion,
   type TestsSuggestedPanelDef,
 } from "@shared/hospital-tests-suggested";
+import {
+  appendVaccinationToCustomFields,
+  clearVaccinationFieldsForOtherSpecies,
+  emptyVaccinationFormState,
+  isCompanionVaccinationSpecies,
+  isVaccinationStatusKey,
+  isVaccinationStorageKey,
+  vaccinationFieldsForSpecies,
+  type VaccinationFormState,
+} from "@shared/hospital-vaccination-history";
+import { VaccinationHistoryFields } from "@/components/vaccination-history-fields";
 
 const DEFAULT_SPECIES_LIST = [
   "Bovine",
@@ -483,6 +494,7 @@ function isHospitalBuiltinQuestionKeyOrLabel(key: string, label?: string, sectio
     normalizedKey === "crt" ||
     normalizedKey.includes("capillaryrefilltime") ||
     normalizedKey.includes("dehydration") ||
+    isVaccinationStatusKey(key) ||
     normalizedKey.includes("diagnosis") ||
     normalizedLabel === "history" ||
     normalizedLabel === "previousmedication" ||
@@ -543,6 +555,7 @@ function isHospitalOnlySectionForAst(sectionKey: string, sectionTitle?: string):
     normalizedKey.includes("clinical") ||
     normalizedKey === "attending_veterinarian" ||
     normalizedKey === "avian" ||
+    normalizedKey === "vaccinationhistory" ||
     normalizedKey === "vitals" ||
     normalizedKey === "chief_complaint" ||
     normalizedKey === "chiefcomplaint" ||
@@ -850,6 +863,9 @@ export default function RegisterCase({
   const [avianFeedIntake, setAvianFeedIntake] = useState("");
   const [avianWaterIntake, setAvianWaterIntake] = useState("");
   const [avianMortality, setAvianMortality] = useState("");
+  const [vaccinationForm, setVaccinationForm] = useState<VaccinationFormState>(() =>
+    emptyVaccinationFormState(),
+  );
   const [testsSuggested, setTestsSuggested] = useState<string[]>([]);
   const [biopsyDetails, setBiopsyDetails] = useState("");
   const [cytologyDetails, setCytologyDetails] = useState("");
@@ -892,6 +908,11 @@ export default function RegisterCase({
 
   const effectiveSpecies = species === "Other" ? customSpecies.trim() : species;
   const isAvianSpecies = isAvianSpeciesName(effectiveSpecies);
+  const isCompanionSpecies = isCompanionVaccinationSpecies(effectiveSpecies);
+
+  useEffect(() => {
+    setVaccinationForm((prev) => clearVaccinationFieldsForOtherSpecies(prev, effectiveSpecies));
+  }, [effectiveSpecies]);
   const { data: breedOptionsData = [] } = useQuery<string[]>({
     queryKey: ["/api/breed-options", effectiveSpecies],
     queryFn: async () => {
@@ -977,6 +998,7 @@ export default function RegisterCase({
       avianFeedIntake: string;
       avianWaterIntake: string;
       avianMortality: string;
+      vaccinationForm: VaccinationFormState;
       testsSuggested: string[];
       biopsyDetails: string;
       cytologyDetails: string;
@@ -1053,6 +1075,7 @@ export default function RegisterCase({
     setAvianFeedIntake(f.avianFeedIntake ?? "");
     setAvianWaterIntake(f.avianWaterIntake ?? "");
     setAvianMortality(f.avianMortality ?? "");
+    setVaccinationForm(f.vaccinationForm ?? emptyVaccinationFormState());
     setTestsSuggested(f.testsSuggested ?? []);
     setBiopsyDetails(f.biopsyDetails ?? "");
     setCytologyDetails(f.cytologyDetails ?? "");
@@ -1137,6 +1160,7 @@ export default function RegisterCase({
             avianFeedIntake,
             avianWaterIntake,
             avianMortality,
+            vaccinationForm,
             testsSuggested,
             biopsyDetails,
             cytologyDetails,
@@ -1189,7 +1213,7 @@ export default function RegisterCase({
     temperatureValue, temperatureUnit, weightUnit,
     crtValue, dehydrationPercentage,
     avianFlockSize, avianHatchery, avianFeedSupplier,
-    avianFeedIntake, avianWaterIntake, avianMortality,
+    avianFeedIntake, avianWaterIntake, avianMortality, vaccinationForm,
     testsSuggested,
     biopsyDetails, cytologyDetails, xrayDetails, ultrasoundDetails,
     cultureDetails, remarks,
@@ -1660,6 +1684,14 @@ export default function RegisterCase({
       const normalizedSectionKey = normalizeQuestionId(q.sectionKey || "");
       if (normalizedSectionKey === "sample" || normalizedSectionKey === "ast") return true;
       if (normalizedSectionKey === "avian" && !isAvianSpecies) return true;
+      if (normalizedSectionKey === "vaccinationhistory" && !isCompanionSpecies) return true;
+      if (
+        normalizedSectionKey === "vaccinationhistory" &&
+        isVaccinationStatusKey(q.key) &&
+        !vaccinationFieldsForSpecies(effectiveSpecies).some((f) => f.statusKey === q.key)
+      ) {
+        return true;
+      }
       if (isAvianSpecies && shouldHideQuestionForAvian(q.key, q.label, q.sectionKey)) return true;
       return false;
     };
@@ -1764,6 +1796,12 @@ export default function RegisterCase({
           if (normalized === "waterintake") return !avianWaterIntake.trim();
           if (normalized === "mortality") return !avianMortality.trim();
         }
+        if (isVaccinationStatusKey(q.key) && isCompanionSpecies) {
+          const visible = vaccinationFieldsForSpecies(effectiveSpecies).some(
+            (f) => f.statusKey === q.key,
+          );
+          if (visible && !(vaccinationForm[q.key] ?? "").trim()) return true;
+        }
         if (normalized === "testssuggested") return testsSuggested.length === 0;
         const panelDef = testsPanelDefsByKey.get(q.key);
         if (panelDef && hasMainSuggestedTest(testsSuggested, panelDef.mainKeyword)) {
@@ -1827,6 +1865,7 @@ export default function RegisterCase({
 
     const normalizedCustomAnswers: Record<string, string | string[]> = {};
     for (const [key, value] of Object.entries(mergedCustomAnswers)) {
+      if (isVaccinationStorageKey(key)) continue;
       if (isAvianSpecies) {
         const q = questionByKey.get(key);
         if (q && shouldHideQuestionForAvian(q.key, q.label, q.sectionKey)) {
@@ -1900,6 +1939,12 @@ export default function RegisterCase({
           : toEnglishSentence(trimmed);
       }
     }
+    appendVaccinationToCustomFields(
+      normalizedCustomAnswers,
+      effectiveSpecies,
+      vaccinationForm,
+      (key) => isQuestionEnabled(key, true),
+    );
     if (isAvianSpecies) {
       if (isQuestionEnabled("flockSize") && avianFlockSize.trim()) {
         normalizedCustomAnswers.flockSize = toEnglishSentence(avianFlockSize.trim());
@@ -2165,6 +2210,73 @@ export default function RegisterCase({
         nextSections = [...nextSections, clinicalSection];
       }
     }
+    const hasVaccinationSection = nextSections.some((s) => s.key === "vaccination_history");
+    if (!hasVaccinationSection) {
+      const historyIdx = nextSections.findIndex((s) => {
+        const n = normalizeQuestionId(s.key || s.title || "");
+        return n === "history" || n.includes("historyandpreviousmedication");
+      });
+      const vaccinationSection = {
+        key: "vaccination_history",
+        title: "Vaccination History",
+        displayOrder: 2550,
+        questions: [
+          {
+            id: -1051,
+            key: "canineRabies",
+            label: "Rabies",
+            inputType: "singleSelect",
+            enabled: true,
+            required: false,
+            displayOrder: 1000,
+            isBuiltin: true,
+            options: ["Yes", "No", "Unknown"],
+          },
+          {
+            id: -1052,
+            key: "canineDhppil",
+            label: "DHPPiL",
+            inputType: "singleSelect",
+            enabled: true,
+            required: false,
+            displayOrder: 2000,
+            isBuiltin: true,
+            options: ["Yes", "No", "Unknown"],
+          },
+          {
+            id: -1053,
+            key: "felineRabies",
+            label: "Rabies",
+            inputType: "singleSelect",
+            enabled: true,
+            required: false,
+            displayOrder: 3000,
+            isBuiltin: true,
+            options: ["Yes", "No", "Unknown"],
+          },
+          {
+            id: -1054,
+            key: "felineTricat",
+            label: "TriCat",
+            inputType: "singleSelect",
+            enabled: true,
+            required: false,
+            displayOrder: 4000,
+            isBuiltin: true,
+            options: ["Yes", "No", "Unknown"],
+          },
+        ],
+      };
+      if (historyIdx >= 0) {
+        nextSections = [
+          ...nextSections.slice(0, historyIdx + 1),
+          vaccinationSection,
+          ...nextSections.slice(historyIdx + 1),
+        ];
+      } else {
+        nextSections = [...nextSections, vaccinationSection];
+      }
+    }
     const hasAvianSection = nextSections.some((s) => s.key === "avian");
     if (!hasAvianSection) {
       nextSections = [
@@ -2325,7 +2437,7 @@ export default function RegisterCase({
       ];
     }
     return nextSections;
-  }, [effectiveDefinition, mode, isAvianSpecies]);
+  }, [effectiveDefinition, mode, isAvianSpecies, isCompanionSpecies]);
   const sectionLevelQuestionKeyBySection = useMemo(() => {
     const map: Record<string, string> = {};
     for (const section of enabledSections) {
@@ -2347,10 +2459,11 @@ export default function RegisterCase({
     for (const s of enabledSections) {
       if (mode === "hospital" && s.key === "sample") continue;
       if (mode === "hospital" && s.key === "avian" && !isAvianSpecies) continue;
+      if (mode === "hospital" && s.key === "vaccination_history" && !isCompanionSpecies) continue;
       items.push({ id: `register-section-${s.key}`, label: s.title });
     }
     return items;
-  }, [enabledSections, mode, isAvianSpecies]);
+  }, [enabledSections, mode, isAvianSpecies, isCompanionSpecies]);
 
   const scrollToRegisterSection = (id: string) => {
     const el = document.getElementById(id);
@@ -3456,6 +3569,9 @@ export default function RegisterCase({
         {enabledSections.map((section) => {
           if (mode === "hospital" && section.key === "sample") return null;
           if (mode === "hospital" && section.key === "avian" && !isAvianSpecies) return null;
+          if (mode === "hospital" && section.key === "vaccination_history" && !isCompanionSpecies) {
+            return null;
+          }
           const configuredQuestions = section.questions ?? [];
           const hasTestsSuggestedMultiSelect = configuredQuestions.some(
             (q) => normalizeQuestionId(q.key) === "testssuggested" && q.inputType === "multiSelect",
@@ -3487,6 +3603,13 @@ export default function RegisterCase({
                 return false;
               }
             }
+            if (
+              normalizeQuestionId(section.key) === "vaccinationhistory" &&
+              isVaccinationStatusKey(q.key) &&
+              !vaccinationFieldsForSpecies(effectiveSpecies).some((f) => f.statusKey === q.key)
+            ) {
+              return false;
+            }
             return (
               (q.inputType === "treatment_prescription" ||
                 q.inputType === "hospital_veterinarian" ||
@@ -3502,7 +3625,17 @@ export default function RegisterCase({
           const sectionActsAsQuestion =
             section.key !== "ast" &&
             (configuredQuestions.length === 0 || hasDuplicateSectionQuestion);
-          if (!sectionActsAsQuestion && visibleQuestions.length === 0) return null;
+          if (
+            !sectionActsAsQuestion &&
+            visibleQuestions.length === 0 &&
+            !(
+              mode === "hospital" &&
+              section.key === "vaccination_history" &&
+              isCompanionSpecies
+            )
+          ) {
+            return null;
+          }
           if (section.key === "ast") {
             if (mode === "hospital") return null;
             const astQuestion = visibleQuestions.find((q) => q.key === "astResults");
@@ -3715,7 +3848,15 @@ export default function RegisterCase({
                 <CardTitle className="text-base">{section.title}</CardTitle>
           </CardHeader>
               <CardContent className="space-y-4">
-                {sectionActsAsQuestion ? (
+                {mode === "hospital" && section.key === "vaccination_history" ? (
+                  <VaccinationHistoryFields
+                    fields={vaccinationFieldsForSpecies(effectiveSpecies)}
+                    state={vaccinationForm}
+                    onChange={setVaccinationForm}
+                    isRequired={(key) => isQuestionRequired(key, false)}
+                    isEnabled={(key) => isQuestionEnabled(key, true)}
+                  />
+                ) : sectionActsAsQuestion ? (
                   <div className="space-y-1.5">
                     {isTestsSuggestedSectionTitle(section.title) && (
                       <div className="flex items-center justify-end gap-2">

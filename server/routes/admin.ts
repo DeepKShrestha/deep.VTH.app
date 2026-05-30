@@ -31,6 +31,7 @@ import {
 } from "../repos";
 import {
   ensureHospitalChiefComplaintDefinition,
+  ensureHospitalVaccinationDefinition,
   ensureHospitalTreatmentDefinition,
   ensureHospitalVeterinarianDefinition,
   ensureHospitalVitalsDefinition,
@@ -1014,6 +1015,7 @@ export function registerAdminRoutes(app: Express) {
         await ensureHospitalVeterinarianDefinition();
         await ensureHospitalVitalsDefinition();
         await ensureHospitalChiefComplaintDefinition();
+        await ensureHospitalVaccinationDefinition();
       }
       let sections = await dbAll<{ key: string; title: string; display_order: number }>(
         sql`SELECT key, title, display_order FROM form_sections

@@ -234,7 +234,10 @@ function buildBackupSummary(args: {
   lines.push("");
   lines.push("## Uploads");
   lines.push(
-    `Case attachments: ${args.uploads.fileCount} files, ${formatBytes(args.uploads.totalBytes)}`,
+    `Case attachments: ${args.uploads.fileCount} files, ${formatBytes(args.uploads.totalBytes)} (treatment photos; DB rows in case_attachments table)`,
+  );
+  lines.push(
+    "Hospital clinical JSON (custom_fields, treatment_details, form_questions) is in the database dump.",
   );
   lines.push(
     `Profile photos:   ${args.profiles.fileCount} files, ${formatBytes(args.profiles.totalBytes)}`,
@@ -283,6 +286,10 @@ Notes
   your live schedule and retention so you do not lose them by accident.
 - All users / cases / breakpoints / form layouts / audit logs / etc. ARE
   restored from the dump.
+- Hospital registration data in cases.custom_fields (history, vitals,
+  vaccination history, tests, etc.) and cases.treatment_details are
+  part of the database dump — not stored separately.
+- Case photo uploads under files/ are included when present.
 `;
 }
 
