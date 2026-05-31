@@ -50,6 +50,7 @@ import {
   astWideExportColumnOrder,
   buildExportCsvFilename,
   hospitalExportColumnOrder,
+  parseExportQueryFilters,
   rowsToCsv,
   toAstLongExportRows,
   toAstWideExportRows,
@@ -1985,11 +1986,9 @@ export function registerExportRoutes(app: Express) {
     }
     if (!(await consumeStudentExportApproval(req, res))) return;
 
-    const { dateFrom, dateTo, species } = req.query as {
-      dateFrom?: string;
-      dateTo?: string;
-      species?: string;
-    };
+    const { dateFrom, dateTo, species } = parseExportQueryFilters(
+      req.query as Record<string, unknown>,
+    );
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const viewer = caseViewerAccess(currentUser);
     const casesData = await caseRepo.getCasesByDateRangeAndScope(
@@ -2000,7 +1999,7 @@ export function registerExportRoutes(app: Express) {
       species,
     );
     console.info(
-      `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species?.trim() || "*"} matched=${casesData.length}`,
+      `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species || "*"} matched=${casesData.length}`,
     );
     const format =
       typeof (req.query as { format?: string }).format === "string"
@@ -2020,6 +2019,7 @@ export function registerExportRoutes(app: Express) {
     }).replace(/\.csv$/i, "");
 
     res.setHeader("X-Export-Row-Count", String(rows.length));
+    res.setHeader("Cache-Control", "no-store");
 
     if (output === "xlsx") {
       const { rowsToXlsxBuffer } = await import("./cases-export-xlsx");
@@ -2053,11 +2053,9 @@ export function registerExportRoutes(app: Express) {
       }
       if (!(await consumeStudentExportApproval(req, res))) return;
 
-      const { dateFrom, dateTo, species } = req.query as {
-        dateFrom?: string;
-        dateTo?: string;
-        species?: string;
-      };
+      const { dateFrom, dateTo, species } = parseExportQueryFilters(
+        req.query as Record<string, unknown>,
+      );
       const currentUser = (req as AuthenticatedRequest).currentUser;
       const viewer = caseViewerAccess(currentUser);
       const casesData = await caseRepo.getCasesByDateRangeAndScope(
@@ -2068,7 +2066,7 @@ export function registerExportRoutes(app: Express) {
         species,
       );
       console.info(
-        `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species?.trim() || "*"} matched=${casesData.length}`,
+        `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species || "*"} matched=${casesData.length}`,
       );
       const rows = toHospitalExportRows(casesData);
       const columnOrder = hospitalExportColumnOrder(rows);
@@ -2081,6 +2079,7 @@ export function registerExportRoutes(app: Express) {
       }).replace(/\.csv$/i, "");
 
       res.setHeader("X-Export-Row-Count", String(rows.length));
+      res.setHeader("Cache-Control", "no-store");
 
       if (output === "xlsx") {
         const { rowsToXlsxBuffer } = await import("./cases-export-xlsx");

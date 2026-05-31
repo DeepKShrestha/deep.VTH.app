@@ -4,6 +4,8 @@ import {
   astWideExportColumnOrder,
   buildExportCsvFilename,
   hospitalExportColumnOrder,
+  parseExportQueryFilters,
+  parseOptionalExportQueryString,
   rowsToCsv,
   toAstLongExportRows,
   toAstWideExportRows,
@@ -200,5 +202,26 @@ describe("cases export helpers", () => {
         species: "Canine",
       }),
     ).toBe("hospital-export_2082-01-01_to_2082-01-31_species-canine.csv");
+  });
+
+  it("parseOptionalExportQueryString trims and ignores empty values", () => {
+    expect(parseOptionalExportQueryString("  Canine  ")).toBe("Canine");
+    expect(parseOptionalExportQueryString("")).toBeUndefined();
+    expect(parseOptionalExportQueryString(["", "Feline"])).toBe("Feline");
+    expect(parseOptionalExportQueryString(undefined)).toBeUndefined();
+  });
+
+  it("parseExportQueryFilters normalizes date and species query params", () => {
+    expect(
+      parseExportQueryFilters({
+        dateFrom: " 2082-01-01 ",
+        dateTo: "2082-12-31",
+        species: "Canine",
+      }),
+    ).toEqual({
+      dateFrom: "2082-01-01",
+      dateTo: "2082-12-31",
+      species: "Canine",
+    });
   });
 });

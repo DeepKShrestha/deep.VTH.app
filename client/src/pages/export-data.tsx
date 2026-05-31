@@ -142,6 +142,7 @@ export default function ExportDataPage() {
     const fallback = kind === "xlsx" ? "ast-export.xlsx" : "ast-cases.csv";
 
     fetch(url, {
+      cache: "no-store",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(async (res) => {

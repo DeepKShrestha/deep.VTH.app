@@ -1,6 +1,32 @@
 import type { Case } from "@shared/schema";
 import { resolveHospitalExportFieldLabel } from "@shared/hospital-export-field-labels";
 
+/** Normalize Express query values (string | string[] | undefined) to a trimmed string. */
+export function parseOptionalExportQueryString(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const t = value.trim();
+    return t || undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item === "string" && item.trim()) return item.trim();
+    }
+  }
+  return undefined;
+}
+
+export function parseExportQueryFilters(query: Record<string, unknown>): {
+  dateFrom?: string;
+  dateTo?: string;
+  species?: string;
+} {
+  return {
+    dateFrom: parseOptionalExportQueryString(query.dateFrom),
+    dateTo: parseOptionalExportQueryString(query.dateTo),
+    species: parseOptionalExportQueryString(query.species),
+  };
+}
+
 type AstItem = {
   antibiotic?: string;
   symbol?: string;

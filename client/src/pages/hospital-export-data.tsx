@@ -136,6 +136,7 @@ export default function HospitalExportDataPage() {
     const fallback = kind === "xlsx" ? "hospital-export.xlsx" : "hospital-cases.csv";
 
     fetch(url, {
+      cache: "no-store",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(async (res) => {

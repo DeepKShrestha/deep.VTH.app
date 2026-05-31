@@ -327,19 +327,13 @@ export const caseRepo = {
     viewer?: CaseViewerAccess,
     species?: string,
   ): Promise<Case[]> {
-    const scopePrefix = `${getScopePrefix(scope)}-%`;
-    const v = viewerRowSql(viewer);
-    const parts: SQL[] = [
-      sql`case_number LIKE ${`${scopePrefix}%`}`,
-      v,
-    ];
-    if (dateFrom?.trim()) parts.push(sql`date >= ${dateFrom.trim()}`);
-    if (dateTo?.trim()) parts.push(sql`date <= ${dateTo.trim()}`);
-    const sp = species?.trim();
-    if (sp) {
-      parts.push(sql`LOWER(TRIM(species)) = LOWER(${sp})`);
-    }
-    const where = sql.join(parts, sql` AND `);
+    const filters: CaseListFilters = {
+      dateFrom: dateFrom?.trim() || undefined,
+      dateTo: dateTo?.trim() || undefined,
+      species: species?.trim() || undefined,
+    };
+    const baseWhere = buildCaseListWhere(scope, filters);
+    const where = sql.join([baseWhere, viewerRowSql(viewer)], sql` AND `);
     const rows = await dbAll<CaseRow>(
       sql`${CASE_SELECT} WHERE ${where} ORDER BY created_at DESC`,
     );

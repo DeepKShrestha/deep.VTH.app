@@ -33,6 +33,24 @@ describe("case list species filter", () => {
     expect(built).toContain("lower(trim(species)) = lower(?)");
     expect(built).toContain("case_number like");
   });
+
+  it("uses case-insensitive trimmed species match in export date-range queries", async () => {
+    await caseRepo.getCasesByDateRangeAndScope(
+      "hospital",
+      "2082-01-01",
+      "2082-12-31",
+      undefined,
+      "Canine",
+    );
+
+    const { dbAll } = await import("./db-query");
+    expect(vi.mocked(dbAll).mock.calls.length).toBeGreaterThan(0);
+    const built = sqlText(vi.mocked(dbAll).mock.calls[0]![0]).toLowerCase();
+    expect(built).toContain("lower(trim(species)) = lower(?)");
+    expect(built).toContain("date >=");
+    expect(built).toContain("date <=");
+    expect(built).toContain("case_number like");
+  });
 });
 
 describe("dashboard SQL filters (getCasesForDashboard)", () => {
