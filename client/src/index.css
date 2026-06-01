@@ -219,6 +219,41 @@
     white-space: normal;
   }
 
+  /*
+    Hospital clinical label/value tables: without explicit column widths,
+    `table-layout: fixed` in print splits columns 50/50 so values start
+    mid-page. Lock widths so PDF matches on-screen preview.
+  */
+  .print-a4 .print-clinical-field-table col.print-clinical-label-col {
+    width: 26% !important;
+  }
+
+  .print-a4 .print-clinical-field-table col.print-clinical-value-col {
+    width: 74% !important;
+  }
+
+  .print-a4 .print-clinical-field-table td.print-clinical-label {
+    width: 26% !important;
+    max-width: 26% !important;
+  }
+
+  .print-a4 .print-clinical-field-table td.print-clinical-value {
+    width: 74% !important;
+    text-align: left !important;
+  }
+
+  .print-a4 .print-tests-suggested-table col.print-tests-col-a {
+    width: 33.33% !important;
+  }
+
+  .print-a4 .print-tests-suggested-table col.print-tests-col-b {
+    width: 33.33% !important;
+  }
+
+  .print-a4 .print-tests-suggested-table col.print-tests-col-c {
+    width: 33.34% !important;
+  }
+
   .no-print {
     display: none !important;
   }
@@ -257,6 +292,48 @@
   padding-bottom: 0.08rem;
   padding-left: 0.22rem;
   padding-right: 0.22rem;
+}
+
+/* Screen + print: keep label/value columns narrow/wide (not 50/50 in PDF). */
+.print-a4 .print-clinical-field-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.print-a4 .print-clinical-field-table col.print-clinical-label-col {
+  width: 26%;
+}
+
+.print-a4 .print-clinical-field-table col.print-clinical-value-col {
+  width: 74%;
+}
+
+.print-a4 .print-clinical-field-table td.print-clinical-label {
+  width: 26%;
+  vertical-align: top;
+}
+
+.print-a4 .print-clinical-field-table td.print-clinical-value {
+  width: 74%;
+  text-align: left;
+  vertical-align: top;
+}
+
+.print-a4 .print-tests-suggested-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.print-a4 .print-tests-suggested-table col.print-tests-col-a {
+  width: 33.33%;
+}
+
+.print-a4 .print-tests-suggested-table col.print-tests-col-b {
+  width: 33.33%;
+}
+
+.print-a4 .print-tests-suggested-table col.print-tests-col-c {
+  width: 33.34%;
 }
 
 /*

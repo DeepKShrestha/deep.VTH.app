@@ -741,7 +741,15 @@ export default function PrintReport() {
                     const layoutRows = buildHospitalTestsSuggestedLayout(testFieldEntries);
                     let mainTestSerial = 0;
                     return (
-                      <table key={sectionKey} className="w-full table-fixed text-[10px] border border-gray-400 print-table">
+                      <table
+                        key={sectionKey}
+                        className="w-full table-fixed text-[10px] border border-gray-400 print-table print-tests-suggested-table"
+                      >
+                        <colgroup>
+                          <col className="print-tests-col-a" />
+                          <col className="print-tests-col-b" />
+                          <col className="print-tests-col-c" />
+                        </colgroup>
                         <thead>
                           <tr className="bg-gray-100">
                             <th
@@ -759,7 +767,7 @@ export default function PrintReport() {
                                 {row.cells.map((cell, j) => (
                                   <td
                                     key={`${sectionKey}-s-${idx}-${j}`}
-                                    className="py-0.5 px-2 align-top w-1/3 bg-gray-50 text-black font-semibold"
+                                    className="py-0.5 px-2 align-top bg-gray-50 text-black font-semibold"
                                   >
                                     {cell ? `${++mainTestSerial}. ${cell}` : "\u00a0"}
                                   </td>
@@ -767,7 +775,7 @@ export default function PrintReport() {
                               </tr>
                             ) : (
                               <tr key={`${sectionKey}-d-${idx}`} className="border-b border-gray-300">
-                                <td className="py-0.5 px-2 font-semibold bg-gray-50 text-black align-top w-[22%] whitespace-nowrap">
+                                <td className="py-0.5 px-2 font-semibold bg-gray-50 text-black align-top whitespace-nowrap">
                                   {`${++mainTestSerial}. ${row.label}`}
                                 </td>
                                 <td
@@ -805,7 +813,14 @@ export default function PrintReport() {
                     );
                   }
                   return (
-                    <table key={sectionKey} className="w-full text-[10px] border border-gray-400 print-table">
+                    <table
+                      key={sectionKey}
+                      className="w-full table-fixed text-[10px] border border-gray-400 print-table print-clinical-field-table"
+                    >
+                      <colgroup>
+                        <col className="print-clinical-label-col" />
+                        <col className="print-clinical-value-col" />
+                      </colgroup>
                       <thead>
                         <tr className="bg-gray-100">
                           <th className="py-1 px-2 text-left border border-gray-400 font-semibold text-black" colSpan={2}>
@@ -816,10 +831,10 @@ export default function PrintReport() {
                       <tbody>
                         {items.map((entry) => (
                           <tr key={`${sectionKey}-${entry.label}`} className="border-b border-gray-300 last:border-b-0">
-                            <td className="py-0.5 px-2 font-semibold bg-gray-50 w-[18%] text-black align-top">
+                            <td className="print-clinical-label py-0.5 px-2 font-semibold bg-gray-50 text-black align-top">
                               {entry.label}
                             </td>
-                            <td className="py-0.5 px-2 text-black whitespace-pre-wrap break-words">
+                            <td className="print-clinical-value py-0.5 px-2 text-black whitespace-pre-wrap break-words">
                               {Array.isArray(entry.value)
                                 ? entry.value.join(", ")
                                 : withClinicalUnit(entry.label, String(entry.value))}
