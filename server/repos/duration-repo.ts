@@ -22,7 +22,9 @@ const DURATION_SELECT = sql`SELECT id, name, value, created_at FROM durations`;
 
 export const durationRepo = {
   async getDurations(): Promise<Duration[]> {
-    const rows = await dbAll<DurationRow>(sql`${DURATION_SELECT} ORDER BY name ASC`);
+    const rows = await dbAll<DurationRow>(
+      sql`${DURATION_SELECT} ORDER BY COALESCE(display_order, id) ASC, id ASC`,
+    );
     return rows.map(toDuration);
   },
 
@@ -32,8 +34,12 @@ export const durationRepo = {
   },
 
   async createDuration(data: InsertDuration): Promise<Duration> {
+    const maxOrder = await dbGet<{ max: number }>(
+      sql`SELECT COALESCE(MAX(display_order), 0) as max FROM durations`,
+    );
+    const displayOrder = Number(maxOrder?.max ?? 0) + 1000;
     await dbRun(
-      sql`INSERT INTO durations (name, value) VALUES (${data.name}, ${data.value ?? null})`,
+      sql`INSERT INTO durations (name, value, display_order) VALUES (${data.name}, ${data.value ?? null}, ${displayOrder})`,
     );
     const created = await dbGet<DurationRow>(sql`${DURATION_SELECT} ORDER BY id DESC LIMIT 1`);
     if (!created) throw new Error("Failed to create duration");

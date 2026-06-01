@@ -8,6 +8,7 @@ export default function HospitalTreatmentDurationsPage() {
       createEndpoint="/api/admin/durations"
       updateEndpointBase="/api/admin/durations"
       deleteEndpointBase="/api/admin/durations"
+      moveEndpointBase="/api/admin/durations"
       createPlaceholder="Add duration/day option"
       searchPlaceholder="Search durations"
     />

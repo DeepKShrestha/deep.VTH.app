@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -81,7 +81,12 @@ export default function HospitalVeterinariansPage() {
     },
   });
 
-  const handleAdd = () => {
+  const canAdd =
+    Boolean(fullName.trim() && nvcRegistrationNumber.trim() && department.trim()) &&
+    !addMutation.isPending;
+
+  const handleAdd = (e?: FormEvent) => {
+    e?.preventDefault();
     if (!fullName.trim() || !nvcRegistrationNumber.trim() || !department.trim()) {
       toast({
         title: "All fields are required",
@@ -90,6 +95,7 @@ export default function HospitalVeterinariansPage() {
       });
       return;
     }
+    if (addMutation.isPending) return;
     addMutation.mutate();
   };
 
@@ -118,45 +124,42 @@ export default function HospitalVeterinariansPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Add veterinarian</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-1">
-            <div className="space-y-1.5">
-              <Label htmlFor="vet-name">Full name</Label>
-              <Input
-                id="vet-name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Veterinarian name"
-              />
+        <CardContent>
+          <form className="space-y-4" onSubmit={handleAdd}>
+            <div className="grid gap-3 sm:grid-cols-1">
+              <div className="space-y-1.5">
+                <Label htmlFor="vet-name">Full name</Label>
+                <Input
+                  id="vet-name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="Veterinarian name"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="vet-nvc">Nepal Veterinary Council registration no.</Label>
+                <Input
+                  id="vet-nvc"
+                  value={nvcRegistrationNumber}
+                  onChange={(e) => setNvcRegistrationNumber(e.target.value)}
+                  placeholder="NVC registration number"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="vet-dept">Department</Label>
+                <Input
+                  id="vet-dept"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  placeholder="Department"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="vet-nvc">Nepal Veterinary Council registration no.</Label>
-              <Input
-                id="vet-nvc"
-                value={nvcRegistrationNumber}
-                onChange={(e) => setNvcRegistrationNumber(e.target.value)}
-                placeholder="NVC registration number"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="vet-dept">Department</Label>
-              <Input
-                id="vet-dept"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                placeholder="Department"
-              />
-            </div>
-          </div>
-          <Button
-            type="button"
-            className="gap-1.5"
-            onClick={handleAdd}
-            disabled={addMutation.isPending}
-          >
-            <Plus className="w-4 h-4" />
-            {addMutation.isPending ? "Saving…" : "Add veterinarian"}
-          </Button>
+            <Button type="submit" className="gap-1.5" disabled={!canAdd}>
+              <Plus className="w-4 h-4" />
+              {addMutation.isPending ? "Saving…" : "Add veterinarian"}
+            </Button>
+          </form>
         </CardContent>
       </Card>
 

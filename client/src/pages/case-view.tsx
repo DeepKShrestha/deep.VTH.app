@@ -846,7 +846,7 @@ export default function CaseView() {
                                 {row.cells.map((cell, j) => (
                                   <td
                                     key={`ts-s-${idx}-${j}`}
-                                    className="px-2 py-1 align-top sm:w-1/3 bg-slate-50 text-slate-800 font-semibold max-sm:block max-sm:w-full max-sm:border-b max-sm:border-slate-200 max-sm:last:border-b-0"
+                                    className={`px-2 py-1 align-top sm:w-1/3 bg-slate-50 text-slate-800 font-semibold max-sm:block max-sm:w-full max-sm:border-b max-sm:border-slate-200 max-sm:last:border-b-0${cell ? "" : " max-sm:hidden sm:table-cell"}`}
                                   >
                                     {cell ? `${++mainTestSerial}. ${cell}` : "\u00a0"}
                                   </td>

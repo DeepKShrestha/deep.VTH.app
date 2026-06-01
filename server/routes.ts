@@ -414,10 +414,16 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     } catch {
       await dbRun(sql`ALTER TABLE dose_units ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
     }
+    try {
+      await dbRun(sql`SELECT display_order FROM durations LIMIT 1`);
+    } catch {
+      await dbRun(sql`ALTER TABLE durations ADD COLUMN display_order INTEGER NOT NULL DEFAULT 0`);
+    }
     await dbRun(sql`UPDATE medications SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE routes_of_administration SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE frequencies SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE dose_units SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE durations SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE routes_of_administration SET abbreviation = name WHERE COALESCE(abbreviation, '') = ''`);
     await dbRun(sql`UPDATE frequencies SET short_code = name WHERE COALESCE(short_code, '') = ''`);
     try {
@@ -762,10 +768,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     await dbRun(sql`ALTER TABLE routes_of_administration ADD COLUMN IF NOT EXISTS abbreviation TEXT NOT NULL DEFAULT ''`);
     await dbRun(sql`ALTER TABLE frequencies ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
     await dbRun(sql`ALTER TABLE dose_units ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
+    await dbRun(sql`ALTER TABLE durations ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`);
     await dbRun(sql`UPDATE medications SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE routes_of_administration SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE frequencies SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE dose_units SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
+    await dbRun(sql`UPDATE durations SET display_order = id * 1000 WHERE COALESCE(display_order, 0) = 0`);
     await dbRun(sql`UPDATE routes_of_administration SET abbreviation = name WHERE COALESCE(abbreviation, '') = ''`);
     await dbRun(sql`UPDATE frequencies SET short_code = name WHERE COALESCE(short_code, '') = ''`);
     await dbRun(sql`ALTER TABLE cases ADD COLUMN IF NOT EXISTS yearly_number INTEGER`);

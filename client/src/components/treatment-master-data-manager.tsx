@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowLeft, ArrowUp, Pencil, Plus, Save, Trash2, X } from "lucide-react";
@@ -160,6 +160,20 @@ export function TreatmentMasterDataManager({
     },
   });
 
+  const canAddNew =
+    (nameOptional || newName.trim()) &&
+    (!secondaryRequired || newSecondaryValue.trim()) &&
+    !addMutation.isPending;
+
+  const submitAddNew = (e: FormEvent) => {
+    e.preventDefault();
+    if (!canAddNew) return;
+    addMutation.mutate({
+      name: newName.trim(),
+      secondaryValue: newSecondaryValue.trim(),
+    });
+  };
+
   const updateMutation = useMutation({
     mutationFn: async ({
       id,
@@ -281,7 +295,7 @@ export function TreatmentMasterDataManager({
           <CardTitle className="text-base">Add New</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+          <form className="flex flex-col sm:flex-row gap-2 sm:items-end" onSubmit={submitAddNew}>
             <Input
               className="h-9"
               value={newName}
@@ -297,24 +311,15 @@ export function TreatmentMasterDataManager({
               />
             )}
             <Button
+              type="submit"
               size="sm"
               className="h-9 gap-1.5 shrink-0 sm:self-end"
-              onClick={() =>
-                addMutation.mutate({
-                  name: newName.trim(),
-                  secondaryValue: newSecondaryValue.trim(),
-                })
-              }
-              disabled={
-                (!nameOptional && !newName.trim()) ||
-                (secondaryRequired && !newSecondaryValue.trim()) ||
-                addMutation.isPending
-              }
+              disabled={!canAddNew}
             >
               <Plus className="w-3.5 h-3.5" />
               Add
             </Button>
-          </div>
+          </form>
         </CardContent>
       </Card>
 

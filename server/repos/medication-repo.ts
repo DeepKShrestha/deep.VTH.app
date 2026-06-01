@@ -40,6 +40,15 @@ export const medicationRepo = {
     return row ? toMedication(row) : undefined;
   },
 
+  async findMedicationByNormalizedName(name: string): Promise<Medication | undefined> {
+    const trimmed = name.trim();
+    if (!trimmed) return undefined;
+    const row = await dbGet<MedicationRow>(
+      sql`${MEDICATION_SELECT} WHERE LOWER(TRIM(name)) = LOWER(${trimmed}) LIMIT 1`,
+    );
+    return row ? toMedication(row) : undefined;
+  },
+
   async createMedication(data: InsertMedication): Promise<Medication> {
     const maxOrder = await dbGet<{ max: number }>(
       sql`SELECT COALESCE(MAX(display_order), 0) as max FROM medications`,

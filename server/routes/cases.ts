@@ -33,6 +33,7 @@ import {
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
 import { veterinarianRepo } from "../repos";
+import { ensureMedicationsFromTreatmentDetails } from "../ensure-treatment-catalog-medications";
 import {
   ensureHospitalChiefComplaintDefinition,
   ensureHospitalVaccinationDefinition,
@@ -1122,7 +1123,7 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     requireAnyCapability("ast.case.create", "hospital.case.create"),
     async (_req, res) => {
       const rows = await dbAll<{ name: string }>(
-        sql`SELECT name FROM durations ORDER BY name ASC`,
+        sql`SELECT name FROM durations ORDER BY COALESCE(display_order, id) ASC, id ASC`,
       );
       return res.json(rows.map((r) => r.name));
     },
@@ -1753,6 +1754,12 @@ export function registerCaseAndDownloadRoutes(app: Express) {
           )`,
     );
 
+    try {
+      await ensureMedicationsFromTreatmentDetails(newCase.treatmentDetails);
+    } catch (catalogError) {
+      console.warn("[catalog] medication sync after hospital case create failed", catalogError);
+    }
+
     res.status(201).json(newCase);
   });
 
@@ -1901,6 +1908,14 @@ export function registerCaseAndDownloadRoutes(app: Express) {
               ${new Date().toISOString()}
             )`,
       );
+    }
+
+    if (scope === "hospital") {
+      try {
+        await ensureMedicationsFromTreatmentDetails(updated.treatmentDetails);
+      } catch (catalogError) {
+        console.warn("[catalog] medication sync after hospital case update failed", catalogError);
+      }
     }
 
     res.json(updated);

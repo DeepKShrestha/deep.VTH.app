@@ -2537,6 +2537,55 @@ export function registerAdminRoutes(app: Express) {
     },
   );
 
+  app.patch(
+    "/api/admin/durations/:id/move",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const id = getIdParam(req);
+      const direction = String(req.body?.direction ?? "");
+      if (!["up", "down"].includes(direction)) {
+        return res.status(400).json({ message: "direction must be up or down" });
+      }
+      const current = await dbGet<{ id: number; display_order: number }>(
+        sql`SELECT id, display_order FROM durations WHERE id = ${id}`,
+      );
+      if (!current) return res.status(404).json({ message: "Duration not found" });
+      const neighbor =
+        direction === "up"
+          ? await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM durations
+                  WHERE display_order < ${current.display_order}
+                  ORDER BY display_order DESC, id DESC
+                  LIMIT 1`,
+            )
+          : await dbGet<{ id: number; display_order: number }>(
+              sql`SELECT id, display_order FROM durations
+                  WHERE display_order > ${current.display_order}
+                  ORDER BY display_order ASC, id ASC
+                  LIMIT 1`,
+            );
+      if (!neighbor) return res.json({ message: "No move possible" });
+      await dbRun(sql`UPDATE durations SET display_order = ${neighbor.display_order} WHERE id = ${current.id}`);
+      await dbRun(sql`UPDATE durations SET display_order = ${current.display_order} WHERE id = ${neighbor.id}`);
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"move_treatment_duration"},
+              ${String(id)},
+              ${JSON.stringify({ direction, from: current.display_order })},
+              ${JSON.stringify({ to: neighbor.display_order })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ message: "Duration reordered" });
+    },
+  );
+
   app.delete(
     "/api/admin/durations/:id",
     requireAuth,

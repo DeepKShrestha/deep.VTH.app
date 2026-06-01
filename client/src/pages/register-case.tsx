@@ -1458,6 +1458,9 @@ export default function RegisterCase({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/cases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/next-case-info"] });
+      if (mode === "hospital") {
+        queryClient.invalidateQueries({ queryKey: ["/api/medications"] });
+      }
       try {
         window.localStorage.removeItem(DRAFT_KEY);
       } catch {
