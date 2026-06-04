@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
@@ -260,6 +260,7 @@ export default function AdminPanel({
   const formScope = mode === "form-only" ? "ast" : "hospital";
 
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const editFormContainerRef = useRef<HTMLDivElement | null>(null);
   const [passwordResetNotes, setPasswordResetNotes] = useState<Record<number, string>>({});
   const [newSpeciesName, setNewSpeciesName] = useState("");
   const [selectedBreedSpecies, setSelectedBreedSpecies] = useState("");
@@ -661,6 +662,17 @@ export default function AdminPanel({
       });
     },
   });
+
+  useEffect(() => {
+    if (!editingUser) return;
+    const frame = requestAnimationFrame(() => {
+      editFormContainerRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingUser?.id]);
 
   const resolveDlMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
@@ -1766,6 +1778,23 @@ export default function AdminPanel({
                       <span className="text-xs text-muted-foreground italic">You</span>
                     )}
                   </div>
+
+                  {editingUser?.id === u.id && (
+                    <AdminUserEditForm
+                      ref={editFormContainerRef}
+                      user={u}
+                      editForm={editForm}
+                      setEditForm={setEditForm}
+                      isSaving={updateUserMutation.isPending}
+                      onCancel={() => setEditingUser(null)}
+                      onSave={() => {
+                        updateUserMutation.mutate({
+                          id: u.id,
+                          ...editForm,
+                        });
+                      }}
+                    />
+                  )}
                 </CardContent>
               </Card>
             ))
@@ -2994,107 +3023,127 @@ export default function AdminPanel({
           )}
         </TabsContent>
       </Tabs>
-      {editingUser && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-base">
-              Edit User – {editingUser.fullName} (ID: {editingUser.id})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-fullName">Full Name</Label>
-                <Input
-                  id="edit-fullName"
-                  value={editForm.fullName}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, fullName: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-username">Username</Label>
-                <Input
-                  id="edit-username"
-                  value={editForm.username}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, username: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-email">Email</Label>
-                <Input
-                  id="edit-email"
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, email: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-phone">Phone</Label>
-                <Input
-                  id="edit-phone"
-                  value={editForm.phone}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, phone: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-address">Address</Label>
-                <Input
-                  id="edit-address"
-                  value={editForm.address}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, address: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-designation">Designation</Label>
-                <Input
-                  id="edit-designation"
-                  value={editForm.designation}
-                  onChange={(e) =>
-                    setEditForm((f) => ({ ...f, designation: e.target.value }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setEditingUser(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="gap-2"
-                disabled={updateUserMutation.isPending}
-                onClick={() => {
-                  if (!editingUser) return;
-                  updateUserMutation.mutate({
-                    id: editingUser.id,
-                    ...editForm,
-                  });
-                }}
-              >
-                {updateUserMutation.isPending ? "Saving..." : "Save changes"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </StickyScrollPage>
   );
 }
+
+type AdminUserEditFormProps = {
+  user: AdminUser;
+  editForm: {
+    fullName: string;
+    address: string;
+    phone: string;
+    email: string;
+    username: string;
+    designation: string;
+  };
+  setEditForm: Dispatch<
+    SetStateAction<{
+      fullName: string;
+      address: string;
+      phone: string;
+      email: string;
+      username: string;
+      designation: string;
+    }>
+  >;
+  isSaving: boolean;
+  onCancel: () => void;
+  onSave: () => void;
+};
+
+const AdminUserEditForm = forwardRef<HTMLDivElement, AdminUserEditFormProps>(
+  function AdminUserEditForm(
+    { user, editForm, setEditForm, isSaving, onCancel, onSave },
+    ref,
+  ) {
+    const fieldId = (field: string) => `edit-${field}-${user.id}`;
+
+    return (
+      <div
+        ref={ref}
+        className="mt-3 pt-3 border-t border-border space-y-3"
+        data-testid={`edit-user-form-${user.id}`}
+      >
+        <p className="text-sm font-semibold">
+          Edit User – {user.fullName} (ID: {user.id})
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("fullName")}>Full Name</Label>
+            <Input
+              id={fieldId("fullName")}
+              value={editForm.fullName}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, fullName: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("username")}>Username</Label>
+            <Input
+              id={fieldId("username")}
+              value={editForm.username}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, username: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("email")}>Email</Label>
+            <Input
+              id={fieldId("email")}
+              type="email"
+              value={editForm.email}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, email: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("phone")}>Phone</Label>
+            <Input
+              id={fieldId("phone")}
+              value={editForm.phone}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, phone: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("address")}>Address</Label>
+            <Input
+              id={fieldId("address")}
+              value={editForm.address}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, address: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={fieldId("designation")}>Designation</Label>
+            <Input
+              id={fieldId("designation")}
+              value={editForm.designation}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, designation: e.target.value }))
+              }
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" className="gap-2" disabled={isSaving} onClick={onSave}>
+            {isSaving ? "Saving..." : "Save changes"}
+          </Button>
+        </div>
+      </div>
+    );
+  },
+);
 
 type AdminActionLogEntry = {
   id: number;
