@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
@@ -26,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
+import { DashboardChartCard } from "@/components/dashboard-chart-card";
 
 type KV = { name: string; value: number };
 type DashboardPayload = {
@@ -286,27 +286,157 @@ export default function DashboardPage({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Cases by species</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.animalProfile.casesBySpecies ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" fill="#0ea5e9" /></BarChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">Cases by breed</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.animalProfile.casesByBreed ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" fill="#8b5cf6" /></BarChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">Cases by sex</CardTitle></CardHeader><CardContent className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data?.animalProfile.casesBySex ?? []} dataKey="value" nameKey="name" outerRadius={80} label>{(data?.animalProfile.casesBySex ?? []).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">Cases by age group</CardTitle></CardHeader><CardContent className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.animalProfile.casesByAgeGroup ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" fill="#14b8a6" /></BarChart></ResponsiveContainer></CardContent></Card>
+            <DashboardChartCard title="Cases by species" height={280}>
+              <BarChart data={data?.animalProfile.casesBySpecies ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#0ea5e9" />
+              </BarChart>
+            </DashboardChartCard>
+            <DashboardChartCard title="Cases by breed" height={280}>
+              <BarChart data={data?.animalProfile.casesByBreed ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#8b5cf6" />
+              </BarChart>
+            </DashboardChartCard>
+            <DashboardChartCard title="Cases by sex" height={260}>
+              {({ scale, fullscreen }) => (
+                <PieChart>
+                  <Pie
+                    data={data?.animalProfile.casesBySex ?? []}
+                    dataKey="value"
+                    nameKey="name"
+                    outerRadius={Math.round(80 * scale)}
+                    label
+                  >
+                    {(data?.animalProfile.casesBySex ?? []).map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  {fullscreen ? <Legend /> : null}
+                </PieChart>
+              )}
+            </DashboardChartCard>
+            <DashboardChartCard title="Cases by age group" height={260}>
+              <BarChart data={data?.animalProfile.casesByAgeGroup ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#14b8a6" />
+              </BarChart>
+            </DashboardChartCard>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Samples by sample type</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.sampleProfile.samplesBySampleType ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" fill="#0ea5e9" /></BarChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">Samples over time</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={data?.sampleProfile.samplesOverTime ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Tooltip /><Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
+            <DashboardChartCard title="Samples by sample type" height={280}>
+              <BarChart data={data?.sampleProfile.samplesBySampleType ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#0ea5e9" />
+              </BarChart>
+            </DashboardChartCard>
+            <DashboardChartCard title="Samples over time" height={280}>
+              <LineChart data={data?.sampleProfile.samplesOverTime ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} />
+              </LineChart>
+            </DashboardChartCard>
           </div>
 
-          <Card><CardHeader><CardTitle className="text-base">Sample type trend over time</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.sampleProfile.sampleTypeTrend ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Tooltip />{sampleTypeKeys.map((k, i) => <Area key={k} dataKey={k} stackId="1" stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} />)}</AreaChart></ResponsiveContainer></CardContent></Card>
+          <DashboardChartCard title="Sample type trend over time" height={280}>
+            <AreaChart data={data?.sampleProfile.sampleTypeTrend ?? []}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+              <YAxis />
+              <Tooltip />
+              {sampleTypeKeys.map((k, i) => (
+                <Area
+                  key={k}
+                  dataKey={k}
+                  stackId="1"
+                  stroke={COLORS[i % COLORS.length]}
+                  fill={COLORS[i % COLORS.length]}
+                />
+              ))}
+            </AreaChart>
+          </DashboardChartCard>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Cases with / without organism</CardTitle></CardHeader><CardContent className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={[{ name: "With organism", value: data?.organismProfile.casesWithOrganism ?? 0 }, { name: "Without organism", value: data?.organismProfile.casesWithoutOrganism ?? 0 }]} dataKey="value" nameKey="name" outerRadius={80} label><Cell fill="#16a34a" /><Cell fill="#64748b" /></Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">Top organisms isolated</CardTitle></CardHeader><CardContent className="h-[260px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.organismProfile.topOrganismsIsolated ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="value" fill="#f59e0b" /></BarChart></ResponsiveContainer></CardContent></Card>
+            <DashboardChartCard title="Cases with / without organism" height={260}>
+              {({ scale, fullscreen }) => (
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: "With organism", value: data?.organismProfile.casesWithOrganism ?? 0 },
+                      { name: "Without organism", value: data?.organismProfile.casesWithoutOrganism ?? 0 },
+                    ]}
+                    dataKey="value"
+                    nameKey="name"
+                    outerRadius={Math.round(80 * scale)}
+                    label
+                  >
+                    <Cell fill="#16a34a" />
+                    <Cell fill="#64748b" />
+                  </Pie>
+                  <Tooltip />
+                  {fullscreen ? <Legend /> : null}
+                </PieChart>
+              )}
+            </DashboardChartCard>
+            <DashboardChartCard title="Top organisms isolated" height={260}>
+              <BarChart data={data?.organismProfile.topOrganismsIsolated ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#f59e0b" />
+              </BarChart>
+            </DashboardChartCard>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Overall S / I / R distribution</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data?.antibioticProfile.overallSirDistribution ?? []} dataKey="value" nameKey="name" outerRadius={90} label><Cell fill="#16a34a" /><Cell fill="#f59e0b" /><Cell fill="#ef4444" /></Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">S / I / R by antibiotic</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.antibioticProfile.sirByAntibiotic ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Bar dataKey="susceptible" stackId="sir" fill="#16a34a" /><Bar dataKey="intermediate" stackId="sir" fill="#f59e0b" /><Bar dataKey="resistant" stackId="sir" fill="#ef4444" /></BarChart></ResponsiveContainer></CardContent></Card>
+            <DashboardChartCard title="Overall S / I / R distribution" height={280}>
+              {({ scale, fullscreen }) => (
+                <PieChart>
+                  <Pie
+                    data={data?.antibioticProfile.overallSirDistribution ?? []}
+                    dataKey="value"
+                    nameKey="name"
+                    outerRadius={Math.round(90 * scale)}
+                    label
+                  >
+                    <Cell fill="#16a34a" />
+                    <Cell fill="#f59e0b" />
+                    <Cell fill="#ef4444" />
+                  </Pie>
+                  <Tooltip />
+                  {fullscreen ? <Legend /> : null}
+                </PieChart>
+              )}
+            </DashboardChartCard>
+            <DashboardChartCard title="S / I / R by antibiotic" height={280}>
+              <BarChart data={data?.antibioticProfile.sirByAntibiotic ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="susceptible" stackId="sir" fill="#16a34a" />
+                <Bar dataKey="intermediate" stackId="sir" fill="#f59e0b" />
+                <Bar dataKey="resistant" stackId="sir" fill="#ef4444" />
+              </BarChart>
+            </DashboardChartCard>
           </div>
 
           <Card>
@@ -331,8 +461,26 @@ export default function DashboardPage({
           </Card>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Total cases over time</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={data?.trends.totalCasesOverTime ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Tooltip /><Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} /></LineChart></ResponsiveContainer></CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base">S / I / R trend</CardTitle></CardHeader><CardContent className="h-[280px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={data?.trends.sirTrend ?? []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis /><Tooltip /><Bar dataKey="susceptible" stackId="sir" fill="#16a34a" /><Bar dataKey="intermediate" stackId="sir" fill="#f59e0b" /><Bar dataKey="resistant" stackId="sir" fill="#ef4444" /></BarChart></ResponsiveContainer></CardContent></Card>
+            <DashboardChartCard title="Total cases over time" height={280}>
+              <LineChart data={data?.trends.totalCasesOverTime ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Line type="monotone" dataKey="value" stroke="#0ea5e9" dot={false} />
+              </LineChart>
+            </DashboardChartCard>
+            <DashboardChartCard title="S / I / R trend" height={280}>
+              <BarChart data={data?.trends.sirTrend ?? []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="susceptible" stackId="sir" fill="#16a34a" />
+                <Bar dataKey="intermediate" stackId="sir" fill="#f59e0b" />
+                <Bar dataKey="resistant" stackId="sir" fill="#ef4444" />
+              </BarChart>
+            </DashboardChartCard>
           </div>
 
           <Card>

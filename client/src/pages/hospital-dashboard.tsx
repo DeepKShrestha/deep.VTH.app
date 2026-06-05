@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
@@ -58,6 +57,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
+import { DashboardChartCard, type DashboardChartChildren } from "@/components/dashboard-chart-card";
 import { cn } from "@/lib/utils";
 
 // ---- Types (mirror server/hospital-dashboard-analytics.ts payload) ---------
@@ -600,31 +600,15 @@ function ChartCard({
   hint,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: DashboardChartChildren;
   height?: number;
   empty?: boolean;
   hint?: string;
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">{title}</CardTitle>
-        {hint ? (
-          <p className="text-[11px] text-muted-foreground">{hint}</p>
-        ) : null}
-      </CardHeader>
-      <CardContent style={{ height }}>
-        {empty ? (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-            No data for the current filters.
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            {children as React.ReactElement}
-          </ResponsiveContainer>
-        )}
-      </CardContent>
-    </Card>
+    <DashboardChartCard title={title} height={height} empty={empty} hint={hint}>
+      {children}
+    </DashboardChartCard>
   );
 }
 
@@ -1301,20 +1285,23 @@ export default function HospitalDashboardPage() {
                 empty={data.therapeutics.medicationClassMix.length === 0}
                 height={240}
               >
-                <PieChart>
-                  <Pie
-                    data={data.therapeutics.medicationClassMix.slice(0, 6)}
-                    dataKey="value"
-                    nameKey="name"
-                    outerRadius={80}
-                    label={(entry) => `${entry.name}`}
-                  >
-                    {data.therapeutics.medicationClassMix.slice(0, 6).map((_, i) => (
-                      <Cell key={i} fill={PIE_PALETTE[i % PIE_PALETTE.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
+                {({ fullscreen, scale }) => (
+                  <PieChart>
+                    <Pie
+                      data={data.therapeutics.medicationClassMix.slice(0, 6)}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius={Math.round(80 * scale)}
+                      label={(entry) => `${entry.name}`}
+                    >
+                      {data.therapeutics.medicationClassMix.slice(0, 6).map((_, i) => (
+                        <Cell key={i} fill={PIE_PALETTE[i % PIE_PALETTE.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    {fullscreen ? <Legend /> : null}
+                  </PieChart>
+                )}
               </ChartCard>
             </div>
           </div>
@@ -2085,92 +2072,86 @@ function ParetoMedicationsCard({
     cross >= 0
       ? `${cross + 1} drug${cross === 0 ? "" : "s"} account${cross === 0 ? "s" : ""} for ~80% of prescriptions`
       : "Prescribing is spread across more than the top 15 medications";
+  const paretoHint = `Bars = number of prescriptions, line = cumulative % of all prescriptions. ${crossLabel}.`;
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-semibold">
-          Top medications — Pareto
-        </CardTitle>
-        <p className="text-[11px] text-muted-foreground">
-          Bars = number of prescriptions, line = cumulative % of all
-          prescriptions. {crossLabel}.
-        </p>
-      </CardHeader>
-      <CardContent style={{ height: 320 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart
-            data={visible}
-            margin={{ top: 8, right: 16, left: 0, bottom: 64 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis
-              dataKey="name"
-              tick={{ fontSize: 10 }}
-              interval={0}
-              angle={-35}
-              textAnchor="end"
-              height={60}
-            />
-            <YAxis
-              yAxisId="count"
-              allowDecimals={false}
-              tick={{ fontSize: 11 }}
-              width={36}
-            />
-            <YAxis
-              yAxisId="pct"
-              orientation="right"
-              domain={[0, 100]}
-              tickFormatter={(v) => `${v}%`}
-              tick={{ fontSize: 11 }}
-              width={40}
-            />
-            <Tooltip
-              formatter={(value: number | string, key) => {
-                if (key === "count") return [value, "Prescriptions"];
-                if (key === "cumulativeSharePct") {
-                  return [`${Number(value).toFixed(1)}%`, "Cumulative share"];
-                }
-                return [value, key];
-              }}
-            />
-            <Legend
-              verticalAlign="top"
-              height={20}
-              wrapperStyle={{ fontSize: 11 }}
-            />
-            <Bar
-              yAxisId="count"
-              dataKey="count"
-              name="Prescriptions"
-              fill={C.prescriptions}
-              radius={[4, 4, 0, 0]}
-            />
-            <Line
-              yAxisId="pct"
-              type="monotone"
-              dataKey="cumulativeSharePct"
-              name="Cumulative %"
-              stroke={C.alert}
-              strokeWidth={2}
-              dot={{ r: 3, fill: C.alert }}
-            />
-            <ReferenceLine
-              yAxisId="pct"
-              y={80}
-              stroke={C.neutral}
-              strokeDasharray="4 4"
-              label={{
-                value: "80%",
-                position: "right",
-                fontSize: 10,
-                fill: "currentColor",
-              }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </CardContent>
-    </Card>
+    <DashboardChartCard
+      title="Top medications — Pareto"
+      hint={paretoHint}
+      height={320}
+    >
+      {({ fullscreen }) => (
+        <ComposedChart
+          data={visible}
+          margin={{ top: 8, right: 16, left: 0, bottom: fullscreen ? 96 : 64 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis
+            dataKey="name"
+            tick={{ fontSize: fullscreen ? 12 : 10 }}
+            interval={0}
+            angle={-35}
+            textAnchor="end"
+            height={fullscreen ? 88 : 60}
+          />
+          <YAxis
+            yAxisId="count"
+            allowDecimals={false}
+            tick={{ fontSize: fullscreen ? 12 : 11 }}
+            width={fullscreen ? 44 : 36}
+          />
+          <YAxis
+            yAxisId="pct"
+            orientation="right"
+            domain={[0, 100]}
+            tickFormatter={(v) => `${v}%`}
+            tick={{ fontSize: fullscreen ? 12 : 11 }}
+            width={fullscreen ? 48 : 40}
+          />
+          <Tooltip
+            formatter={(value: number | string, key) => {
+              if (key === "count") return [value, "Prescriptions"];
+              if (key === "cumulativeSharePct") {
+                return [`${Number(value).toFixed(1)}%`, "Cumulative share"];
+              }
+              return [value, key];
+            }}
+          />
+          <Legend
+            verticalAlign="top"
+            height={20}
+            wrapperStyle={{ fontSize: fullscreen ? 12 : 11 }}
+          />
+          <Bar
+            yAxisId="count"
+            dataKey="count"
+            name="Prescriptions"
+            fill={C.prescriptions}
+            radius={[4, 4, 0, 0]}
+          />
+          <Line
+            yAxisId="pct"
+            type="monotone"
+            dataKey="cumulativeSharePct"
+            name="Cumulative %"
+            stroke={C.alert}
+            strokeWidth={2}
+            dot={{ r: 3, fill: C.alert }}
+          />
+          <ReferenceLine
+            yAxisId="pct"
+            y={80}
+            stroke={C.neutral}
+            strokeDasharray="4 4"
+            label={{
+              value: "80%",
+              position: "right",
+              fontSize: fullscreen ? 12 : 10,
+              fill: "currentColor",
+            }}
+          />
+        </ComposedChart>
+      )}
+    </DashboardChartCard>
   );
 }
 
