@@ -181,6 +181,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
     ast_export_visible INTEGER NOT NULL DEFAULT 1,
     hospital_export_visible INTEGER NOT NULL DEFAULT 1,
+    ast_print_visible INTEGER NOT NULL DEFAULT 1,
+    hospital_print_visible INTEGER NOT NULL DEFAULT 1,
     ast_register_visible INTEGER,
     hospital_register_visible INTEGER,
     updated_at TEXT NOT NULL
@@ -209,6 +211,23 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   } catch {
     await dbRun(
       sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  // Print-visibility toggles (per-module "can print / download a case
+  // report"). EXTRA gate on top of the case-view capability — see
+  // migrations/0025_role_print_visibility.sql. Default 1 (visible).
+  try {
+    await dbRun(sql`SELECT ast_print_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN ast_print_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  try {
+    await dbRun(sql`SELECT hospital_print_visible FROM role_feature_visibility LIMIT 1`);
+  } catch {
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_print_visible INTEGER NOT NULL DEFAULT 1`,
     );
   }
   // Register-visibility toggles (per-module "can register a new case").
@@ -656,6 +675,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       vth_dashboard_visible INTEGER NOT NULL DEFAULT 1,
       ast_export_visible INTEGER NOT NULL DEFAULT 1,
       hospital_export_visible INTEGER NOT NULL DEFAULT 1,
+      ast_print_visible INTEGER NOT NULL DEFAULT 1,
+      hospital_print_visible INTEGER NOT NULL DEFAULT 1,
       ast_register_visible INTEGER,
       hospital_register_visible INTEGER,
       updated_at TEXT NOT NULL
@@ -668,6 +689,12 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     await dbRun(
       sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS hospital_export_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS ast_print_visible INTEGER NOT NULL DEFAULT 1`,
+    );
+    await dbRun(
+      sql`ALTER TABLE role_feature_visibility ADD COLUMN IF NOT EXISTS hospital_print_visible INTEGER NOT NULL DEFAULT 1`,
     );
     // Register-visibility toggles must be nullable so a missing/NULL value
     // means "inherit role capability" — see context.ts resolver.
@@ -1343,8 +1370,8 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     );
     if (!exists) {
       await dbRun(
-        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, vth_dashboard_visible, ast_export_visible, hospital_export_visible, updated_at)
-            VALUES (${role}, ${1}, ${1}, ${1}, ${1}, ${new Date().toISOString()})`,
+        sql`INSERT INTO role_feature_visibility (role, dashboard_visible, vth_dashboard_visible, ast_export_visible, hospital_export_visible, ast_print_visible, hospital_print_visible, updated_at)
+            VALUES (${role}, ${1}, ${1}, ${1}, ${1}, ${1}, ${1}, ${new Date().toISOString()})`,
       );
     }
   }

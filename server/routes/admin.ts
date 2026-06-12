@@ -8,10 +8,12 @@ import {
   getIdParam,
   getPaginationParams,
   isAstExportVisibleForRole,
+  isAstPrintVisibleForRole,
   isAstRegisterVisibleForRole,
   isBatchRegisterVisible,
   isDashboardVisibleForRole,
   isHospitalExportVisibleForRole,
+  isHospitalPrintVisibleForRole,
   isHospitalRegisterVisibleForRole,
   isVthDashboardVisibleForRole,
   isAdminRole,
@@ -753,6 +755,141 @@ export function registerAdminRoutes(app: Express) {
             )`,
       );
       return res.json({ role, exportVisible });
+    },
+  );
+
+  /**
+   * AST print visibility — list current per-role flags for the admin UI.
+   * Same shape and semantics as the export visibility endpoints; the toggle
+   * hides the in-app Print Report button / route and blocks the PDF endpoint.
+   */
+  app.get(
+    "/api/admin/feature-visibility/ast-print",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const visibility = await Promise.all(
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
+          role,
+          printVisible: await isAstPrintVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  /** Hospital (VTH) print visibility — list current per-role flags. */
+  app.get(
+    "/api/admin/feature-visibility/hospital-print",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (_req, res) => {
+      const visibility = await Promise.all(
+        FEATURE_VISIBILITY_ROLES.map(async (role) => ({
+          role,
+          printVisible: await isHospitalPrintVisibleForRole(role),
+        })),
+      );
+      return res.json(visibility);
+    },
+  );
+
+  /**
+   * Toggle AST print visibility for a given role. Only a Super Admin can change
+   * the `superadmin` toggle (mirrors the dashboard/export H-11 guard).
+   */
+  app.patch(
+    "/api/admin/feature-visibility/ast-print/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const printVisible = Boolean(req.body?.printVisible);
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin print visibility" });
+      }
+      try {
+        await dbGet(sql`SELECT ast_print_visible FROM role_feature_visibility LIMIT 1`);
+      } catch {
+        await dbRun(
+          sql`ALTER TABLE role_feature_visibility ADD COLUMN ast_print_visible INTEGER NOT NULL DEFAULT 1`,
+        );
+      }
+      await dbRun(
+        sql`INSERT INTO role_feature_visibility (role, ast_print_visible, updated_at)
+            VALUES (${role}, ${printVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              ast_print_visible = excluded.ast_print_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_ast_print_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ printVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, printVisible });
+    },
+  );
+
+  /** Toggle Hospital (VTH) print visibility for a given role. */
+  app.patch(
+    "/api/admin/feature-visibility/hospital-print/:role",
+    requireAuth,
+    requireRole("superadmin", "admin"),
+    async (req, res) => {
+      const currentUser = (req as AuthenticatedRequest).currentUser;
+      const role = String(req.params.role ?? "").trim();
+      const printVisible = Boolean(req.body?.printVisible);
+      if (!(FEATURE_VISIBILITY_ROLES as readonly string[]).includes(role)) {
+        return res.status(400).json({ message: "Unsupported role" });
+      }
+      if (role === "superadmin" && currentUser.role !== "superadmin") {
+        return res
+          .status(403)
+          .json({ message: "Only Super Admin can change Super Admin print visibility" });
+      }
+      try {
+        await dbGet(sql`SELECT hospital_print_visible FROM role_feature_visibility LIMIT 1`);
+      } catch {
+        await dbRun(
+          sql`ALTER TABLE role_feature_visibility ADD COLUMN hospital_print_visible INTEGER NOT NULL DEFAULT 1`,
+        );
+      }
+      await dbRun(
+        sql`INSERT INTO role_feature_visibility (role, hospital_print_visible, updated_at)
+            VALUES (${role}, ${printVisible ? 1 : 0}, ${new Date().toISOString()})
+            ON CONFLICT(role) DO UPDATE SET
+              hospital_print_visible = excluded.hospital_print_visible,
+              updated_at = excluded.updated_at`,
+      );
+      await dbRun(
+        sql`INSERT INTO form_edit_audit_logs
+            (actor_user_id, actor_role, action, target_key, old_value, new_value, created_at)
+            VALUES (
+              ${currentUser.id},
+              ${currentUser.role},
+              ${"set_hospital_print_visibility_by_role"},
+              ${role},
+              ${null},
+              ${JSON.stringify({ printVisible })},
+              ${new Date().toISOString()}
+            )`,
+      );
+      return res.json({ role, printVisible });
     },
   );
 

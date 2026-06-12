@@ -71,6 +71,12 @@ The following never execute in the browser and never expose their credentials to
   `client/src/lib/auth.tsx` are **cosmetic only** and are always re-checked on the server.
 - **Student data exports are range-bound and single-use**, consumed atomically on first
   download (`server/download-request-auth.ts`, `download-request-range.ts`).
+- **Per-role print/PDF gate (admin-configurable).** `role_feature_visibility.ast_print_visible`
+  / `hospital_print_visible` let an admin disable the in-app print affordances (Print
+  Report button, `/print/:id` route) and block `GET /api/cases/:id/pdf` for a role. It is
+  an EXTRA gate on top of the case-view capability and defaults to visible. Note: it cannot
+  stop a user who can already *view* a case from using the browser's native print (Ctrl+P)
+  or a screenshot — it removes the convenient affordances and the server-rendered PDF only.
 - **Input validation:** request bodies are validated with Zod schemas
   (`insertCaseSchema` / `patchCaseSchema` `safeParse`) before use; CSV/XLSX exports apply
   formula-injection escaping (`server/routes/cases-export.ts`).

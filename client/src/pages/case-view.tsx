@@ -218,7 +218,7 @@ export default function CaseView() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { isAdmin } = useAuth();
+  const { isAdmin, canPrintAst, canPrintHospital } = useAuth();
   const scopeParam = useMemo(() => {
     const value = new URLSearchParams(window.location.search).get("scope");
     return value === "hospital" || value === "ast" ? value : null;
@@ -268,6 +268,11 @@ export default function CaseView() {
     requestedScope ?? (isHospitalCase ? "hospital" : "ast");
   const scopedBackHref =
     effectiveScope === "hospital" ? "/new-case/cases" : "/ast-report/cases";
+  // Per-role admin toggle: hide the in-app Print Report affordance when an
+  // admin has disabled printing for this user's role in this module. The
+  // server also enforces this on the print route and the PDF endpoint.
+  const canPrintThisCase =
+    effectiveScope === "hospital" ? canPrintHospital : canPrintAst;
 
   const customFieldEntries = useMemo(() => {
     if (!caseData?.customFields) return [] as CustomEntry[];
@@ -501,20 +506,22 @@ export default function CaseView() {
           )}
 
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-            <Link
-              href={`${effectiveScope === "hospital" ? "/new-case/print" : "/ast-report/print"}/${caseData.id}?scope=${effectiveScope}`}
-              className="w-full sm:w-auto"
-            >
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 w-full sm:w-auto"
-                data-testid="button-print"
+            {canPrintThisCase && (
+              <Link
+                href={`${effectiveScope === "hospital" ? "/new-case/print" : "/ast-report/print"}/${caseData.id}?scope=${effectiveScope}`}
+                className="w-full sm:w-auto"
               >
-                <Printer className="w-3.5 h-3.5" />
-                Print Report
-              </Button>
-            </Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 w-full sm:w-auto"
+                  data-testid="button-print"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Report
+                </Button>
+              </Link>
+            )}
 
             {isAdmin && (
               <AlertDialog>
@@ -1081,7 +1088,7 @@ export default function CaseView() {
                       >
                         Previous
                       </Button>
-                      {isHospitalCase ? (
+                      {isHospitalCase && canPrintThisCase ? (
                         <Button
                           type="button"
                           variant="default"

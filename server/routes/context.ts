@@ -354,6 +354,66 @@ export async function isHospitalExportVisibleForRole(role: string): Promise<bool
   }
 }
 
+/**
+ * Whether the AST module **print / PDF** affordances are allowed for the given
+ * role. This is a per-role admin toggle (`role_feature_visibility.ast_print_visible`)
+ * that acts as an EXTRA gate on top of the case-view capability: it hides the
+ * in-app Print Report button / `/print/:id` route and blocks `GET /api/cases/:id/pdf`.
+ *
+ * It can only *deny* — a user who can already view a case can still use the
+ * browser's native print or take a screenshot (documented in SECURITY_NOTES.md).
+ *
+ * Returns `true` for a missing row / pre-migration DB so existing installs
+ * default to today's behaviour (everyone who can view can print).
+ */
+export async function isAstPrintVisibleForRole(role: string): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ ast_print_visible: boolean | number }>(
+      "SELECT ast_print_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.ast_print_visible);
+  }
+  try {
+    const row = await dbGet<{ ast_print_visible: number }>(
+      sql`SELECT ast_print_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.ast_print_visible);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Whether the Hospital (VTH) module **print / PDF** affordances are allowed for
+ * the given role. See `isAstPrintVisibleForRole` — same pattern, different column.
+ */
+export async function isHospitalPrintVisibleForRole(role: string): Promise<boolean> {
+  if (!role) return false;
+  if (DB_PROVIDER === "postgres") {
+    const result = await getPgPool().query<{ hospital_print_visible: boolean | number }>(
+      "SELECT hospital_print_visible FROM role_feature_visibility WHERE role = $1 LIMIT 1",
+      [role],
+    );
+    const row = result.rows[0];
+    if (!row) return true;
+    return Boolean(row.hospital_print_visible);
+  }
+  try {
+    const row = await dbGet<{ hospital_print_visible: number }>(
+      sql`SELECT hospital_print_visible FROM role_feature_visibility WHERE role = ${role} LIMIT 1`,
+    );
+    if (!row) return true;
+    return Boolean(row.hospital_print_visible);
+  } catch {
+    return true;
+  }
+}
+
 export function getIdParam(req: Request): number {
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;

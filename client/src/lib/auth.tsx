@@ -26,6 +26,8 @@ type AuthUser = SafeUser & {
   vthDashboardVisible?: boolean;
   astExportVisible?: boolean;
   hospitalExportVisible?: boolean;
+  astPrintVisible?: boolean;
+  hospitalPrintVisible?: boolean;
   /**
    * Per-user resolved "can register a new case" flags, sent by the server
    * on login/me. They already factor in the per-role admin toggle AND the
@@ -206,6 +208,10 @@ interface AuthContextType {
   canExportAst: boolean;
   /** Admin per-role toggle for the Hospital export tile/route. */
   canExportHospital: boolean;
+  /** Admin per-role toggle for the AST in-app print/PDF affordances. */
+  canPrintAst: boolean;
+  /** Admin per-role toggle for the Hospital in-app print/PDF affordances. */
+  canPrintHospital: boolean;
   canManageAstAdmin: boolean;
 }
 
@@ -490,6 +496,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hospitalExportFlag = user?.hospitalExportVisible ?? true;
   const canExportAst = Boolean(astExportEligible && astExportFlag);
   const canExportHospital = Boolean(hospitalExportEligible && hospitalExportFlag);
+  // Printing is an EXTRA admin-toggle gate on top of being able to view the
+  // case. Anyone who can view a module's cases may print unless an admin turned
+  // the toggle off for their role. A missing flag (legacy session) defaults to
+  // visible to preserve historical behaviour; the server re-checks on the PDF
+  // endpoint regardless.
+  const canPrintAst = Boolean(canViewAstCases && (user?.astPrintVisible ?? true));
+  const canPrintHospital = Boolean(
+    canViewHospitalCases && (user?.hospitalPrintVisible ?? true),
+  );
 
   const setInactivityTimeout = useCallback(
     (value: InactivityTimeoutOption) => {
@@ -606,6 +621,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     canDownloadAst,
     canExportAst,
     canExportHospital,
+    canPrintAst,
+    canPrintHospital,
     canManageAstAdmin,
   };
 

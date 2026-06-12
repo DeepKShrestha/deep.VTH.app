@@ -45,6 +45,8 @@ function ProtectedRoutes() {
     canViewHospitalCases,
     canExportAst,
     canExportHospital,
+    canPrintAst,
+    canPrintHospital,
     canViewDashboard,
     canViewVthDashboard,
     canManageAstAdmin,
@@ -192,10 +194,10 @@ function ProtectedRoutes() {
             {canViewHospitalCases ? <CaseView /> : <Redirect to="/new-case/cases" />}
           </Route>
           <Route path="/ast-report/print/:id">
-            {canViewAstCases ? <PrintReport /> : <Redirect to="/ast-report/cases" />}
+            {canPrintAst ? <PrintReport /> : <Redirect to="/ast-report/cases" />}
           </Route>
           <Route path="/new-case/print/:id">
-            {canViewHospitalCases ? <PrintReport /> : <Redirect to="/new-case/cases" />}
+            {canPrintHospital ? <PrintReport /> : <Redirect to="/new-case/cases" />}
           </Route>
           <Route path="/cases/:id">
             <Redirect to="/ast-report/cases" />

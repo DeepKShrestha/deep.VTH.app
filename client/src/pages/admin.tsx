@@ -341,6 +341,20 @@ export default function AdminPanel({
     queryKey: ["/api/admin/feature-visibility/hospital-export"],
     enabled: mode === "full",
   });
+  // Per-role admin toggles for the in-app Print/PDF affordances (Print Report
+  // button + print route + PDF endpoint). Extra gate on top of case-view.
+  const { data: astPrintVisibility = [] } = useQuery<
+    Array<{ role: string; printVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/ast-print"],
+    enabled: mode === "full",
+  });
+  const { data: hospitalPrintVisibility = [] } = useQuery<
+    Array<{ role: string; printVisible: boolean }>
+  >({
+    queryKey: ["/api/admin/feature-visibility/hospital-print"],
+    enabled: mode === "full",
+  });
   // Per-role admin toggles for "can register a new case" in each module.
   // The shape mirrors the export endpoints so the same renderRoleRow helper
   // can reuse the layout without an inheritance dance.
@@ -998,6 +1012,60 @@ export default function AdminPanel({
     onError: (err: unknown) => {
       toast({
         title: err instanceof Error ? err.message : "Failed to update Hospital export visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateAstPrintVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; printVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/ast-print/${encodeURIComponent(payload.role)}`,
+        { printVisible: payload.printVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/ast-print"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          astPrintVisible: vars.printVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "AST print visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update AST print visibility",
+        variant: "destructive",
+      });
+    },
+  });
+  const updateHospitalPrintVisibilityMutation = useMutation({
+    mutationFn: async (payload: { role: string; printVisible: boolean }) => {
+      await apiRequest(
+        "PATCH",
+        `/api/admin/feature-visibility/hospital-print/${encodeURIComponent(payload.role)}`,
+        { printVisible: payload.printVisible },
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/feature-visibility/hospital-print"],
+      });
+      if (currentUser?.role === vars.role && currentUser) {
+        updateCurrentUser({
+          ...currentUser,
+          hospitalPrintVisible: vars.printVisible,
+        } as typeof currentUser);
+      }
+      toast({ title: "Hospital print visibility updated" });
+    },
+    onError: (err: unknown) => {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update Hospital print visibility",
         variant: "destructive",
       });
     },
@@ -2283,6 +2351,10 @@ export default function AdminPanel({
             onExportToggle={(role, exportVisible) =>
               updateAstExportVisibilityMutation.mutate({ role, exportVisible })
             }
+            print={astPrintVisibility}
+            onPrintToggle={(role, printVisible) =>
+              updateAstPrintVisibilityMutation.mutate({ role, printVisible })
+            }
             register={astRegisterVisibility}
             onRegisterToggle={(role, registerVisible) =>
               updateAstRegisterVisibilityMutation.mutate({ role, registerVisible })
@@ -2302,6 +2374,10 @@ export default function AdminPanel({
             export_={hospitalExportVisibility}
             onExportToggle={(role, exportVisible) =>
               updateHospitalExportVisibilityMutation.mutate({ role, exportVisible })
+            }
+            print={hospitalPrintVisibility}
+            onPrintToggle={(role, printVisible) =>
+              updateHospitalPrintVisibilityMutation.mutate({ role, printVisible })
             }
             register={hospitalRegisterVisibility}
             onRegisterToggle={(role, registerVisible) =>
@@ -3757,6 +3833,8 @@ function ModuleAccessControlCard({
   onDashboardToggle,
   export_,
   onExportToggle,
+  print,
+  onPrintToggle,
   register,
   onRegisterToggle,
   batches,
@@ -3768,6 +3846,8 @@ function ModuleAccessControlCard({
   onDashboardToggle: (role: string, next: boolean) => void;
   export_: Array<{ role: string; exportVisible: boolean }>;
   onExportToggle: (role: string, next: boolean) => void;
+  print: Array<{ role: string; printVisible: boolean }>;
+  onPrintToggle: (role: string, next: boolean) => void;
   register: Array<{ role: string; registerVisible: boolean }>;
   onRegisterToggle: (role: string, next: boolean) => void;
   batches: Array<{ batch: number; registerVisible: boolean }>;
@@ -3791,6 +3871,11 @@ function ModuleAccessControlCard({
           label="Export"
           items={export_.map((r) => ({ role: r.role, value: r.exportVisible }))}
           onToggle={(role, next) => onExportToggle(role, next)}
+        />
+        <AccessControlRoleRow
+          label="Print"
+          items={print.map((r) => ({ role: r.role, value: r.printVisible }))}
+          onToggle={(role, next) => onPrintToggle(role, next)}
         />
         <AccessControlRoleRow
           label="Register"

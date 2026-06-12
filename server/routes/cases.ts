@@ -24,7 +24,9 @@ import {
   getPaginationParams,
   getTodayBs,
   hasCapability,
+  isAstPrintVisibleForRole,
   isDashboardVisibleForRole,
+  isHospitalPrintVisibleForRole,
   isVthDashboardVisibleForRole,
   requireAnyCapability,
   requireAuth,
@@ -1650,6 +1652,18 @@ export function registerCaseAndDownloadRoutes(app: Express) {
     const scope = resolveCaseScopeQuery(req.query.scope) ?? "ast";
     if (!userCanViewScope(currentUser.role, scope)) {
       return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
+    }
+    // Admin-configurable per-role print/PDF gate (extra layer on top of the
+    // view capability). A role can be allowed to view but not print/download.
+    const printVisible =
+      scope === "hospital"
+        ? await isHospitalPrintVisibleForRole(currentUser.role)
+        : await isAstPrintVisibleForRole(currentUser.role);
+    if (!printVisible) {
+      return res.status(403).json({
+        message:
+          "Printing is disabled for your role. Contact an administrator if you need access.",
+      });
     }
     const caseData = await caseRepo.getCase(getIdParam(req), scope, caseViewerAccess(currentUser));
     if (!caseData) return res.status(404).json({ message: MESSAGES.CASE_NOT_FOUND });
