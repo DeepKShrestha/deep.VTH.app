@@ -32,6 +32,7 @@ This README stays the **map of the whole system**; split only when a section bec
 - **[`scripts/deploy.sh`](scripts/deploy.sh)** — one-command deploy script for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Always runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and verifies it came up healthy. Usage: `sudo bash /opt/vth-app/scripts/deploy.sh` (add `--verify` to also run tests + typecheck, `--branch <name>` for non-`main`, `--no-restart` for a build-only dry run).
 - **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** — day-to-day operational runbooks.
 - **[`docs/RELEASE.md`](docs/RELEASE.md)** — release flow and rollback.
+- **[`SECURITY_NOTES.md`](SECURITY_NOTES.md)** — security posture summary: where secrets live, what runs server-only, how auth/authorization is enforced, known limitations, and a production deployment checklist.
 
 ### Table of contents
 
@@ -569,6 +570,7 @@ Variables used across the server, backup/restore, and scripts. **`.env.example` 
 | `WIPE_SESSIONS_ON_BOOT` | Default behaviour is to **wipe all sessions on boot** (every restart = force-logout for everyone, with a warning logged). Set `WIPE_SESSIONS_ON_BOOT=false` to keep active sessions across restarts (only expired rows pruned). |
 | `ATTACHMENT_SIGNING_TTL_MS` | Lifetime of signed image URLs in ms (60 000–86 400 000). Default **900 000 (15 min)**. URLs are user-bound. |
 | `LOG_RESPONSE_BODIES` | **Ignored in production** (response bodies are never logged when `NODE_ENV=production`). Useful for local debugging only. |
+| `CORS_ALLOWED_ORIGINS` | **Leave empty for the default same-origin deployment** (Express serves the built SPA and `/api` together — no cross-origin requests happen). Set only when the SPA is hosted on a *different* origin than the API: a strict comma-separated allowlist of exact origins (e.g. `https://app.example.com,https://staging.example.com`). Never a wildcard; a non-allowlisted cross-origin preflight is rejected with 403. See `server/index.ts`. |
 
 ### Storage paths (use absolute paths in production)
 

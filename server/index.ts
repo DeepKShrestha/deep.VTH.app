@@ -51,6 +51,54 @@ app.use((req, res, next) => {
 });
 
 app.use(express.urlencoded({ extended: false }));
+
+/**
+ * CORS allowlist (defence in depth).
+ *
+ * In the default deployment the built SPA and the API are served from the
+ * SAME origin by this Express process, so cross-origin requests never happen
+ * and no CORS headers are needed. To support split deployments (SPA on a
+ * different domain than the API) without ever using a wildcard, we read an
+ * explicit allowlist from `CORS_ALLOWED_ORIGINS` (comma-separated, e.g.
+ * "https://app.example.com,https://staging.example.com").
+ *
+ * Behaviour:
+ * - No env set            -> no CORS headers emitted; same-origin only. The
+ *                            browser blocks any cross-origin call (safe default).
+ * - Origin in allowlist   -> reflect that exact origin (never "*").
+ * - Origin NOT allowlisted -> no ACAO header; preflight is rejected with 403.
+ *
+ * We authenticate with a Bearer token (Authorization header), NOT cookies, so
+ * `Access-Control-Allow-Credentials` is intentionally left off.
+ */
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const isAllowed = typeof origin === "string" && CORS_ALLOWED_ORIGINS.includes(origin);
+
+  if (isAllowed) {
+    res.setHeader("Access-Control-Allow-Origin", origin as string);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Request-Id");
+    res.setHeader("Access-Control-Max-Age", "600");
+  }
+
+  if (req.method === "OPTIONS") {
+    // Preflight: succeed only for allowlisted origins. A cross-origin preflight
+    // from a non-allowlisted origin is rejected instead of silently passing.
+    if (isAllowed) return res.sendStatus(204);
+    if (typeof origin === "string") return res.sendStatus(403);
+    // Same-origin (no Origin header) preflight: let it fall through.
+  }
+
+  next();
+});
+
 /**
  * Helmet hardening.
  *
@@ -274,7 +322,17 @@ app.get("/api/ready", async (_req, res) => {
       return next(err);
     }
 
-    return res.status(status).json({ message, requestId: _req.requestId });
+    // In production, never surface raw 5xx error messages to the client — they
+    // can leak internal implementation detail (stack fragments, query text,
+    // file paths). The full message + stack is logged above with the requestId
+    // so support can correlate. 4xx messages are intentional/user-facing and
+    // are passed through unchanged.
+    const clientMessage =
+      status >= 500 && process.env.NODE_ENV === "production"
+        ? "Internal Server Error"
+        : message;
+
+    return res.status(status).json({ message: clientMessage, requestId: _req.requestId });
   });
 
   // Never allow SPA/Vite fallback to answer unknown API routes with HTML.
