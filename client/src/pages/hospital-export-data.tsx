@@ -5,13 +5,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
-import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
-import { DownloadFailedError, readDownloadErrorMessage } from "@/lib/download-error";
+import { DownloadFailedError } from "@/lib/download-error";
+import { runExportDownload } from "@/lib/download-export";
+import { DownloadRequestList } from "@/components/download-request-list";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -33,13 +33,8 @@ import {
   Download,
   FileText,
   FileSpreadsheet,
-  Clock,
-  CheckCircle,
-  XCircle,
 } from "lucide-react";
 import type { DownloadRequest } from "@shared/schema";
-
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
 export default function HospitalExportDataPage() {
   const { isStudent } = useAuth();
@@ -130,37 +125,15 @@ export default function HospitalExportDataPage() {
     if (speciesFilter.trim()) params.set("species", speciesFilter.trim());
     if (kind === "xlsx") params.set("output", "xlsx");
 
-    const url = `${API_BASE}/api/export/hospital-cases?${params.toString()}`;
+    const path = `/api/export/hospital-cases?${params.toString()}`;
     const fallback = kind === "xlsx" ? "hospital-export.xlsx" : "hospital-cases.csv";
 
-    fetch(url, {
-      cache: "no-store",
-      credentials: "same-origin",
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          // See the AST export page for the rationale; surface the
-          // actual server reason instead of a generic "no permission".
-          const message = await readDownloadErrorMessage(res);
-          throw new DownloadFailedError(message);
-        }
-        const disposition = res.headers.get("Content-Disposition");
-        const downloadName = filenameFromContentDisposition(disposition, fallback);
-        const rowCount = res.headers.get("X-Export-Row-Count");
-        return res.blob().then((blob) => ({ blob, downloadName, rowCount }));
-      })
-      .then(({ blob, downloadName, rowCount }) => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = downloadName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        const n = rowCount ? Number.parseInt(rowCount, 10) : NaN;
+    runExportDownload({ path, fallbackName: fallback })
+      .then(({ rowCount }) => {
         toast({
           title: kind === "xlsx" ? "Excel download started" : "CSV download started",
-          description: Number.isFinite(n) ? `${n} row${n === 1 ? "" : "s"}` : undefined,
+          description:
+            rowCount != null ? `${rowCount} row${rowCount === 1 ? "" : "s"}` : undefined,
         });
         queryClient.invalidateQueries({
           queryKey: ["/api/download-requests/mine"],
@@ -351,51 +324,7 @@ export default function HospitalExportDataPage() {
       )}
 
       {isStudent && myHospitalRequests.length > 0 && (
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base">My Download Requests</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {myHospitalRequests.map((r) => (
-              <div
-                key={r.id}
-                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-sm border-b border-border last:border-0 pb-2 last:pb-0"
-              >
-                <div>
-                  <div className="text-xs text-muted-foreground">
-                    {r.dateFrom && `From: ${r.dateFrom}`} {r.dateTo && `To: ${r.dateTo}`}
-                    {!r.dateFrom && !r.dateTo && "All dates"}
-                  </div>
-                  {r.reason && (
-                    <div className="text-xs text-muted-foreground">{r.reason}</div>
-                  )}
-                </div>
-                <div>
-                  {r.status === "pending" && (
-                    <Badge className="bg-amber-100 text-amber-800 border-0 text-xs gap-1">
-                      <Clock className="w-3 h-3" /> Pending
-                    </Badge>
-                  )}
-                  {r.status === "approved" && (
-                    <Badge className="bg-emerald-100 text-emerald-800 border-0 text-xs gap-1">
-                      <CheckCircle className="w-3 h-3" /> Approved
-                    </Badge>
-                  )}
-                  {r.status === "rejected" && (
-                    <Badge className="bg-red-100 text-red-800 border-0 text-xs gap-1">
-                      <XCircle className="w-3 h-3" /> Rejected
-                    </Badge>
-                  )}
-                  {r.status === "downloaded" && (
-                    <Badge className="bg-emerald-100 text-emerald-800 border-0 text-xs gap-1">
-                      <CheckCircle className="w-3 h-3" /> Downloaded
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <DownloadRequestList requests={myHospitalRequests} />
       )}
     </StickyScrollPage>
   );

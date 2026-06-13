@@ -27,8 +27,8 @@ Browser (React/Vite)  ──JSON──>  Express /api/*  ──>  auth + capabil
 
 - **All secrets are server-side environment variables.** They are read via
   `process.env.*` inside `server/` only. Nothing secret is compiled into the client
-  bundle. The only build-time value injected into the client is a port placeholder
-  (`__PORT_5000__`), which is not a secret.
+  bundle. The client's API base is a single same-origin constant
+  (`client/src/lib/api-base.ts`), not a secret.
 - Secret-bearing env vars include:
   - `ATTACHMENT_SIGNING_SECRET` — HMAC key for signed attachment/profile-photo URLs
     (`server/services/attachment-signing.ts`). **Required in production**; the process

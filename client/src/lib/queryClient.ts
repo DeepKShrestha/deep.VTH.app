@@ -1,7 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { csrfHeaders } from "@/lib/csrf";
-
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+import { API_BASE } from "@/lib/api-base";
 
 /** Thrown when an API response has status >= 400. Prefer `serverMessage` for user-facing text. */
 export class ApiError extends Error {

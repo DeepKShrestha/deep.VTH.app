@@ -7,8 +7,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-
-const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+import { API_BASE } from "@/lib/api-base";
 
 type Props = {
   requestId: number;

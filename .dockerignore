@@ -1,0 +1,33 @@
+# Dependencies and build output are produced inside the image, never copied in.
+node_modules
+dist
+client/dist
+
+# VCS / CI / editor noise
+.git
+.github
+.vscode
+.idea
+
+# Local secrets and runtime state must never enter the image.
+.env
+.env.*
+!.env.example
+data.db
+data.db-*
+*.sqlite
+*.sqlite-*
+backups
+uploads
+profile-photos
+password-reset-id-cards
+
+# Logs, coverage, OS cruft
+*.log
+coverage
+.DS_Store
+Thumbs.db
+
+# Desktop shell build artifacts (not used by the server image)
+release
+out

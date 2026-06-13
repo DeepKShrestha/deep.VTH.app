@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -12,80 +11,25 @@ import {
 import {
   getHospitalToggleDefaults,
   setHospitalToggleDefaults,
-  hydrateToggleDefaultsFromServer,
-  type HospitalToggleDefaults,
 } from "@/lib/module-toggle-defaults";
-import { csrfHeaders } from "@/lib/csrf";
+import { useModuleToggleDefaults } from "@/hooks/use-module-toggle-defaults";
 import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
 export default function HospitalSettingsPage() {
   const { canManageAstAdmin } = useAuth();
-  const [toggleOpen, setToggleOpen] = useState(false);
-  const togglePanelRef = useRef<HTMLDivElement | null>(null);
-  const skipFirstPrefsSavedBanner = useRef(true);
-  const [prefsSavedBanner, setPrefsSavedBanner] = useState(false);
-  const [toggleDefaults, setToggleDefaults] = useState<HospitalToggleDefaults>(
-    getHospitalToggleDefaults(),
-  );
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/users/me/preferences", {
-          credentials: "same-origin",
-        });
-        if (!res.ok) return;
-        const p = (await res.json()) as {
-          astToggleDefaults: Record<string, unknown> | null;
-          hospitalToggleDefaults: Record<string, unknown> | null;
-        };
-        hydrateToggleDefaultsFromServer({
-          astToggleDefaults: p.astToggleDefaults,
-          hospitalToggleDefaults: p.hospitalToggleDefaults,
-        });
-        setToggleDefaults(getHospitalToggleDefaults());
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    setHospitalToggleDefaults(toggleDefaults);
-    const tmr = window.setTimeout(() => {
-      void fetch("/api/users/me/preferences", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...csrfHeaders(),
-        },
-        body: JSON.stringify({ hospitalToggleDefaults: toggleDefaults }),
-        credentials: "same-origin",
-      })
-        .then((res) => {
-          if (!res.ok) return;
-          if (skipFirstPrefsSavedBanner.current) {
-            skipFirstPrefsSavedBanner.current = false;
-            return;
-          }
-          setPrefsSavedBanner(true);
-          window.setTimeout(() => setPrefsSavedBanner(false), 2200);
-        })
-        .catch(() => {});
-    }, 700);
-    return () => window.clearTimeout(tmr);
-  }, [toggleDefaults]);
-  useEffect(() => {
-    const onPointerDown = (event: MouseEvent) => {
-      if (!togglePanelRef.current) return;
-      if (!togglePanelRef.current.contains(event.target as Node)) {
-        setToggleOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, []);
+  const {
+    toggleDefaults,
+    setToggleDefaults,
+    prefsSavedBanner,
+    toggleOpen,
+    setToggleOpen,
+    togglePanelRef,
+  } = useModuleToggleDefaults({
+    field: "hospitalToggleDefaults",
+    getDefaults: getHospitalToggleDefaults,
+    setDefaults: setHospitalToggleDefaults,
+  });
 
   return (
     <StickyScrollPage
