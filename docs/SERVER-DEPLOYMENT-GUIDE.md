@@ -16,13 +16,13 @@ If you only need the *check-the-boxes* version, use [`docs/PRODUCTION-DEPLOYMENT
 4. [Install Node.js 22 LTS](#4-install-nodejs-22-lts)
 5. [Create the service user and directories](#5-create-the-service-user-and-directories)
 6. [Get the source code](#6-get-the-source-code)
-7. [Database setup — SQLite path](#7-database-setup--sqlite-path)
-8. [Database setup — PostgreSQL path](#8-database-setup--postgresql-path)
+7. [Database setup - SQLite path](#7-database-setup--sqlite-path)
+8. [Database setup - PostgreSQL path](#8-database-setup--postgresql-path)
 9. [Configure environment variables](#9-configure-environment-variables)
 10. [Install dependencies and build](#10-install-dependencies-and-build)
 11. [First boot and admin bootstrap](#11-first-boot-and-admin-bootstrap)
 12. [Run as a systemd service](#12-run-as-a-systemd-service)
-13. [Reverse proxy and TLS (nginx + Let’s Encrypt)](#13-reverse-proxy-and-tls-nginx--lets-encrypt)
+13. [Reverse proxy and TLS (nginx + Let's Encrypt)](#13-reverse-proxy-and-tls-nginx--lets-encrypt)
 14. [Automated backups](#14-automated-backups)
 15. [Day-2 operations](#15-day-2-operations)
 16. [Upgrades and rollback](#16-upgrades-and-rollback)
@@ -43,7 +43,7 @@ VTH-app is a single Node.js process (Express 5) that:
 
 The process listens on **`PORT`** (default `5000` for production). You front it with a reverse proxy (nginx, Caddy, or your PaaS edge) that terminates TLS and forwards to that port.
 
-There is **no Dockerfile** in the repo today. If your team standardizes on containers, write one — the deploy steps below all translate cleanly.
+There is **no Dockerfile** in the repo today. If your team standardizes on containers, write one - the deploy steps below all translate cleanly.
 
 ---
 
@@ -70,7 +70,7 @@ ssh ubuntu@vth.example.edu
 # Update the system.
 sudo apt update && sudo apt upgrade -y
 
-# Install base tooling we’ll need throughout.
+# Install base tooling we'll need throughout.
 sudo apt install -y curl ca-certificates gnupg git ufw build-essential python3 sqlite3
 ```
 
@@ -84,7 +84,7 @@ sudo ufw --force enable
 sudo ufw status
 ```
 
-The Node process itself listens on `PORT` (default `5000`) on `localhost` — **do not** open that port to the public. The reverse proxy (set up in step 13) is the only thing that should reach it.
+The Node process itself listens on `PORT` (default `5000`) on `localhost` - **do not** open that port to the public. The reverse proxy (set up in step 13) is the only thing that should reach it.
 
 ---
 
@@ -123,7 +123,7 @@ sudo install -d -o vth-app -g vth-app /var/log/vth-app                # if you r
 Why split `/opt/vth-app` and `/var/lib/vth-app`?
 
 - `/opt/vth-app` is the **read-mostly** application code (you redeploy on top of it).
-- `/var/lib/vth-app` is the **state** — database files, uploads, backups. You **must** keep this across redeploys, and back it up.
+- `/var/lib/vth-app` is the **state** - database files, uploads, backups. You **must** keep this across redeploys, and back it up.
 
 ---
 
@@ -131,7 +131,7 @@ Why split `/opt/vth-app` and `/var/lib/vth-app`?
 
 You have two options. Pick one and stick with it.
 
-### Option A — git pull on the server (simple)
+### Option A - git pull on the server (simple)
 
 ```bash
 sudo -u vth-app git clone https://github.com/YOUR_ORG/vth-app.git /opt/vth-app
@@ -139,7 +139,7 @@ cd /opt/vth-app
 sudo -u vth-app git checkout main          # or whatever branch you ship from
 ```
 
-### Option B — build on CI, copy artifact to server (recommended)
+### Option B - build on CI, copy artifact to server (recommended)
 
 1. Run `npm ci && npm run verify` in CI (GitHub Actions, etc.) on a clean checkout.
 2. Tar the build output (`dist/`, `client/dist/`, `package.json`, `package-lock.json`, `migrations/`, `migrations-pg/`, `node_modules/` produced by `npm ci --omit=dev`).
@@ -151,7 +151,7 @@ The rest of this guide assumes Option A and refers to `/opt/vth-app` as the proj
 
 ---
 
-## 7) Database setup — SQLite path
+## 7) Database setup - SQLite path
 
 Use SQLite when:
 - You run a **single** Node process.
@@ -180,7 +180,7 @@ Skip section 8 and continue at section 9.
 
 ---
 
-## 8) Database setup — PostgreSQL path
+## 8) Database setup - PostgreSQL path
 
 Use PostgreSQL when:
 - You run **multiple** app instances behind a load balancer.
@@ -277,7 +277,7 @@ DB_BACKUP_DIR=/var/lib/vth-app/db-backups
 
 ### 9.3 Bootstrap admin
 
-The first time the database is empty, the app creates a `superadmin` user named `admin`. Set the password explicitly so you don’t have to fish it out of the boot log:
+The first time the database is empty, the app creates a `superadmin` user named `admin`. Set the password explicitly so you don't have to fish it out of the boot log:
 
 ```ini
 ALLOW_DEFAULT_ADMIN=true
@@ -286,7 +286,7 @@ DEFAULT_ADMIN_PASSWORD=SomethingStrong_With_Letters_And_Digits_123
 
 After the first successful login, **either** flip `ALLOW_DEFAULT_ADMIN=false` **or** create a new admin and delete the `admin` user. Leaving the bootstrap path enabled long-term is a documented security risk.
 
-If `DEFAULT_ADMIN_PASSWORD` is unset, the app generates one random password and prints it once at boot — copy it from the systemd log (`journalctl -u vth-app`) and rotate immediately.
+If `DEFAULT_ADMIN_PASSWORD` is unset, the app generates one random password and prints it once at boot - copy it from the systemd log (`journalctl -u vth-app`) and rotate immediately.
 
 ### 9.4 Optional break-glass account
 
@@ -315,7 +315,7 @@ AWS_SECRET_ACCESS_KEY=...
 ### 9.6 Misc tunables (rarely changed)
 
 ```ini
-# Lifetime of signed image URLs (60_000 – 86_400_000 ms). Default 900_000 (15 min).
+# Lifetime of signed image URLs (60_000 - 86_400_000 ms). Default 900_000 (15 min).
 # ATTACHMENT_SIGNING_TTL_MS=900000
 
 # Session pruning behaviour on boot.
@@ -329,7 +329,7 @@ AWS_SECRET_ACCESS_KEY=...
 # TEMP_ATTACHMENTS_MAX_AGE_HOURS=72
 # TEMP_ATTACHMENTS_CLEANUP_INTERVAL_MS=21600000
 
-# Response-body logging is IGNORED in production — never set this true on a real install.
+# Response-body logging is IGNORED in production - never set this true on a real install.
 LOG_RESPONSE_BODIES=false
 ```
 
@@ -349,12 +349,12 @@ sudo -u vth-app npm ci
 sudo -u vth-app npm run verify
 ```
 
-`npm run verify` is the same gate CI runs. If anything fails here, **stop** and fix it before going further — the production bundle is `dist/index.cjs` and is created by this step.
+`npm run verify` is the same gate CI runs. If anything fails here, **stop** and fix it before going further - the production bundle is `dist/index.cjs` and is created by this step.
 
 A successful build leaves:
 
-- `dist/index.cjs` — the bundled Node server.
-- `client/dist/` — the built React assets (served by the Node process).
+- `dist/index.cjs` - the bundled Node server.
+- `client/dist/` - the built React assets (served by the Node process).
 
 ---
 
@@ -369,8 +369,8 @@ sudo -u vth-app -E env $(cat .env | xargs) node dist/index.cjs
 
 Watch the log. You should see:
 
-- `[sessions]` — no warning (default is "prune expired only").
-- Either `[BOOTSTRAP] Created superadmin username="admin" with one-time password: ...` (if you didn’t set `DEFAULT_ADMIN_PASSWORD`) or no bootstrap line at all (DB already had users).
+- `[sessions]` - no warning (default is "prune expired only").
+- Either `[BOOTSTRAP] Created superadmin username="admin" with one-time password: ...` (if you didn't set `DEFAULT_ADMIN_PASSWORD`) or no bootstrap line at all (DB already had users).
 - `serving on port 5000`.
 
 Hit the health endpoints from another shell:
@@ -380,7 +380,7 @@ curl http://127.0.0.1:5000/api/health   # {"status":"ok"}
 curl http://127.0.0.1:5000/api/ready    # {"status":"ready"}
 ```
 
-Then `Ctrl+C` to stop the foreground run — we’re about to turn it into a service.
+Then `Ctrl+C` to stop the foreground run - we're about to turn it into a service.
 
 ---
 
@@ -447,9 +447,9 @@ If the service refuses to start, common causes are listed in [Troubleshooting](#
 
 ---
 
-## 13) Reverse proxy and TLS (nginx + Let’s Encrypt)
+## 13) Reverse proxy and TLS (nginx + Let's Encrypt)
 
-The Node process listens on `127.0.0.1:5000`. We front it with nginx and obtain a TLS certificate from Let’s Encrypt.
+The Node process listens on `127.0.0.1:5000`. We front it with nginx and obtain a TLS certificate from Let's Encrypt.
 
 ### 13.1 Install nginx and certbot
 
@@ -515,10 +515,10 @@ The Node app calls `app.set('trust proxy', 1)` so rate limits and logged client 
 
 You **must** back up two things:
 
-1. The **database** — either the SQLite file or a `pg_dump` of the Postgres DB.
-2. The **uploads directory** (`CASE_ATTACHMENTS_DIR`) — those files are referenced by rows in the DB and cannot be reconstructed.
+1. The **database** - either the SQLite file or a `pg_dump` of the Postgres DB.
+2. The **uploads directory** (`CASE_ATTACHMENTS_DIR`) - those files are referenced by rows in the DB and cannot be reconstructed.
 
-### 14.1 SQLite — nightly snapshots via cron
+### 14.1 SQLite - nightly snapshots via cron
 
 The repo ships a script that uses `.backup` (atomic) instead of `cp` (not safe while the DB is open):
 
@@ -542,7 +542,7 @@ Then schedule it. Create `/etc/cron.d/vth-app-backup`:
 
 Also rsync `/var/lib/vth-app/uploads` and `/var/lib/vth-app/db-backups` to off-host storage (S3, another VM, an institutional NAS). The Admin → Backup → Upload to S3 feature handles the **full-site** zip if you configured S3 in step 9.5.
 
-### 14.2 Postgres — nightly dump
+### 14.2 Postgres - nightly dump
 
 ```cron
 30 2 * * * vth-app PGPASSWORD='STRONG_PASSWORD' /usr/bin/pg_dump -h 127.0.0.1 -U vth_app -F c -f /var/lib/vth-app/db-backups/vth_app-$(date +\%F).dump vth_app >> /var/log/vth-app/backup.log 2>&1
@@ -562,7 +562,7 @@ A backup you have never restored is not a backup.
 
 The app has its own **Admin → Backup** UI for superadmins that produces a single ZIP containing the DB dump + uploads. It writes to `BACKUP_LOCAL_DIR` and optionally uploads to S3. Use it before big upgrades and treat it as your "Rollback insurance".
 
-The restore endpoint requires typing the confirmation phrase `RESTORE_SITE_DATA` exactly — that is by design.
+The restore endpoint requires typing the confirmation phrase `RESTORE_SITE_DATA` exactly - that is by design.
 
 ---
 
@@ -593,7 +593,7 @@ Every API request is logged as a JSON line tagged `"type":"api_request"`. Every 
 sudo systemctl restart vth-app
 ```
 
-Every server restart wipes all sessions by default — users must log in again after a deploy/restart. Set `WIPE_SESSIONS_ON_BOOT=false` if you want active sessions to survive restarts (only expired sessions are pruned in that mode).
+Every server restart wipes all sessions by default - users must log in again after a deploy/restart. Set `WIPE_SESSIONS_ON_BOOT=false` if you want active sessions to survive restarts (only expired sessions are pruned in that mode).
 
 ### Watch resource usage
 
@@ -617,7 +617,7 @@ sudo bash /opt/vth-app/scripts/deploy.sh --verify  # also run tests + typecheck
 ```
 
 `scripts/deploy.sh` runs `git pull`, `npm ci`, `npm run build`, and
-`systemctl restart vth-app` — always executing the git/npm steps as the
+`systemctl restart vth-app` - always executing the git/npm steps as the
 `vth-app` user so root never owns files under `/opt/vth-app`. It also
 auto-heals ownership if a previous deploy was run incorrectly. Run
 `scripts/deploy.sh --help` for all flags.
@@ -680,12 +680,12 @@ Look for the first `Error:` line. Common ones:
 | `HIDDEN_SUPERADMIN_ENABLED=true requires HIDDEN_SUPERADMIN_PASSWORD ...` | hidden account enabled without strong password | Either set the password or set `HIDDEN_SUPERADMIN_ENABLED=false`. |
 | `EADDRINUSE: address already in use 0.0.0.0:5000` | Another process or another copy is on the port | `sudo ss -tlnp | grep 5000` to find it; `systemctl stop` the duplicate. |
 | `better-sqlite3 native binary does not match ...` | Node version changed under the existing `node_modules` | `cd /opt/vth-app && sudo -u vth-app npm rebuild better-sqlite3`. |
-| `Failed to run the query 'CREATE TRIGGER ...'` | (Old build) Migration splitter bug — fixed in the SQL statement splitter added in May 2026. Pull latest code. | `git pull && npm ci && npm run build && systemctl restart vth-app`. |
+| `Failed to run the query 'CREATE TRIGGER ...'` | (Old build) Migration splitter bug - fixed in the SQL statement splitter added in May 2026. Pull latest code. | `git pull && npm ci && npm run build && systemctl restart vth-app`. |
 | `connect ECONNREFUSED 127.0.0.1:5432` | Postgres not running or wrong port | `sudo systemctl status postgresql`; verify `DATABASE_URL`. |
 
 ### 502 Bad Gateway from nginx
 
-The Node process isn’t reachable on `127.0.0.1:5000`.
+The Node process isn't reachable on `127.0.0.1:5000`.
 
 ```bash
 sudo systemctl status vth-app
@@ -698,7 +698,7 @@ If the service is up but on a different port, fix `PORT` in `/opt/vth-app/.env` 
 
 Bearer tokens are stored in `sessionStorage` (per-tab). The server's default behaviour is to wipe all sessions on every restart, so any restart of the service requires every user to log in again. (Set `WIPE_SESSIONS_ON_BOOT=false` to opt out.)
 
-### Images don’t load (broken thumbnails in case view)
+### Images don't load (broken thumbnails in case view)
 
 Attachment URLs are signed and user-bound (`uid` claim) and expire after `ATTACHMENT_SIGNING_TTL_MS` (default 15 min). Refresh the page to get fresh URLs. If they still fail, check that `CASE_ATTACHMENTS_DIR` exists and the `vth-app` user has read access.
 
@@ -708,15 +708,15 @@ Attachment URLs are signed and user-bound (`uid` claim) and expire after `ATTACH
 du -sh /var/lib/vth-app/*
 ```
 
-- `db-backups/` — prune older than 30 days (see step 14).
-- `backups/` — superadmin full-site zips; clear from the Admin UI or `rm` files older than your retention policy.
-- `uploads/` — case attachments. Don't blindly delete; cross-reference with the `case_attachments` table first.
+- `db-backups/` - prune older than 30 days (see step 14).
+- `backups/` - superadmin full-site zips; clear from the Admin UI or `rm` files older than your retention policy.
+- `uploads/` - case attachments. Don't blindly delete; cross-reference with the `case_attachments` table first.
 
 ### Need to reset the admin password
 
 Use the **Forgot password** link on the login screen (it submits a request that any other admin can approve via Admin → Password Resets). If no other admin exists, you have two options:
 
-1. **Hidden superadmin** (if you enabled it in step 9.4) — log in with it and reset the locked-out admin.
+1. **Hidden superadmin** (if you enabled it in step 9.4) - log in with it and reset the locked-out admin.
 2. **Manual DB reset** (last resort). Generate a bcrypt hash and update the row:
    ```bash
    sudo systemctl stop vth-app

@@ -11,28 +11,28 @@ This README is a practical handover for the next developer to maintain and exten
 
 ## Maintainer guide (read this first)
 
-### Stronger process than a one-time “cleanup”
+### Stronger process than a one-time "cleanup"
 
-A single cleanup PR helps today, but **entropy returns** without automation. After handoff, the highest‑leverage additions are:
+A one-time cleanup helps, but code quality drifts over time without automation. After handoff, the most useful additions are:
 
 | Practice | Why |
 |----------|-----|
-| **CI runs** `npm run verify` **and a Knip “orphan files” job** (see `.github/workflows/ci.yml`) | Same gates locally and on PRs; Knip catches unreachable source files. |
+| **CI runs** `npm run verify` **and a Knip "orphan files" job** (see `.github/workflows/ci.yml`) | Same gates locally and on PRs; Knip catches unreachable source files. |
 | **Optional: full `knip`** (`npm run knip`, includes deps/unused exports) | Stricter cleanup; tune config before failing CI on it. |
 | **`docs/ADR/`** (short Architecture Decision Records) | When you change auth, DB, or permissions, one file per decision beats long Slack threads. |
-| **`CONTRIBUTING.md`** | PR checklist, how to run migrations, and “who approves production config”. |
+| **`CONTRIBUTING.md`** | PR checklist, how to run migrations, and "who approves production config". |
 
 This README stays the **map of the whole system**; split only when a section becomes huge (e.g. move long SQL notes to `docs/`).
 
 **Deployment docs (start here if you're shipping to a server):**
 
-- **[`docs/DIGITALOCEAN-DEPLOYMENT.md`](docs/DIGITALOCEAN-DEPLOYMENT.md)** — beginner-friendly walkthrough for deploying to **DigitalOcean** (Droplet + Managed Postgres). Hand-holds through SSH-key generation, billing setup, every command, plus a feature-verification checklist. Use this if you've never deployed a Node app before.
-- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** — full step-by-step walkthrough for a **fresh Linux server**: OS prep, Node install, service user, SQLite **or** PostgreSQL setup, env vars, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've deployed Linux apps before and want a generic recipe.
-- **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** — short pre-flight checklist (required env vars, order of operations, smoke tests). Use this once you know the deployment and just need the list.
-- **[`scripts/deploy.sh`](scripts/deploy.sh)** — one-command deploy script for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Always runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and verifies it came up healthy. Usage: `sudo bash /opt/vth-app/scripts/deploy.sh` (add `--verify` to also run tests + typecheck, `--branch <name>` for non-`main`, `--no-restart` for a build-only dry run).
-- **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** — day-to-day operational runbooks.
-- **[`docs/RELEASE.md`](docs/RELEASE.md)** — release flow and rollback.
-- **[`SECURITY_NOTES.md`](SECURITY_NOTES.md)** — security posture summary: where secrets live, what runs server-only, how auth/authorization is enforced, known limitations, and a production deployment checklist.
+- **[`docs/DIGITALOCEAN-DEPLOYMENT.md`](docs/DIGITALOCEAN-DEPLOYMENT.md)** - step-by-step walkthrough for deploying to **DigitalOcean** (Droplet + Managed Postgres). Covers SSH-key generation, billing setup, every command, plus a feature-verification checklist. Use this if you've never deployed a Node app before.
+- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** - full step-by-step walkthrough for a **fresh Linux server**: OS prep, Node install, service user, SQLite **or** PostgreSQL setup, env vars, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've deployed Linux apps before and want a generic recipe.
+- **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** - short pre-flight checklist (required env vars, order of operations, smoke tests). Use this once you know the deployment and just need the list.
+- **[`scripts/deploy.sh`](scripts/deploy.sh)** - one-command deploy script for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Always runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and verifies it came up healthy. Usage: `sudo bash /opt/vth-app/scripts/deploy.sh` (add `--verify` to also run tests + typecheck, `--branch <name>` for non-`main`, `--no-restart` for a build-only dry run).
+- **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** - day-to-day operational runbooks.
+- **[`docs/RELEASE.md`](docs/RELEASE.md)** - release flow and rollback.
+- **[`SECURITY_NOTES.md`](SECURITY_NOTES.md)** - security posture summary: where secrets live, what runs server-only, how auth/authorization is enforced, known limitations, and a production deployment checklist.
 
 ### Table of contents
 
@@ -93,7 +93,7 @@ flowchart TB
 | Area | What users do | Primary UI | Primary API / server |
 |------|----------------|------------|----------------------|
 | Login / signup | Sign in, register | `client/src/pages/login.tsx`, `signup.tsx` | `server/routes/auth.ts` |
-| Home / navigation | Choose VTH vs AST | `welcome.tsx`, `new-case-home.tsx`, `ast-report-home.tsx` | — |
+| Home / navigation | Choose VTH vs AST | `welcome.tsx`, `new-case-home.tsx`, `ast-report-home.tsx` | - |
 | Hospital case | Register, list, view, print | `register-case.tsx` (mode=hospital), `case-list.tsx`, `case-view.tsx`, `print-report.tsx` | `server/routes/cases.ts`, `server/case-repo.ts` |
 | AST case | Register, list, view, export | same pages, `export-data.tsx` | `server/routes/cases.ts`, AST paths |
 | Hospital form builder | Edit sections/questions | `hospital-form-editor.tsx` | `server/routes/admin.ts` (form-definition) |
@@ -113,7 +113,7 @@ flowchart TB
 
 - **Node.js** 22.x or 24.x and npm. The supported range is in `package.json` `engines`; `.nvmrc` pins **22** for local/CI alignment (`.npmrc` sets `engine-strict=true`, so `npm install` refuses unsupported Node versions).
   - If you use `nvm` / `nvm-windows` / `fnm` / `volta` / `asdf`, run `nvm use` (or equivalent) in this repo to pick up `.nvmrc`.
-- On Windows, use a normal shell (PowerShell or cmd). Native addons such as `better-sqlite3` are checked by `script/ensure-sqlite-binary.cjs` after every `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (the dev script uses `script/dev-server.cjs` so the check and `tsx` always run under the same `node.exe`). Manual fix: stop other Node processes if rebuild hits “file in use”, then `npm rebuild better-sqlite3` (see §22).
+- On Windows, use a normal shell (PowerShell or cmd). Native addons such as `better-sqlite3` are checked by `script/ensure-sqlite-binary.cjs` after every `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (the dev script uses `script/dev-server.cjs` so the check and `tsx` always run under the same `node.exe`). Manual fix: stop other Node processes if rebuild hits "file in use", then `npm rebuild better-sqlite3` (see §22).
 
 **First clone**
 
@@ -167,7 +167,7 @@ Recommended before any merge:
 - `server/` - backend/API
 - `shared/schema.ts` - shared DB/type model
 - `shared/capabilities.ts` - role → capability matrix (imported by `server/routes/context.ts` and `client/src/lib/auth.tsx`)
-- `docs/` — release, operations, and **production deploy** checklists (`docs/RELEASE.md`, `docs/OPERATIONS.md`, **`docs/PRODUCTION-DEPLOYMENT.md`**)
+- `docs/` - release, operations, and **production deploy** checklists (`docs/RELEASE.md`, `docs/OPERATIONS.md`, **`docs/PRODUCTION-DEPLOYMENT.md`**)
 - `migrations/`, `migrations-pg/` - migration history
 
 ### Backend core
@@ -322,25 +322,25 @@ Failure to update all layers causes "shows in register but not in editor" type m
 ## 9) Authentication and Sessions
 
 Frontend session model (httpOnly cookie + CSRF):
-- The session token lives in an **`httpOnly` cookie** (`vth_session`) set by the server — **JavaScript cannot read it**, so an XSS cannot exfiltrate the session. The client no longer stores any token in `sessionStorage`. On load the client calls `GET /api/auth/me` and the browser attaches the cookie automatically (`client/src/lib/auth.tsx`).
+- The session token lives in an **`httpOnly` cookie** (`vth_session`) set by the server - **JavaScript cannot read it**, so an XSS cannot exfiltrate the session. The client no longer stores any token in `sessionStorage`. On load the client calls `GET /api/auth/me` and the browser attaches the cookie automatically (`client/src/lib/auth.tsx`).
 - **CSRF protection (double-submit token):** because the browser sends the session cookie automatically, every cookie-authenticated **mutating** request (`POST/PUT/PATCH/DELETE`) must echo a readable `vth_csrf` cookie back in the `X-CSRF-Token` header. The client helper `client/src/lib/csrf.ts` does this; `requireAuth` rejects a mismatch with `403`. `SameSite=Lax` on the session cookie is the first defence; the token is defence-in-depth.
 - A `Bearer <token>` header is still **accepted** by the server as a fallback for tests / non-browser callers (`server/routes/auth-cookies.ts#extractSessionToken`); Bearer requests are exempt from CSRF because a forged cross-site request cannot set a custom header.
 - The session/CSRF cookies are **session cookies** (no `Max-Age`): closing the browser ends the client session. `Secure` is set only when `NODE_ENV=production` (so it works over plain HTTP in local dev and requires HTTPS in prod). Other prefs (inactivity timeout, confirm-before-logout) still use `localStorage`.
 
 Backend sessions:
 - Tables: `sessions` (token → user_id) + `users` (the user row). The token is the opaque value carried in the `vth_session` cookie (or Bearer fallback).
-- **On boot, ALL session rows are wiped by default** (`server/session-boot-prune.ts`) — a server restart is effectively a force-logout for everyone (the boot log warns when this happens). Set `WIPE_SESSIONS_ON_BOOT=false` to opt out and keep active sessions across restarts (useful on a dev laptop with nodemon; only expired rows are pruned in that mode).
+- **On boot, ALL session rows are wiped by default** (`server/session-boot-prune.ts`) - a server restart is effectively a force-logout for everyone (the boot log warns when this happens). Set `WIPE_SESSIONS_ON_BOOT=false` to opt out and keep active sessions across restarts (useful on a dev laptop with nodemon; only expired rows are pruned in that mode).
 - `last_seen_at` writes are **throttled** to one DB write per session every 30 seconds (`server/auth-session-repo.ts#SESSION_LAST_SEEN_THROTTLE_MS`). Prevents a write storm on hot paths while keeping presence accurate within the 3-minute active window.
 - `requireAuth` resolves the token from the `vth_session` cookie (preferred) or the Bearer header, enforces CSRF on cookie-based mutations, and uses a **short-lived in-memory cache** of the current-user snapshot keyed by token (`server/current-user-cache.ts`). TTL ≈ 30 s, 5 000-entry cap, invalidated explicitly on `updateUser` / session delete. Keeps high-traffic endpoints from re-reading the `users` row on every request.
 - Sessions are deleted **explicitly** on logout, password change, user deletion, and bulk admin deletes.
 
 Signed image URLs:
-- Case attachment images and profile photos use **HMAC-signed time-limited URLs** (`server/services/attachment-signing.ts`). Signatures are bound to the issuing **user id** (`uid` claim) — a URL leaked to another user is rejected.
+- Case attachment images and profile photos use **HMAC-signed time-limited URLs** (`server/services/attachment-signing.ts`). Signatures are bound to the issuing **user id** (`uid` claim) - a URL leaked to another user is rejected.
 - TTL is configurable via `ATTACHMENT_SIGNING_TTL_MS` (default 15 min).
 
 Endpoints:
 - `POST /api/auth/logout-all-sessions` (current user only)
-- `POST /api/auth/password-reset-requests` (forgot-password flow on the login screen — admin must approve)
+- `POST /api/auth/password-reset-requests` (forgot-password flow on the login screen - admin must approve)
 
 ---
 
@@ -351,7 +351,7 @@ Profile implementation:
 
 Current features include:
 - Card-based layout (Account, Security, Session Preferences, Role & Permissions).
-- **Self-service password change** — fill current + new, click **Save Changes**. **No admin approval is needed for users who can sign in**; the change takes effect immediately and all of the user's other sessions are terminated automatically. The admin-approval "Request Password Reset" button was removed in May 2026 because it confused users.
+- **Self-service password change** - fill current + new, click **Save Changes**. **No admin approval is needed for users who can sign in**; the change takes effect immediately and all of the user's other sessions are terminated automatically. The admin-approval "Request Password Reset" button was removed in May 2026 because it confused users.
 - Sticky save bar with unsaved/saved state.
 - Logout-all-sessions confirmation.
 - 2FA enrollment/disable (admin and superadmin roles only).
@@ -360,45 +360,45 @@ Forgot-password flow (separate from the Profile page):
 - The login screen has a **Forgot password?** link. Users who cannot sign in submit a request with their identifier and a new password; an admin reviews it under **Admin → Password Resets** and approves or rejects. Hashes never leave the server in plain text.
 
 Backend profile endpoints:
-- `PATCH /api/users/me` — self-service profile + password updates. Requires the current password for password changes. Validates strength via `validateStrongPassword` and terminates the user's other sessions on success.
-- `POST /api/auth/password-reset-requests` — public endpoint used by the login screen's Forgot-password flow.
-- `POST /api/auth/logout-all-sessions` — terminates every session for the current user.
+- `PATCH /api/users/me` - self-service profile + password updates. Requires the current password for password changes. Validates strength via `validateStrongPassword` and terminates the user's other sessions on success.
+- `POST /api/auth/password-reset-requests` - public endpoint used by the login screen's Forgot-password flow.
+- `POST /api/auth/logout-all-sessions` - terminates every session for the current user.
 
 ---
 
 ## 11) Database Tables You Will Touch Most
 
 Core domain:
-- `users` — accounts, role, approval, 2FA secrets, profile photo path.
-- `sessions` — session-token → user_id, with `created_at`, `expires_at`, `last_seen_at`. The token is delivered to the browser in the `httpOnly` `vth_session` cookie (Bearer header accepted as a fallback). FK to `users` with `ON DELETE CASCADE` (Postgres) or trigger-enforced cleanup (SQLite).
-- `cases` — both hospital and AST cases (distinguished by `case_number` prefix `CASE-` vs `AST-`).
-- `case_attachments` — uploaded images per case. FK to `cases` with `ON DELETE CASCADE`.
-- `case_change_logs` — per-case audit trail of edits. FK to `users` with `ON DELETE RESTRICT` so authorship is never lost.
-- **`case_counters`** *(new in `0015_case_counters.sql`)* — composite key per scope/date/year/month. Atomically allocated via `server/case-counters.ts#allocateCaseIdentifiers` so concurrent case registrations cannot collide on daily/monthly/yearly/case numbers.
+- `users` - accounts, role, approval, 2FA secrets, profile photo path.
+- `sessions` - session-token → user_id, with `created_at`, `expires_at`, `last_seen_at`. The token is delivered to the browser in the `httpOnly` `vth_session` cookie (Bearer header accepted as a fallback). FK to `users` with `ON DELETE CASCADE` (Postgres) or trigger-enforced cleanup (SQLite).
+- `cases` - both hospital and AST cases (distinguished by `case_number` prefix `CASE-` vs `AST-`).
+- `case_attachments` - uploaded images per case. FK to `cases` with `ON DELETE CASCADE`.
+- `case_change_logs` - per-case audit trail of edits. FK to `users` with `ON DELETE RESTRICT` so authorship is never lost.
+- **`case_counters`** *(new in `0015_case_counters.sql`)* - composite key per scope/date/year/month. Atomically allocated via `server/case-counters.ts#allocateCaseIdentifiers` so concurrent case registrations cannot collide on daily/monthly/yearly/case numbers.
 
 Form system:
 - `form_sections`, `form_questions` (both have `form_scope` for hospital/ast separation).
-- `form_edit_audit_logs` — every admin edit of the form definition.
+- `form_edit_audit_logs` - every admin edit of the form definition.
 
 Authorization & lifecycle:
-- `download_requests` — student data-export approvals. FK to `users`. Approvals are **range-bound** (BS `dateFrom`/`dateTo`) and **single-use** (consumed atomically on first export).
-- `password_reset_requests` — Forgot-password submissions from the login screen. FK to `users`.
-- `role_feature_visibility` — admin-driven flags for which roles see which features.
-- `admin_action_logs` — centralized audit log of sensitive admin actions (approvals, role changes, request resolutions, etc.).
+- `download_requests` - student data-export approvals. FK to `users`. Approvals are **range-bound** (BS `dateFrom`/`dateTo`) and **single-use** (consumed atomically on first export).
+- `password_reset_requests` - Forgot-password submissions from the login screen. FK to `users`.
+- `role_feature_visibility` - admin-driven flags for which roles see which features.
+- `admin_action_logs` - centralized audit log of sensitive admin actions (approvals, role changes, request resolutions, etc.).
 
 Reference catalogs:
 - `species_options`, `breed_options`
 - `medications`, `medication_routes`, `medication_frequencies`, `medication_dose_units`, `medication_durations`
-- `breakpoints` — AST antibiotic interpretation grid.
+- `breakpoints` - AST antibiotic interpretation grid.
 - `veterinarians`.
 
 Schema source:
-- **`shared/schema.ts`** — Drizzle table definitions and Zod schemas. Foreign keys are declared here (`references(() => users.id, { onDelete: 'cascade' })`).
-- **`migrations/`** (SQLite) and **`migrations-pg/`** (Postgres) — incremental SQL scripts applied on boot by `server/migration-runner.ts`. Already-applied IDs are tracked in `schema_migrations`.
+- **`shared/schema.ts`** - Drizzle table definitions and Zod schemas. Foreign keys are declared here (`references(() => users.id, { onDelete: 'cascade' })`).
+- **`migrations/`** (SQLite) and **`migrations-pg/`** (Postgres) - incremental SQL scripts applied on boot by `server/migration-runner.ts`. Already-applied IDs are tracked in `schema_migrations`.
 
 Bootstrap + seed source:
-- `server/routes.ts` — table creation if missing, default seed data, bootstrap admin.
-- `server/migration-runner.ts` + `server/sql-statement-splitter.ts` — applies SQL migrations on boot. The splitter is trigger-aware so `CREATE TRIGGER ... BEGIN ... END;` blocks stay intact.
+- `server/routes.ts` - table creation if missing, default seed data, bootstrap admin.
+- `server/migration-runner.ts` + `server/sql-statement-splitter.ts` - applies SQL migrations on boot. The splitter is trigger-aware so `CREATE TRIGGER ... BEGIN ... END;` blocks stay intact.
 
 ---
 
@@ -433,13 +433,13 @@ Production process:
 - Pre-release checklist: `docs/RELEASE.md` and `docs/OPERATIONS.md`
 
 Site backup / restore (SQLite smoke, optional):
-- `npx tsx script/smoke-backup-restore.ts` — copies `./data.db` to a temp tree, runs backup + restore checks (requires an existing dev `data.db`).
+- `npx tsx script/smoke-backup-restore.ts` - copies `./data.db` to a temp tree, runs backup + restore checks (requires an existing dev `data.db`).
 
 ---
 
 ## 12a) Production deployment (summary)
 
-**Full checklist for the person deploying:** **`docs/PRODUCTION-DEPLOYMENT.md`** (required variables such as `ATTACHMENT_SIGNING_SECRET`, database choice, build commands, post‑deploy checks, rollback pointer).
+**Full checklist for the person deploying:** **`docs/PRODUCTION-DEPLOYMENT.md`** (required variables such as `ATTACHMENT_SIGNING_SECRET`, database choice, build commands, post-deploy checks, rollback pointer).
 
 The app is designed to run as a **single Node process** behind a reverse proxy (nginx, Caddy, or a PaaS edge) that terminates **TLS**. The server sets `trust proxy` for correct client IP behavior behind one proxy hop.
 
@@ -447,7 +447,7 @@ The app is designed to run as a **single Node process** behind a reverse proxy (
 
 1. Set environment variables (start from `.env.example`); use **absolute paths** for `DB_FILE`, `CASE_ATTACHMENTS_DIR`, and `BACKUP_LOCAL_DIR` in production.
 2. `npm ci` (or `npm install`), then `npm run verify`, then `npm run build`.
-3. Run `npm run start` under a process manager (systemd, PM2, or your platform’s supervisor).
+3. Run `npm run start` under a process manager (systemd, PM2, or your platform's supervisor).
 4. Point the reverse proxy at `PORT` (default in `.env.example` is `5000`; dev uses `5001` in `npm run dev`).
 5. Validate `GET /api/health` and `GET /api/ready` after deploy.
 
@@ -461,14 +461,14 @@ The script (see `scripts/deploy.sh`) always runs git/npm as the `vth-app` user, 
 
 **Database choice**
 
-- **SQLite** — acceptable for a **single instance** with file backups; see `npm run backup:db` / `restore:db` and superadmin **full-site** backup below.
-- **Postgres** — use when you need **multiple app instances**, managed backups, or stricter operational defaults (`DB_PROVIDER=postgres`, `DATABASE_URL`, migrations under `migrations-pg/`). Postgres **site backup** expects `pg_dump` / `psql` on the server `PATH` or set `PG_BIN` to the PostgreSQL `bin` directory.
+- **SQLite** - acceptable for a **single instance** with file backups; see `npm run backup:db` / `restore:db` and superadmin **full-site** backup below.
+- **Postgres** - use when you need **multiple app instances**, managed backups, or stricter operational defaults (`DB_PROVIDER=postgres`, `DATABASE_URL`, migrations under `migrations-pg/`). Postgres **site backup** expects `pg_dump` / `psql` on the server `PATH` or set `PG_BIN` to the PostgreSQL `bin` directory.
 
 **Full-site backup (superadmin)**
 
 - UI: Admin panel → **Backup** tab (superadmin only): run backup, download zips, settings (scheduled backup, retention, optional S3 upload), restore (requires typing the confirmation phrase exactly: `RESTORE_SITE_DATA`).
 - Optional S3 upload: set `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`, `BACKUP_S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (see `server/services/backup-remote.ts`).
-- There is **no Dockerfile** in this repo; add one or use your host’s standard Node deployment pattern if you need containerized releases.
+- There is **no Dockerfile** in this repo; add one or use your host's standard Node deployment pattern if you need containerized releases.
 
 ---
 
@@ -547,7 +547,7 @@ Variables used across the server, backup/restore, and scripts. **`.env.example` 
 |----------|---------|
 | `NODE_ENV=production` | Enables Helmet CSP, refuses to start without `ATTACHMENT_SIGNING_SECRET`, ignores `LOG_RESPONSE_BODIES`, etc. |
 | `PORT` | Port the Node process listens on (default 5000). |
-| `ATTACHMENT_SIGNING_SECRET` | **≥32 characters.** HMAC for signed case‑attachment and profile‑photo URLs. The process **exits at boot** if unset/short. |
+| `ATTACHMENT_SIGNING_SECRET` | **≥32 characters.** HMAC for signed case-attachment and profile-photo URLs. The process **exits at boot** if unset/short. |
 | `DB_PROVIDER` | `sqlite` (default) or `postgres`. |
 | `DB_FILE` *(sqlite)* | Absolute path to the SQLite file. |
 | `DATABASE_URL` *(postgres)* | Standard `postgres://user:pass@host:port/db` connection string. |
@@ -572,9 +572,9 @@ Variables used across the server, backup/restore, and scripts. **`.env.example` 
 | Variable | Purpose |
 |----------|---------|
 | `WIPE_SESSIONS_ON_BOOT` | Default behaviour is to **wipe all sessions on boot** (every restart = force-logout for everyone, with a warning logged). Set `WIPE_SESSIONS_ON_BOOT=false` to keep active sessions across restarts (only expired rows pruned). |
-| `ATTACHMENT_SIGNING_TTL_MS` | Lifetime of signed image URLs in ms (60 000–86 400 000). Default **900 000 (15 min)**. URLs are user-bound. |
+| `ATTACHMENT_SIGNING_TTL_MS` | Lifetime of signed image URLs in ms (60 000-86 400 000). Default **900 000 (15 min)**. URLs are user-bound. |
 | `LOG_RESPONSE_BODIES` | **Ignored in production** (response bodies are never logged when `NODE_ENV=production`). Useful for local debugging only. |
-| `CORS_ALLOWED_ORIGINS` | **Leave empty for the default same-origin deployment** (Express serves the built SPA and `/api` together — no cross-origin requests happen). Set only when the SPA is hosted on a *different* origin than the API: a strict comma-separated allowlist of exact origins (e.g. `https://app.example.com,https://staging.example.com`). Never a wildcard; a non-allowlisted cross-origin preflight is rejected with 403. See `server/index.ts`. |
+| `CORS_ALLOWED_ORIGINS` | **Leave empty for the default same-origin deployment** (Express serves the built SPA and `/api` together - no cross-origin requests happen). Set only when the SPA is hosted on a *different* origin than the API: a strict comma-separated allowlist of exact origins (e.g. `https://app.example.com,https://staging.example.com`). Never a wildcard; a non-allowlisted cross-origin preflight is rejected with 403. See `server/index.ts`. |
 
 ### Storage paths (use absolute paths in production)
 
@@ -619,22 +619,22 @@ Before taking over:
 3. Confirm scope separation by adding a section in one editor only.
 4. Run `npm run verify`.
 5. Read **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** (full walkthrough) or **`docs/PRODUCTION-DEPLOYMENT.md`** (short checklist) before deploying anywhere shared.
-6. Read these files in order — they're the spine of the project:
-   - `client/src/App.tsx` — route table and protected routes.
-   - `client/src/lib/auth.tsx` — auth context, capabilities, prefs.
-   - `client/src/pages/register-case.tsx` — case registration (hospital + AST).
-   - `client/src/pages/hospital-form-editor.tsx` — form builder (hospital).
-   - `client/src/pages/admin.tsx` — admin panel + AST form editor (via `mode="form-only"`).
-   - `shared/schema.ts` — DB schema and Zod types.
-   - `shared/capabilities.ts` — role → capability map (single source of truth).
-   - `server/routes.ts` — startup, migrations, session prune, bootstrap admin.
-   - `server/routes/context.ts` — auth middleware and capability guards.
-   - `server/routes/admin.ts` — admin APIs (users, downloads, form definition).
-   - `server/routes/cases.ts` — case CRUD and form-definition reads.
-   - `server/case-counters.ts` — atomic case-number allocation.
-   - `server/auth-session-repo.ts` — session lifecycle and user lookups.
-   - `server/current-user-cache.ts` — short-lived auth cache.
-   - `server/migration-runner.ts` + `server/sql-statement-splitter.ts` — migration runtime.
+6. Read these files in order - they're the spine of the project:
+   - `client/src/App.tsx` - route table and protected routes.
+   - `client/src/lib/auth.tsx` - auth context, capabilities, prefs.
+   - `client/src/pages/register-case.tsx` - case registration (hospital + AST).
+   - `client/src/pages/hospital-form-editor.tsx` - form builder (hospital).
+   - `client/src/pages/admin.tsx` - admin panel + AST form editor (via `mode="form-only"`).
+   - `shared/schema.ts` - DB schema and Zod types.
+   - `shared/capabilities.ts` - role → capability map (single source of truth).
+   - `server/routes.ts` - startup, migrations, session prune, bootstrap admin.
+   - `server/routes/context.ts` - auth middleware and capability guards.
+   - `server/routes/admin.ts` - admin APIs (users, downloads, form definition).
+   - `server/routes/cases.ts` - case CRUD and form-definition reads.
+   - `server/case-counters.ts` - atomic case-number allocation.
+   - `server/auth-session-repo.ts` - session lifecycle and user lookups.
+   - `server/current-user-cache.ts` - short-lived auth cache.
+   - `server/migration-runner.ts` + `server/sql-statement-splitter.ts` - migration runtime.
 
 If these are understood, the project is maintainable without prior author support.
 
@@ -649,7 +649,7 @@ If these are understood, the project is maintainable without prior author suppor
 | Change DB schema | `shared/schema.ts` + new file under `migrations/` and `migrations-pg/` → bump migration number, **forward-only** |
 | Tune session timeout | `client/src/lib/auth.tsx` (inactivity timeout pref) + server-side TTL in `auth-session-repo.ts` |
 | Adjust signed-URL TTL | `ATTACHMENT_SIGNING_TTL_MS` env var |
-| Force-logout everyone on deploy | Default — every restart already does this. To opt out for a dev laptop, set `WIPE_SESSIONS_ON_BOOT=false`. |
+| Force-logout everyone on deploy | Default - every restart already does this. To opt out for a dev laptop, set `WIPE_SESSIONS_ON_BOOT=false`. |
 | Reset the admin password | login screen → Forgot password → another admin approves; **or** the hidden superadmin if enabled; **or** the manual DB recipe in `docs/SERVER-DEPLOYMENT-GUIDE.md` §17 |
 
 ---
@@ -707,12 +707,12 @@ Current effective capability model:
   - `hospital.case.create`, `hospital.case.view`, `ast.case.create`, `ast.case.view`, `ast.download`
 - `student`
   - `hospital.case.create`, `hospital.case.view`, `ast.case.view`
-  - **Data scope:** students see **all cases** in both modules — list, detail, print, patient‑history, and exports (after admin approval). This is intentional so students can learn from cases handled by other clinicians (diagnosis, treatment approach, etc.). The per-user filter lives in `caseViewerAccess()` in `server/routes/cases.ts`; tighten that one function if you ever need to scope students again (e.g. batch‑scoped data).
-  - note: bulk downloads for students still go through the request‑approval flow in `canDownload`; only the per‑user row filter has been lifted.
+  - **Data scope:** students see **all cases** in both modules - list, detail, print, patient-history, and exports (after admin approval). This is intentional so students can learn from cases handled by other clinicians (diagnosis, treatment approach, etc.). The per-user filter lives in `caseViewerAccess()` in `server/routes/cases.ts`; tighten that one function if you ever need to scope students again (e.g. batch-scoped data).
+  - note: bulk downloads for students still go through the request-approval flow in `canDownload`; only the per-user row filter has been lifted.
 
 ### Per-role feature visibility toggles
 
-Admins can toggle visibility per role for these features from **Admin → Access Control**. Toggles are persisted in `role_feature_visibility` and act as an **extra gate** on top of capabilities — turning a toggle off blocks a role even if their capability would normally allow it.
+Admins can toggle visibility per role for these features from **Admin → Access Control**. Toggles are persisted in `role_feature_visibility` and act as an **extra gate** on top of capabilities - turning a toggle off blocks a role even if their capability would normally allow it.
 
 | Feature | Column | Server gate |
 |--------|--------|-------------|
@@ -721,11 +721,11 @@ Admins can toggle visibility per role for these features from **Admin → Access
 | AST Export / Download | `ast_export_visible` | `isAstExportVisibleForRole()` (extra gate in `canDownload`) |
 | Hospital Export / Download | `hospital_export_visible` | `isHospitalExportVisibleForRole()` (extra gate in `canDownloadHospital`) |
 
-Defaults: all flags default to `1` (visible). A missing row in `role_feature_visibility` is treated as visible for backward compatibility. Only a Super Admin can change the `superadmin` toggles (audit H‑11). Toggle changes are recorded in `form_edit_audit_logs`. Users may need to log out and back in for a freshly toggled flag to take effect on their current session, because the session-issued flags are read at login.
+Defaults: all flags default to `1` (visible). A missing row in `role_feature_visibility` is treated as visible for backward compatibility. Only a Super Admin can change the `superadmin` toggles (audit H-11). Toggle changes are recorded in `form_edit_audit_logs`. Users may need to log out and back in for a freshly toggled flag to take effect on their current session, because the session-issued flags are read at login.
 - `pending`
   - no case-view/create capabilities (blocked from AST/Hospital case flows)
 
-When changing these, update **`shared/capabilities.ts`**; the server re‑exports helpers from there via `server/routes/context.ts`, and the client imports the same module in `client/src/lib/auth.tsx`.
+When changing these, update **`shared/capabilities.ts`**; the server re-exports helpers from there via `server/routes/context.ts`, and the client imports the same module in `client/src/lib/auth.tsx`.
 
 ---
 
@@ -797,7 +797,7 @@ Canonical touchpoints:
 - Fix first syntax/type error; many UI errors are cascading
 
 ### `better-sqlite3` issues on Windows
-- `script/ensure-sqlite-binary.cjs` runs after `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (via `script/dev-server.cjs`, which uses the same Node binary for the check and for `tsx`). It tries `require("better-sqlite3")` and runs `npm rebuild better-sqlite3` only when the error clearly indicates an ABI mismatch (generic `ERR_DLOPEN_FAILED` alone is not treated as ABI—on Windows it often means the DLL is locked). You should rarely need to fix this by hand.
+- `script/ensure-sqlite-binary.cjs` runs after `npm install` / `npm ci`, before `npm run build`, and at the start of `npm run dev` (via `script/dev-server.cjs`, which uses the same Node binary for the check and for `tsx`). It tries `require("better-sqlite3")` and runs `npm rebuild better-sqlite3` only when the error clearly indicates an ABI mismatch (generic `ERR_DLOPEN_FAILED` alone is not treated as ABI-on Windows it often means the DLL is locked). You should rarely need to fix this by hand.
 - If you launched the server some other way (e.g. `node dist/index.cjs` after a Node major upgrade) and see the ABI error, `server/db.ts` now wraps it with a single actionable line pointing back here.
 - Manual recovery if the preflight ever fails:
   - Stop running node processes
@@ -818,7 +818,7 @@ Canonical touchpoints:
 - Verify `form_scope` values in DB for affected rows
 
 ### Unexpected 401 loops
-- Session may be expired/cleared (expected on restart — sessions are wiped on boot by default)
+- Session may be expired/cleared (expected on restart - sessions are wiped on boot by default)
 - Re-login and recheck
 - Confirm the cookie/session flow in `client/src/lib/auth.tsx` (the `GET /api/auth/me` bootstrap) and `server/routes/context.ts`
 
@@ -892,7 +892,7 @@ These changes were applied to prevent cross-module leakage and privilege issues:
 - **Production signing and deployer docs**
   - **`ATTACHMENT_SIGNING_SECRET`** is **mandatory** when running the production bundle (`NODE_ENV=production`); the process exits on startup if it is missing or too short.
   - **`ATTACHMENT_SIGNING_TTL_MS`** controls signed image URL lifetime (default **15 min** since May 2026).
-  - Signed URLs are now **user-bound** (`uid` claim) — a URL issued to one user is rejected for another.
+  - Signed URLs are now **user-bound** (`uid` claim) - a URL issued to one user is rejected for another.
   - **`docs/PRODUCTION-DEPLOYMENT.md`** lists everything a deployer must configure and verify (for handoff to non-authors). **`docs/SERVER-DEPLOYMENT-GUIDE.md`** is the longer step-by-step companion (added May 2026).
 
 ### May 2026 hardening pass (P0/P1/P2)
@@ -905,13 +905,13 @@ These landed together as a production-readiness sweep:
 | **Foreign keys + cascade triggers** | `migrations*/0016_foreign_keys.sql`, `server/sql-statement-splitter.ts` | Orphan rows (sessions, download_requests, password_reset_requests, case_change_logs, case_attachments) are cleaned and enforced at DB level. SQLite uses triggers; Postgres uses real FKs. The splitter is required so SQLite `CREATE TRIGGER ... BEGIN...END;` blocks survive migration parsing. |
 | **Range-bound, single-use student exports** | `server/download-request-auth.ts`, `server/download-request-range.ts`, `client/src/lib/export-approval.ts`, `client/src/pages/export-data.tsx`, `client/src/pages/hospital-export-data.tsx` | Approvals carry a BS `dateFrom`/`dateTo` window; the server consumes the approval atomically on first export. The UI auto-fills the picker with the approved range and disables download if the range mismatches. |
 | **Bootstrap admin no longer uses `admin123`** | `server/routes.ts`, `server/password-policy.ts`, `.env.example` | `DEFAULT_ADMIN_PASSWORD` must be strong; if unset, a random password is printed once. Hidden superadmin requires 16+ chars w/ letters and digits in production. |
-| **Sessions wiped on every server restart (default)** | `server/session-boot-prune.ts`, `server/routes.ts` | Restarts log everyone out — the safer posture for a clinic deployment. Set `WIPE_SESSIONS_ON_BOOT=false` to opt out (keeps active sessions across restarts; only expired rows pruned). |
-| **`last_seen_at` write throttle** | `server/auth-session-repo.ts` (`SESSION_LAST_SEEN_THROTTLE_MS`) | One DB write per session every 30 seconds instead of every request — must stay well below the 3-min active window. |
+| **Sessions wiped on every server restart (default)** | `server/session-boot-prune.ts`, `server/routes.ts` | Restarts log everyone out - the safer posture for a clinic deployment. Set `WIPE_SESSIONS_ON_BOOT=false` to opt out (keeps active sessions across restarts; only expired rows pruned). |
+| **`last_seen_at` write throttle** | `server/auth-session-repo.ts` (`SESSION_LAST_SEEN_THROTTLE_MS`) | One DB write per session every 30 seconds instead of every request - must stay well below the 3-min active window. |
 | **`requireAuth` in-memory cache** | `server/current-user-cache.ts`, `server/routes/context.ts` | 30-second LRU cache (5 000 entries) of CurrentUser snapshots keyed by bearer token. Explicit invalidation on `updateUser`, session delete, bulk clears. |
 | **N+1 query reduction in admin lists** | `server/routes/admin.ts` (`/api/admin/password-reset-requests`, `/form-edit-audit-logs`, `/action-logs`) | Replaced per-row `getUserById` with batched `getUserDisplayByIds`. |
 | **Formula-injection protection in CSV/XLSX** | `server/routes/cases-export.ts` | Cell values starting with `= + - @ \t \r` get a leading apostrophe so spreadsheet apps don't execute them. |
 | **CSV exports never return an empty body** | `server/routes/cases-export.ts` | When no rows match, the file still contains the header row + UTF-8 BOM so users can tell the export ran and the filter was simply too narrow. Both export endpoints now log `matched=N`. |
-| **Self-service password change clarified** | `client/src/pages/profile.tsx` | The "Request Password Reset (Admin Approval)" button was removed from the Profile page — it implied admin approval was needed for normal password changes, which was incorrect. Forgot-password is still admin-approved and lives on the login screen. |
+| **Self-service password change clarified** | `client/src/pages/profile.tsx` | The "Request Password Reset (Admin Approval)" button was removed from the Profile page - it implied admin approval was needed for normal password changes, which was incorrect. Forgot-password is still admin-approved and lives on the login screen. |
 | **Zip-slip fix in site restore** | `server/services/restore-service.ts` | Path-traversal check rejects archive entries that try to escape the destination directory. |
 | **Strong password helper** | `server/password-policy.ts` | Reusable `isStrongPassword(value, minLength)` for default admin and hidden superadmin paths. |
 
@@ -941,8 +941,8 @@ These landed together as a production-readiness sweep:
 
 If you are **shipping to production** or handing off to operations, use one of the dedicated docs (not this section alone):
 
-- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** — full walkthrough for a **fresh Linux server**: OS prep, Node install, dedicated service user, SQLite **or** PostgreSQL setup, env config, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've never deployed the app before or you want a complete recipe to copy-paste.
-- **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** — short pre-flight **checklist** (required environment variables: `ATTACHMENT_SIGNING_SECRET`, `NODE_ENV`, `PORT`, database; recommended security settings; build/run order; smoke tests; rollback pointer; CI expectations).
+- **[`docs/SERVER-DEPLOYMENT-GUIDE.md`](docs/SERVER-DEPLOYMENT-GUIDE.md)** - full walkthrough for a **fresh Linux server**: OS prep, Node install, dedicated service user, SQLite **or** PostgreSQL setup, env config, systemd unit, nginx + Let's Encrypt TLS, automated backups, day-2 ops, upgrades, rollback, troubleshooting. Use this if you've never deployed the app before or you want a complete recipe to copy-paste.
+- **[`docs/PRODUCTION-DEPLOYMENT.md`](docs/PRODUCTION-DEPLOYMENT.md)** - short pre-flight **checklist** (required environment variables: `ATTACHMENT_SIGNING_SECRET`, `NODE_ENV`, `PORT`, database; recommended security settings; build/run order; smoke tests; rollback pointer; CI expectations).
 
 The short summary in **§12a** and the variable list in **§16** point here for detail.
 
@@ -960,7 +960,7 @@ It covers, in order:
 2. Installing Node.js 22 LTS.
 3. Creating a dedicated `vth-app` system user and a clean directory layout (`/opt/vth-app` for code, `/var/lib/vth-app` for state).
 4. Getting the source code onto the server.
-5. **Database setup** — two complete paths:
+5. **Database setup** - two complete paths:
    - **SQLite** path (single instance, file-based).
    - **PostgreSQL** path (multi-instance, role creation, connection string, `pg_dump` tooling).
 6. Configuring `.env` (every variable explained, not just listed).
@@ -974,17 +974,17 @@ It covers, in order:
 14. A 12-row troubleshooting table for the most common boot failures.
 15. A copy-pasteable cheat sheet at the end.
 
-If anything in that guide goes stale, that file — not this README — is where you update the deployment instructions.
+If anything in that guide goes stale, that file - not this README - is where you update the deployment instructions.
 
 ---
 
 ## 26) Handover / ownership transfer
 
-When the project changes hands (e.g. handed over to an institution's IT team), the **code is portable and not tied to any single host**. The runtime is a standard Node process + a database (SQLite or Postgres) behind any reverse proxy. There is **no DigitalOcean-specific code** — the DO guide is just one worked example.
+When the project changes hands (e.g. handed over to an institution's IT team), the **code is portable and not tied to any single host**. The runtime is a standard Node process + a database (SQLite or Postgres) behind any reverse proxy. There is **no DigitalOcean-specific code** - the DO guide is just one worked example.
 
 ### Code / repository
 1. **Transfer the GitHub repo** to the new owner's account/org (Settings → Danger Zone → Transfer), or add the new team as collaborators if the original author stays involved.
-2. **Update the git remote** anywhere the repo is already cloned (e.g. on the server): `git remote set-url origin <new-repo-url>`. The clone URL also appears in `docs/DIGITALOCEAN-DEPLOYMENT.md` §4.1 — update it there.
+2. **Update the git remote** anywhere the repo is already cloned (e.g. on the server): `git remote set-url origin <new-repo-url>`. The clone URL also appears in `docs/DIGITALOCEAN-DEPLOYMENT.md` §4.1 - update it there.
 3. **Verify no secrets are in git history** (`.env`, signing secret, DB password). `.env*` is gitignored and only created on the server; if anything ever leaked into history, **rotate** it, don't just delete it.
 
 ### Server / infrastructure (only if an existing deployment is handed over too)
@@ -999,7 +999,7 @@ Nothing in the app assumes DigitalOcean. To run anywhere (university VM, on-prem
 3. The **required env vars** from §16 (notably `ATTACHMENT_SIGNING_SECRET`, `NODE_ENV=production`, `PORT`, the DB vars) and **absolute** storage paths (`CASE_ATTACHMENTS_DIR`, `BACKUP_LOCAL_DIR`, etc.).
 4. A **reverse proxy that terminates HTTPS** (nginx/Caddy/cloud load balancer) forwarding to `PORT`. The app sets `trust proxy` for one hop. The session cookie is `Secure` in production, so **HTTPS is required** in prod.
 5. A way to keep the process alive (systemd, PM2, a container orchestrator, or a PaaS).
-6. **Off-host backups** of the database **and** the storage paths (uploads/backups) — the app's superadmin backup is in-app convenience, not a substitute for host-level backups.
+6. **Off-host backups** of the database **and** the storage paths (uploads/backups) - the app's superadmin backup is in-app convenience, not a substitute for host-level backups.
 
-If a different origin serves the SPA than the API, set `CORS_ALLOWED_ORIGINS` (§16) — otherwise leave it empty for the default same-origin deployment. There is no Dockerfile in the repo; add one if you want containerized releases.
+If a different origin serves the SPA than the API, set `CORS_ALLOWED_ORIGINS` (§16) - otherwise leave it empty for the default same-origin deployment. There is no Dockerfile in the repo; add one if you want containerized releases.
 

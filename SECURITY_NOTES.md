@@ -30,13 +30,13 @@ Browser (React/Vite)  ──JSON──>  Express /api/*  ──>  auth + capabil
   bundle. The client's API base is a single same-origin constant
   (`client/src/lib/api-base.ts`), not a secret.
 - Secret-bearing env vars include:
-  - `ATTACHMENT_SIGNING_SECRET` — HMAC key for signed attachment/profile-photo URLs
+  - `ATTACHMENT_SIGNING_SECRET` - HMAC key for signed attachment/profile-photo URLs
     (`server/services/attachment-signing.ts`). **Required in production**; the process
     refuses to boot if it is missing or < 32 chars.
-  - `DATABASE_URL` (Postgres connection string, incl. password) — `server/pg-pool.ts`.
-  - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — only for optional S3 backup upload
+  - `DATABASE_URL` (Postgres connection string, incl. password) - `server/pg-pool.ts`.
+  - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` - only for optional S3 backup upload
     (`server/services/backup-remote.ts`).
-  - `DEFAULT_ADMIN_PASSWORD`, `HIDDEN_SUPERADMIN_PASSWORD` — bootstrap credentials.
+  - `DEFAULT_ADMIN_PASSWORD`, `HIDDEN_SUPERADMIN_PASSWORD` - bootstrap credentials.
 - **`.env`, `.env.local`, and `.attachment-signing-secret` are gitignored** (see
   `.gitignore`). `.env.example` is the committed, **secret-free** template.
 - Secrets must be provided at runtime by the host (systemd `EnvironmentFile`, the PaaS
@@ -46,14 +46,14 @@ Browser (React/Vite)  ──JSON──>  Express /api/*  ──>  auth + capabil
 
 The following never execute in the browser and never expose their credentials to it:
 
-- **Database access** (SQLite via `better-sqlite3`, or Postgres via `pg`) — all queries
+- **Database access** (SQLite via `better-sqlite3`, or Postgres via `pg`) - all queries
   run in `server/` through Drizzle / the repos (`server/case-repo.ts`,
   `server/repos/*`, `server/auth-session-repo.ts`).
 - **Signed-URL generation/verification** (`server/services/attachment-signing.ts`).
-  The browser receives only short-lived, user-bound signed URLs — never the HMAC secret.
+  The browser receives only short-lived, user-bound signed URLs - never the HMAC secret.
 - **Site backup / restore**, including `pg_dump`/`psql` invocation and **S3 upload**
   (`server/services/backup-service.ts`, `restore-service.ts`, `backup-remote.ts`).
-- **Password hashing/verification** (`bcryptjs`) and **session issuance** — opaque
+- **Password hashing/verification** (`bcryptjs`) and **session issuance** - opaque
   session tokens are minted and stored server-side in the `sessions` table.
 
 ## 4. How authentication & authorization are enforced
@@ -66,7 +66,7 @@ The following never execute in the browser and never expose their credentials to
   Because it is `httpOnly` + `Secure` (prod) + `SameSite=Lax`, JavaScript cannot read it,
   so an XSS cannot exfiltrate the session. The browser client no longer stores a token in
   `sessionStorage` and never sends an `Authorization` header. A `Bearer <token>` header is
-  still **accepted** by the server as a fallback for tests / non-browser callers — this is
+  still **accepted** by the server as a fallback for tests / non-browser callers - this is
   not a weakness because a forged cross-site request cannot set a custom header.
 - **CSRF protection (double-submit token).** Since the browser attaches the session cookie
   automatically, cookie-authenticated **mutating** requests (`POST/PUT/PATCH/DELETE`) must
@@ -90,13 +90,13 @@ The following never execute in the browser and never expose their credentials to
   Report button, `/print/:id` route) and block `GET /api/cases/:id/pdf` for a role. It is
   an EXTRA gate on top of the case-view capability and defaults to visible. Note: it cannot
   stop a user who can already *view* a case from using the browser's native print (Ctrl+P)
-  or a screenshot — it removes the convenient affordances and the server-rendered PDF only.
+  or a screenshot - it removes the convenient affordances and the server-rendered PDF only.
 - **Input validation:** request bodies are validated with Zod schemas
   (`insertCaseSchema` / `patchCaseSchema` `safeParse`) before use; CSV/XLSX exports apply
   formula-injection escaping (`server/routes/cases-export.ts`).
 - **Sensitive admin actions are audit-logged** to `admin_action_logs`.
 
-## 5. Production-grade HTTP & network
+## 5. HTTP & network hardening
 
 - **TLS:** the app runs as a single Node process **behind a reverse proxy (nginx/Caddy/PaaS)
   that terminates HTTPS**. `trust proxy` is set for correct client IPs behind one hop.
@@ -105,7 +105,7 @@ The following never execute in the browser and never expose their credentials to
   production** and `crossOriginResourcePolicy: same-site` (`server/index.ts`).
 - **CORS:** the default deployment is **same-origin**, so no CORS headers are emitted and
   cross-origin browser calls are blocked by default. For split deployments set
-  `CORS_ALLOWED_ORIGINS` to a **strict comma-separated allowlist** of exact origins — never
+  `CORS_ALLOWED_ORIGINS` to a **strict comma-separated allowlist** of exact origins - never
   a wildcard. A cross-origin preflight from a non-allowlisted origin is rejected with 403.
   Credentials mode is intentionally off (we use bearer tokens, not cookies).
 - **Rate limiting** (`express-rate-limit`):
@@ -123,12 +123,12 @@ The following never execute in the browser and never expose their credentials to
 
 ## 6. DevTools / Network tab expectations
 
-Browser network requests are inherently visible to an authenticated user — this cannot be
+Browser network requests are inherently visible to an authenticated user - this cannot be
 hidden, and that is expected. What matters is that everything visible is **safe to expose
 to that authenticated user**:
 
 - No API keys, service-role tokens, or third-party endpoints appear in requests or
-  responses — the frontend only calls same-origin `/api/*`.
+  responses - the frontend only calls same-origin `/api/*`.
 - The only credential visible is the user's **own** session bearer token (in the
   `Authorization` header of their own requests), which grants only their own permissions
   and can be revoked server-side.
@@ -140,7 +140,7 @@ to that authenticated user**:
 - **Session token is now in an `httpOnly` cookie with CSRF protection** (see §4). JS can no
   longer read it, so XSS can no longer steal the session. Two operational notes: (1) the
   session/CSRF cookies are *session cookies* (no `Max-Age`), so fully closing the browser
-  ends the client session — a deploy that wipes `sessions` or a server restart has the same
+  ends the client session - a deploy that wipes `sessions` or a server restart has the same
   effect, and users simply re-login; (2) `Secure` is only set when `NODE_ENV=production`, so
   the cookie requires HTTPS in production (already the case behind the reverse proxy) and
   works over plain HTTP only in local dev.

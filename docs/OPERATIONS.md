@@ -1,7 +1,7 @@
 ## See also
 
-- **`docs/PRODUCTION-DEPLOYMENT.md`** — checklist for anyone doing a **production** deploy (required env vars, order of operations, smoke tests, rollback).
-- **`scripts/deploy.sh`** — one-command deploy for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and confirms it is healthy. `sudo bash /opt/vth-app/scripts/deploy.sh --help` lists all flags.
+- **`docs/PRODUCTION-DEPLOYMENT.md`** - checklist for anyone doing a **production** deploy (required env vars, order of operations, smoke tests, rollback).
+- **`scripts/deploy.sh`** - one-command deploy for the Linux/systemd layout (DigitalOcean Droplet or any single-VM install at `/opt/vth-app`). Runs `git pull`, `npm ci`, and `npm run build` as the `vth-app` user, then restarts the service and confirms it is healthy. `sudo bash /opt/vth-app/scripts/deploy.sh --help` lists all flags.
 
 ## Deploy / upgrade
 
@@ -18,12 +18,12 @@ What it does (in order):
 
 1. Confirms it is running as root and that the `vth-app` user exists.
 2. **Self-heals** ownership of `/opt/vth-app` back to `vth-app:vth-app` if a previous deploy was accidentally run as root.
-3. `git fetch`, `git checkout <branch>`, `git pull --ff-only` — all as `vth-app`.
-4. `npm ci` then `npm run build` (or `npm run verify` with `--verify`) — all as `vth-app`.
+3. `git fetch`, `git checkout <branch>`, `git pull --ff-only` - all as `vth-app`.
+4. `npm ci` then `npm run build` (or `npm run verify` with `--verify`) - all as `vth-app`.
 5. `systemctl restart vth-app`, waits, checks `is-active`. If the service is not Active 3 seconds later, dumps the last 40 log lines and exits non-zero.
 6. Tails the last 20 lines of `journalctl -u vth-app` so you immediately see migrations applying and `serving on port 5000`.
 
-Exit codes: `0` success · `1` pre-flight failure · `2` git/npm/build failure · `3` service failed to come up.
+Exit codes: `0` success, `1` pre-flight failure, `2` git/npm/build failure, `3` service failed to come up.
 
 For PaaS or container deployments where there is no `/opt/vth-app` or systemd, use `npm ci && npm run verify && npm run start` under your platform's process supervisor as described in `docs/PRODUCTION-DEPLOYMENT.md`.
 

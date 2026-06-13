@@ -47,7 +47,7 @@ pushing.
 
 - Small, focused commits; describe the **why**, not just the what.
 - Note any new env var, migration, or manual deploy step in the PR description.
-- Don't change deployment instructions in `README.md` — those live in `docs/`.
+- Don't change deployment instructions in `README.md` - those live in `docs/`.
 
 ## Who approves production config
 

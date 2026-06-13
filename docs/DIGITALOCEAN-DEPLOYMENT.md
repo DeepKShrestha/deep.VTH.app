@@ -1,4 +1,4 @@
-# DigitalOcean deployment — beginner guide
+# DigitalOcean deployment - beginner guide
 
 This is a complete, no-prior-experience walkthrough for deploying VTH-app to a fresh DigitalOcean Droplet with their Managed Postgres database. Designed for the **comfortable $29/mo setup**, sized for a pilot with fewer than 20 users.
 
@@ -19,7 +19,7 @@ This is a complete, no-prior-experience walkthrough for deploying VTH-app to a f
                    │ HTTPS (port 443)
                    ▼
         ┌──────────────────────┐
-        │  Droplet (Ubuntu)    │   $12/mo · 2 GB RAM · 50 GB SSD
+        │  Droplet (Ubuntu)    │   $12/mo, 2 GB RAM, 50 GB SSD
         │  ─────────────────   │
         │  nginx ──► Node.js   │
         │           (port 5000)│
@@ -27,7 +27,7 @@ This is a complete, no-prior-experience walkthrough for deploying VTH-app to a f
                    │ Private network (TLS)
                    ▼
         ┌──────────────────────┐
-        │  Managed Postgres    │   $15/mo · 1 GB / 10 GB
+        │  Managed Postgres    │   $15/mo, 1 GB / 10 GB
         │  (DigitalOcean)      │
         └──────────────────────┘
 
@@ -50,27 +50,27 @@ This is a complete, no-prior-experience walkthrough for deploying VTH-app to a f
 | 7 | Feature verification checklist | Browser + SSH | 30 min |
 | 8 | Backups + final hardening | DigitalOcean console + SSH | 20 min |
 
-**Total: ~2.5–3 hours**, comfortably splittable across two evenings.
+**Total: ~2.5-3 hours**, comfortably splittable across two evenings.
 
 ---
 
 ## Things you'll need before starting
 
-- A laptop with internet (Windows, macOS, or Linux — these instructions assume Windows since that's what you use).
+- A laptop with internet (Windows, macOS, or Linux - these instructions assume Windows since that's what you use).
 - A GitHub account with the Student Pack already approved ([apply here](https://education.github.com/pack) if you haven't).
 - A credit/debit card for the DigitalOcean signup (they don't charge it while you have credit, but they require it on file).
 - **Optional but strongly recommended**: a domain name. The Student Pack includes a free `.me` domain from Namecheap, or use any domain you already own. Without a domain, you can still deploy, but you'll have to accept browser warnings (no HTTPS certificate).
 
 ---
 
-## Phase 1 — Pre-flight on your laptop (20 min)
+## Phase 1 - Pre-flight on your laptop (20 min)
 
 ### 1.1 Claim the Student Pack DigitalOcean credit
 
 1. Open [https://education.github.com/pack](https://education.github.com/pack) and log in with your GitHub account.
 2. Search for "DigitalOcean" and click **Get access**. This takes you to a DigitalOcean signup page.
 3. **Important**: create a **new** DigitalOcean account through this link. If you already have a DO account that's used any promo credit before, the $200 won't apply.
-4. Verify your email, add a payment method (don't worry — you only get charged when the $200 runs out).
+4. Verify your email, add a payment method (don't worry - you only get charged when the $200 runs out).
 5. After signup, check **Account → Billing**. You should see "Promotional credit: $200.00" with an expiration ~12 months out.
 
 ### 1.2 Generate an SSH key (the secure way to log in to your Droplet)
@@ -85,11 +85,11 @@ ssh-keygen -t ed25519 -C "your-email@example.com"
 
 When prompted:
 - **File location**: just press Enter (accepts the default `C:\Users\YourName\.ssh\id_ed25519`).
-- **Passphrase**: press Enter twice to skip (or set one — your call; you'll be prompted for it every time you SSH).
+- **Passphrase**: press Enter twice to skip (or set one - your call; you'll be prompted for it every time you SSH).
 
 You now have two files:
-- `C:\Users\YourName\.ssh\id_ed25519` — **private**, never share, never commit.
-- `C:\Users\YourName\.ssh\id_ed25519.pub` — **public**, this is what you give to DigitalOcean.
+- `C:\Users\YourName\.ssh\id_ed25519` - **private**, never share, never commit.
+- `C:\Users\YourName\.ssh\id_ed25519.pub` - **public**, this is what you give to DigitalOcean.
 
 Display the public key (you'll paste this into DigitalOcean in Phase 2):
 
@@ -111,7 +111,7 @@ You should see `OpenSSH_for_Windows_X.X` or similar. If you get "ssh is not reco
 
 ### 1.4 (Optional) Pick and configure a domain name
 
-Skip this if you don't want a domain — Phase 6 will tell you how to deploy without one.
+Skip this if you don't want a domain - Phase 6 will tell you how to deploy without one.
 
 - If you don't have one: claim the free Namecheap `.me` domain via the Student Pack (look for "Namecheap" in the pack).
 - If you have one: log into your DNS provider's control panel. You'll create an A record in Phase 2 once you have the Droplet IP.
@@ -125,7 +125,7 @@ When all three are checked, move to Phase 2.
 
 ---
 
-## Phase 2 — Provision infrastructure on DigitalOcean (15 min)
+## Phase 2 - Provision infrastructure on DigitalOcean (15 min)
 
 ### 2.1 Create the Managed Postgres database
 
@@ -138,27 +138,27 @@ Postgres takes ~5 minutes to provision, so we start it first and let it cook whi
 5. **Plan**: **Basic** → **Shared CPU** → smallest tier (1 GB RAM / 1 vCPU / 10 GB / **$15/mo**).
 6. **Cluster name**: `vth-postgres`.
 7. **Project**: default is fine.
-8. Click **Create Database Cluster**. You'll see a status spinner — leave it and move on.
+8. Click **Create Database Cluster**. You'll see a status spinner - leave it and move on.
 
 ### 2.2 Create the Droplet
 
 1. DigitalOcean console → **Droplets** → **Create Droplet**.
-2. **Region**: ⚠️ **the same region as your Postgres database**. Cross-region traffic is slow and not free.
+2. **Region**: use **the same region as your Postgres database**. Cross-region traffic is slow and not free.
 3. **Image**: **Ubuntu 24.04 (LTS) x64**.
 4. **Size**:
    - Category: **Basic**
    - CPU options: **Regular (Intel with SSD)**
-   - Plan: **2 GB / 1 CPU · 50 GB SSD · $12/mo**.
+   - Plan: **2 GB / 1 CPU, 50 GB SSD, $12/mo**.
 5. **Authentication method**: **SSH Key** → **New SSH Key**.
    - Paste the public key (the `ssh-ed25519 AAA...` line you copied in Phase 1.2).
    - Name it: `My Laptop`.
    - Save.
 6. **Hostname**: `vth-app`.
 7. **Project**: same one as the database.
-8. **Enable backups**: ✅ check this box (~$2.40/mo for a 50 GB Droplet). This is what protects your uploaded files.
+8. **Enable backups**: check this box (~$2.40/mo for a 50 GB Droplet). This is what protects your uploaded files.
 9. Click **Create Droplet**. Provisioning takes ~1 minute.
 
-Once it's ready, copy the **public IPv4 address** from the Droplet list. Looks like `139.59.xx.xx`. Save it somewhere — you'll use it in Phase 3.
+Once it's ready, copy the **public IPv4 address** from the Droplet list. Looks like `139.59.xx.xx`. Save it somewhere - you'll use it in Phase 3.
 
 ### 2.3 Wait for Postgres to finish provisioning
 
@@ -169,7 +169,7 @@ Go back to **Databases** → `vth-postgres`. When status is **Online** (green), 
 By default, the database accepts connections from anywhere. We tighten that.
 
 1. In the `vth-postgres` cluster page → **Settings** tab → **Trusted Sources** section → **Edit**.
-2. Type `vth-app` in the box — DO will offer the Droplet as a suggestion. Click it.
+2. Type `vth-app` in the box - DO will offer the Droplet as a suggestion. Click it.
 3. **Save**.
 
 Now only your Droplet can reach the database. Even your laptop is blocked.
@@ -182,7 +182,7 @@ Now only your Droplet can reach the database. Even your laptop is blocked.
    ```
    postgresql://doadmin:YOUR_PASSWORD_HERE@vth-postgres-do-user-12345-0.b.db.ondigitalocean.com:25060/defaultdb?sslmode=require
    ```
-4. Save it somewhere safe — you'll paste this into the Droplet's `.env` file in Phase 4.
+4. Save it somewhere safe - you'll paste this into the Droplet's `.env` file in Phase 4.
 
 ### 2.6 (Optional) Create a separate database for the app
 
@@ -199,7 +199,7 @@ If you have a domain:
    - Host: `vth` (gives you `vth.yourdomain.com`) or `@` (uses the root domain).
    - Value: the Droplet's IPv4 from step 2.2.
    - TTL: default (usually 1 hour).
-2. Wait 5–60 minutes for DNS to propagate. Verify from PowerShell:
+2. Wait 5-60 minutes for DNS to propagate. Verify from PowerShell:
    ```powershell
    nslookup vth.yourdomain.com
    ```
@@ -213,7 +213,7 @@ If you have a domain:
 
 ---
 
-## Phase 3 — Initial Linux setup on the Droplet (25 min)
+## Phase 3 - Initial Linux setup on the Droplet (25 min)
 
 ### 3.1 SSH in for the first time
 
@@ -235,7 +235,7 @@ If you set a passphrase on your SSH key in Phase 1.2, enter it now.
 
 You should see a Ubuntu welcome banner and a prompt that looks like `root@vth-app:~#`.
 
-> **Everything from here through Phase 6.4 happens on the Droplet** — i.e. inside this SSH session. If you disconnect, just `ssh root@139.59.xx.xx` again to get back in.
+> **Everything from here through Phase 6.4 happens on the Droplet** - i.e. inside this SSH session. If you disconnect, just `ssh root@139.59.xx.xx` again to get back in.
 
 ### 3.2 Update the system
 
@@ -245,7 +245,7 @@ apt update && apt upgrade -y
 
 This takes 2-3 minutes. If you're asked about replacing config files, accept the defaults (press Enter or pick "keep the local version currently installed").
 
-If you're asked to restart services, press Tab to highlight **\<Ok\>** and Enter — that's fine.
+If you're asked to restart services, press Tab to highlight **\<Ok\>** and Enter - that's fine.
 
 ### 3.3 Install base tooling
 
@@ -253,11 +253,11 @@ If you're asked to restart services, press Tab to highlight **\<Ok\>** and Enter
 apt install -y curl ca-certificates gnupg git ufw build-essential python3 postgresql-client
 ```
 
-- `curl`, `ca-certificates`, `gnupg` — for downloading Node.js
-- `git` — to clone the code
-- `ufw` — simple firewall
-- `build-essential`, `python3` — needed to compile `better-sqlite3` (yes, it's installed even though we're using Postgres)
-- `postgresql-client` — gives you `psql` to test the database connection
+- `curl`, `ca-certificates`, `gnupg` - for downloading Node.js
+- `git` - to clone the code
+- `ufw` - simple firewall
+- `build-essential`, `python3` - needed to compile `better-sqlite3` (yes, it's installed even though we're using Postgres)
+- `postgresql-client` - gives you `psql` to test the database connection
 
 ### 3.4 Configure the firewall
 
@@ -315,8 +315,8 @@ install -d -o vth-app -g vth-app /var/log/vth-app       # log overflow
 ```
 
 Why split `/opt` from `/var/lib`?
-- `/opt/vth-app` — code, replaced on every deploy. Don't put data here.
-- `/var/lib/vth-app` — data (uploads, backups). Persists across deploys. **This is what you must back up.**
+- `/opt/vth-app` - code, replaced on every deploy. Don't put data here.
+- `/var/lib/vth-app` - data (uploads, backups). Persists across deploys. **This is what you must back up.**
 
 **Check Phase 3 is done:**
 - [ ] SSH in worked, you're at `root@vth-app:~#`.
@@ -326,7 +326,7 @@ Why split `/opt` from `/var/lib`?
 
 ---
 
-## Phase 4 — Get the code and configure (25 min)
+## Phase 4 - Get the code and configure (25 min)
 
 ### 4.1 Clone the repository
 
@@ -344,7 +344,7 @@ ls /opt/vth-app
 
 You should see `package.json`, `server/`, `client/`, `docs/`, etc.
 
-> If your repo is **private**, you'll need to set up a deploy key first. Tell me and I'll walk you through it — the public repo path is what these steps assume.
+> If your repo is **private**, you'll need to set up a deploy key first. Tell me and I'll walk you through it - the public repo path is what these steps assume.
 
 ### 4.2 Test the Postgres connection from the Droplet
 
@@ -363,7 +363,7 @@ You should see something like:
 
 If you get a connection error, check:
 - The Trusted Sources includes this Droplet (Phase 2.4).
-- You copied the password correctly (it has special characters — be careful when pasting).
+- You copied the password correctly (it has special characters - be careful when pasting).
 - You're in the same region (cross-region adds latency but should still work).
 
 ### 4.3 Generate a signing secret
@@ -399,7 +399,7 @@ DB_PROVIDER=postgres
 # Use sslmode=no-verify in the URL (pg driver). Encryption stays on; DO's CA chain is not validated by default.
 DATABASE_URL=postgresql://doadmin:YOUR_PASSWORD@vth-postgres-do-user-XXXXX-0.b.db.ondigitalocean.com:25060/vth_app?sslmode=no-verify
 
-# Storage paths (absolute, under /var/lib — systemd only allows writes there)
+# Storage paths (absolute, under /var/lib - systemd only allows writes there)
 CASE_ATTACHMENTS_DIR=/var/lib/vth-app/uploads
 BACKUP_LOCAL_DIR=/var/lib/vth-app/backups
 PROFILE_PHOTO_DIR=/var/lib/vth-app/profile-photos
@@ -410,7 +410,7 @@ PASSWORD_RESET_ID_CARD_DIR=/var/lib/vth-app/password-reset-id-cards
 ALLOW_DEFAULT_ADMIN=true
 DEFAULT_ADMIN_PASSWORD=PickAStrongPasswordWithLettersAndDigits_123
 
-# Hidden break-glass account — leave OFF unless you have a specific reason to enable.
+# Hidden break-glass account - leave OFF unless you have a specific reason to enable.
 HIDDEN_SUPERADMIN_ENABLED=false
 
 # Default behaviour: wipe all sessions on every server restart (safer).
@@ -424,7 +424,7 @@ Save and exit nano: `Ctrl+O`, Enter, `Ctrl+X`.
 
 **Important security notes:**
 - `DEFAULT_ADMIN_PASSWORD` must be **12+ characters with both letters and digits**, or the server refuses to start.
-- Don't commit this file anywhere — it has secrets.
+- Don't commit this file anywhere - it has secrets.
 
 ### 4.5 Test the Postgres connection through the app's helper script
 
@@ -447,7 +447,7 @@ If you see this, your environment is wired correctly.
 
 ---
 
-## Phase 5 — Build the application (20 min)
+## Phase 5 - Build the application (20 min)
 
 ### 5.1 Install dependencies
 
@@ -456,7 +456,7 @@ cd /opt/vth-app
 sudo -u vth-app npm ci
 ```
 
-This takes 3-5 minutes and downloads ~500 MB of npm packages. Don't worry about npm warnings — only "error" lines matter.
+This takes 3-5 minutes and downloads ~500 MB of npm packages. Don't worry about npm warnings - only "error" lines matter.
 
 ### 5.2 Run the full verify (typecheck + tests + build)
 
@@ -465,9 +465,9 @@ sudo -u vth-app npm run verify
 ```
 
 This runs three steps:
-1. **Tests** (`vitest run`) — ~30 seconds.
-2. **Type-check** (`tsc`) — ~1 minute.
-3. **Build** (`tsx script/build.ts`) — ~2 minutes, produces `dist/index.cjs` and `client/dist/`.
+1. **Tests** (`vitest run`) - ~30 seconds.
+2. **Type-check** (`tsc`) - ~1 minute.
+3. **Build** (`tsx script/build.ts`) - ~2 minutes, produces `dist/index.cjs` and `client/dist/`.
 
 Total: ~5 minutes on a 2 GB Droplet.
 
@@ -496,7 +496,7 @@ Watch the logs. You're looking for:
 [migrations] Running 4 pending Postgres migrations...
 [migrations] Applied 4 migrations.
 [BOOTSTRAP] Created superadmin username="admin" with one-time password: ...   <-- or no bootstrap line if you set DEFAULT_ADMIN_PASSWORD
-[sessions] Wiping all sessions on boot — every user must log in again. ...
+[sessions] Wiping all sessions on boot - every user must log in again. ...
 serving on port 5000
 ```
 
@@ -535,7 +535,7 @@ Back in your **first** SSH window (where the app is running), press `Ctrl+C` to 
 
 ---
 
-## Phase 6 — Production wiring (30 min)
+## Phase 6 - Production wiring (30 min)
 
 ### 6.1 Create the systemd service
 
@@ -572,7 +572,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-# Do NOT set MemoryDenyWriteExecute=true — Node.js needs executable memory and will exit immediately.
+# Do NOT set MemoryDenyWriteExecute=true - Node.js needs executable memory and will exit immediately.
 
 # Resource ceilings (tune to your VM)
 LimitNOFILE=4096
@@ -643,7 +643,7 @@ server {
     listen [::]:80;
     server_name vth.yourdomain.com;
 
-    # Max upload size — case attachments are auto-compressed to <1 MB but be generous.
+    # Max upload size - case attachments are auto-compressed to <1 MB but be generous.
     client_max_body_size 25m;
 
     location / {
@@ -675,7 +675,7 @@ Visit `http://YOUR_DROPLET_IP` (or `http://vth.yourdomain.com`) in your browser.
 
 ### 6.4 Add HTTPS with Let's Encrypt (only if you have a domain)
 
-⚠️ Skip this section if you don't have a domain — you can't get a Let's Encrypt cert for a raw IP address. The app will still work over HTTP for testing.
+Skip this section if you don't have a domain - you can't get a Let's Encrypt cert for a raw IP address. The app will still work over HTTP for testing.
 
 ```bash
 apt install -y certbot python3-certbot-nginx
@@ -694,7 +694,7 @@ curl -I https://vth.yourdomain.com/api/health
 # HTTP/2 200
 ```
 
-Visit `https://vth.yourdomain.com` in your browser — you should see the login page with a padlock in the address bar.
+Visit `https://vth.yourdomain.com` in your browser - you should see the login page with a padlock in the address bar.
 
 **Check Phase 6 is done:**
 - [ ] `systemctl status vth-app` shows "active (running)".
@@ -704,7 +704,7 @@ Visit `https://vth.yourdomain.com` in your browser — you should see the login 
 
 ---
 
-## Phase 7 — Feature verification checklist (30 min)
+## Phase 7 - Feature verification checklist (30 min)
 
 Now we confirm every major feature works on the live server. Work through these in order.
 
@@ -738,7 +738,7 @@ For each test, **note any errors** so we can fix them before users touch the sys
 | # | Test | Expected |
 |---|------|----------|
 | 14 | Register an AST case | New Case → AST → fill required fields → Save | Case saved |
-| 15 | AST results — enter zones | In the case, enter inhibition zone diameters for several antibiotics | Sensitivity (S/I/R) auto-classified |
+| 15 | AST results - enter zones | In the case, enter inhibition zone diameters for several antibiotics | Sensitivity (S/I/R) auto-classified |
 
 ### 7.4 Search, filter, export
 
@@ -746,7 +746,7 @@ For each test, **note any errors** so we can fix them before users touch the sys
 |---|------|----------|
 | 16 | Search Previous Cases | Type in the search box | Results filter live |
 | 17 | Date filter | Date button → pick "Last 7 days" | List narrows |
-| 18 | Date filter — custom BS range | Date button → Custom → pick BS dates | Works |
+| 18 | Date filter - custom BS range | Date button → Custom → pick BS dates | Works |
 | 19 | CSV export | Cases list → Export → CSV | File downloads; opens in Excel; no `=`/`+`/`@` formula injection |
 | 20 | XLSX export | Export → XLSX | File downloads |
 
@@ -759,8 +759,8 @@ For each test, **note any errors** so we can fix them before users touch the sys
 | 23 | Compare to prior toggle | Toggle on/off | Delta badges appear/disappear |
 | 24 | Filter by department | Filters → Department → pick one | Dashboard re-filters |
 | 25 | URL state | Copy the dashboard URL after applying filters → paste in a new tab | Filters are restored |
-| 26 | Pareto chart | Scroll to "Top medications — Pareto" | Bars + cumulative % line + 80% reference visible |
-| 27 | Medications drill-down table | "Prescribed medications — full ranking" accordion | Sortable; class chips clickable; CSV export works |
+| 26 | Pareto chart | Scroll to "Top medications - Pareto" | Bars + cumulative % line + 80% reference visible |
+| 27 | Medications drill-down table | "Prescribed medications - full ranking" accordion | Sortable; class chips clickable; CSV export works |
 | 28 | Drill-down CSV export | Click Export CSV on cases table | File downloads with all visible rows |
 
 ### 7.6 Form editor
@@ -779,7 +779,7 @@ For each test, **note any errors** so we can fix them before users touch the sys
 
 **If backup fails with `server version mismatch` (pg_dump 16.14 vs server 16.4):**
 
-Ubuntu’s `postgresql-client` is often **newer** than DigitalOcean Managed Postgres. Newer `pg_dump` refuses to dump an older server.
+Ubuntu's `postgresql-client` is often **newer** than DigitalOcean Managed Postgres. Newer `pg_dump` refuses to dump an older server.
 
 **Recommended fix:** DigitalOcean console → **Databases** → your cluster → **Settings** → upgrade Postgres to the **latest 16.x** patch (e.g. 16.14). Then retry **Run backup now**.
 
@@ -792,7 +792,7 @@ pg_dump --version
 
 If they still differ, set `PG_BIN` in `/opt/vth-app/.env` to a `pg_dump` that matches the server major/minor, then `systemctl restart vth-app`.
 
-**Automatic backup settings:** Enable the toggle, set interval and “Keep last N” separately — each saves independently. Default retention is **7** zips; oldest local zips are deleted after each **successful** backup.
+**Automatic backup settings:** Enable the toggle, set interval and "Keep last N" separately - each saves independently. Default retention is **7** zips; oldest local zips are deleted after each **successful** backup.
 
 ### 7.8 Server-side smoke tests
 
@@ -821,7 +821,7 @@ systemctl restart vth-app
 ```
 
 **Check Phase 7 is done:**
-- [ ] All 7.1–7.7 tests pass (or any failures are noted with details).
+- [ ] All 7.1-7.7 tests pass (or any failures are noted with details).
 - [ ] Service is "active (running)".
 - [ ] No errors in journalctl from the last hour.
 - [ ] Restart logs everyone out (confirms the wipe-sessions-on-boot default).
@@ -830,7 +830,7 @@ If a test fails, paste the error to me and we'll debug it.
 
 ---
 
-## Phase 8 — Final hardening + backups (20 min)
+## Phase 8 - Final hardening + backups (20 min)
 
 ### 8.1 Disable the default admin bootstrap
 
@@ -849,7 +849,7 @@ to:
 ALLOW_DEFAULT_ADMIN=false
 ```
 
-You can also remove the `DEFAULT_ADMIN_PASSWORD=` line — it's no longer needed.
+You can also remove the `DEFAULT_ADMIN_PASSWORD=` line - it's no longer needed.
 
 Save and restart:
 ```bash
@@ -942,7 +942,7 @@ free -h
 
 ### Deploy a new version
 
-Easiest path — run the bundled deploy script as root. It always executes
+Easiest path - run the bundled deploy script as root. It always executes
 `git`, `npm ci`, and `npm run build` as the `vth-app` user (so `/opt/vth-app`
 never gets root-owned files and Git never trips the "dubious ownership"
 check), then restarts the service and verifies it came up healthy:
@@ -1019,7 +1019,7 @@ If service isn't running, start it; if it's on a different port, fix `PORT` in `
 
 ### Login works but every other request returns 401
 
-The default behaviour is to wipe all sessions on every restart. If you don't want this, set `WIPE_SESSIONS_ON_BOOT=false` in `.env` and restart. Otherwise this is expected — just log back in.
+The default behaviour is to wipe all sessions on every restart. If you don't want this, set `WIPE_SESSIONS_ON_BOOT=false` in `.env` and restart. Otherwise this is expected - just log back in.
 
 ### Login returns 200 then immediately logs you out (`text > timestamp with time zone`)
 
@@ -1041,7 +1041,7 @@ Set `PROFILE_PHOTO_DIR=/var/lib/vth-app/profile-photos` in `.env`, create the di
 ### Images / attachments fail to load
 
 Signed URLs expire after 30 minutes (`ATTACHMENT_SIGNING_TTL_MS` default). Refresh the page. If it still fails:
-- Check `ls -ld /var/lib/vth-app/uploads` — should be owned by `vth-app:vth-app`.
+- Check `ls -ld /var/lib/vth-app/uploads` - should be owned by `vth-app:vth-app`.
 - Check `journalctl -u vth-app | grep attachment` for signing errors.
 
 ### Need to reset a forgotten admin password without UI access
@@ -1075,4 +1075,4 @@ To check actual usage: DO console → Account → Billing → "Current usage".
 
 ---
 
-**Related docs:** [`SERVER-DEPLOYMENT-GUIDE.md`](./SERVER-DEPLOYMENT-GUIDE.md) (shorter, no Linux hand-holding) · [`PRODUCTION-DEPLOYMENT.md`](./PRODUCTION-DEPLOYMENT.md) (checklist version) · [`OPERATIONS.md`](./OPERATIONS.md) (day-2 ops) · [`README.md`](../README.md) (architecture overview).
+**Related docs:** [`SERVER-DEPLOYMENT-GUIDE.md`](./SERVER-DEPLOYMENT-GUIDE.md) (shorter, assumes Linux familiarity), [`PRODUCTION-DEPLOYMENT.md`](./PRODUCTION-DEPLOYMENT.md) (checklist version), [`OPERATIONS.md`](./OPERATIONS.md) (day-2 ops), [`README.md`](../README.md) (architecture overview).
