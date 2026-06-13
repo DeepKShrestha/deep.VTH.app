@@ -22,6 +22,13 @@ import {
 } from "./context";
 import type { AuthenticatedRequest } from "./types";
 import { MESSAGES } from "./messages";
+import {
+  clearCsrfCookie,
+  clearSessionCookie,
+  extractSessionToken,
+  issueCsrfToken,
+  setSessionCookie,
+} from "./auth-cookies";
 import { authSessionRepo } from "../auth-session-repo";
 import {
   isUserLocked,
@@ -333,6 +340,8 @@ export function registerAuthRoutes(app: Express) {
 
     const token = generateToken();
     await sessions.set(token, user.id);
+    setSessionCookie(res, token);
+    issueCsrfToken(res);
 
     const base = publicAuthUser(user);
     res.json({
@@ -387,6 +396,8 @@ export function registerAuthRoutes(app: Express) {
     }
     const token = generateToken();
     await sessions.set(token, user.id);
+    setSessionCookie(res, token);
+    issueCsrfToken(res);
     const base = publicAuthUser(user);
     res.json({
       token,
@@ -527,18 +538,20 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.post("/api/auth/logout", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      await sessions.delete(authHeader.substring(7));
+    const extracted = extractSessionToken(req);
+    if (extracted) {
+      await sessions.delete(extracted.token);
     }
+    clearSessionCookie(res);
+    clearCsrfCookie(res);
     res.json({ message: "Logged out" });
   });
 
   /** Soft presence end on tab close — session stays valid for same-tab reload. */
   app.post("/api/auth/session/away", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      await sessions.markAway(authHeader.substring(7));
+    const extracted = extractSessionToken(req);
+    if (extracted) {
+      await sessions.markAway(extracted.token);
     }
     res.status(204).end();
   });
@@ -550,15 +563,18 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/me", async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const extracted = extractSessionToken(req);
+    if (!extracted) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    const token = authHeader.substring(7);
+    const token = extracted.token;
     const userId = await sessions.get(token);
     if (!userId) return res.status(401).json({ message: "Session expired" });
     const user = await authSessionRepo.getUserById(userId);
     if (!user) return res.status(401).json({ message: "User not found" });
+    // Refresh the readable CSRF cookie so a page reload (session cookie
+    // survives, in-memory CSRF value is gone) always has a token to echo.
+    issueCsrfToken(res);
     const base = publicAuthUser(user);
     res.json({
       ...base,
@@ -673,10 +689,7 @@ export function registerAuthRoutes(app: Express) {
     // attacker who had stolen a session token could keep using it even
     // after the legitimate owner rotated the password.
     if (updates.passwordHash) {
-      const authHeader = req.headers.authorization || "";
-      const currentToken = authHeader.startsWith("Bearer ")
-        ? authHeader.substring(7)
-        : "";
+      const currentToken = extractSessionToken(req)?.token ?? "";
       try {
         if (currentToken) {
           await dbRun(

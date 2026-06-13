@@ -7,4 +7,5 @@ export const MESSAGES = {
   BREAKPOINT_NOT_FOUND: "Breakpoint not found",
   INVALID_DATA: "Invalid data",
   NO_CHANGES_PROVIDED: "No changes provided",
+  INVALID_CSRF_TOKEN: "Invalid or missing CSRF token",
 } as const;

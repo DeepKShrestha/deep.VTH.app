@@ -11,6 +11,7 @@ import type { SafeUser } from "@shared/schema";
 import type { PermissionCapability } from "@shared/capabilities";
 import { resolveCapabilitiesForRole } from "@shared/capabilities";
 import { hydrateToggleDefaultsFromServer } from "@/lib/module-toggle-defaults";
+import { csrfHeaders } from "@/lib/csrf";
 
 export type InactivityTimeoutOption =
   | "1m"
@@ -55,10 +56,10 @@ export type LoginOutcome =
   | { kind: "error"; message: string }
   | { kind: "two_factor"; pendingToken: string };
 
-async function syncPreferencesFromServer(token: string, userId: number) {
+async function syncPreferencesFromServer(userId: number) {
   try {
     const prefRes = await fetch("/api/users/me/preferences", {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "same-origin",
     });
     if (!prefRes.ok) return;
     const prefs = (await prefRes.json()) as {
@@ -70,7 +71,7 @@ async function syncPreferencesFromServer(token: string, userId: number) {
       astToggleDefaults: prefs.astToggleDefaults,
       hospitalToggleDefaults: prefs.hospitalToggleDefaults,
     });
-    hydrateNotificationPrefsFromServer(userId, prefs.notificationPrefs, token);
+    hydrateNotificationPrefsFromServer(userId, prefs.notificationPrefs);
   } catch {
     /* ignore offline errors */
   }
@@ -86,7 +87,6 @@ const NOTIF_KEYS = {
 function hydrateNotificationPrefsFromServer(
   userId: number,
   serverPrefs: Record<string, unknown> | null,
-  token: string,
 ) {
   if (typeof window === "undefined") return;
 
@@ -99,9 +99,10 @@ function hydrateNotificationPrefsFromServer(
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...csrfHeaders(),
         },
         body: JSON.stringify({ notificationPrefs: local }),
+        credentials: "same-origin",
       }).catch(() => {});
     }
     return;
@@ -143,15 +144,14 @@ export function saveNotificationPrefsToServer(prefs: {
   soundStyle: string;
   soundVolume: number;
 }): void {
-  const token = getAuthToken();
-  if (!token) return;
   void fetch("/api/users/me/preferences", {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      ...csrfHeaders(),
     },
     body: JSON.stringify({ notificationPrefs: prefs }),
+    credentials: "same-origin",
     keepalive: true,
   }).catch(() => {});
 }
@@ -176,7 +176,6 @@ function readLocalNotificationPrefs(userId: number): Record<string, unknown> | n
 
 interface AuthContextType {
   user: SafeUser | null;
-  token: string | null;
   isLoading: boolean;
   inactivityTimeout: InactivityTimeoutOption;
   setInactivityTimeout: (value: InactivityTimeoutOption) => void;
@@ -229,9 +228,10 @@ interface SignupData {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// In-memory token + sessionStorage (persists on reload in same tab only)
-let storedToken: string | null = null;
-const TOKEN_STORAGE_KEY = "auth_token";
+// The session token now lives ONLY in an httpOnly cookie set by the server,
+// so JavaScript can neither read nor persist it. Auth state on the client is
+// therefore derived purely from `/api/auth/me` (the cookie rides along
+// automatically) rather than from any stored token.
 const LAST_LOGIN_AT_KEY = "auth_last_login_at";
 export const INACTIVITY_LOGOUT_FLAG_KEY = "logged_out_inactivity";
 const INACTIVITY_TIMEOUT_STORAGE_KEY = "inactivity_timeout";
@@ -249,20 +249,11 @@ const INACTIVITY_TIMEOUT_MS: Record<
   "30m": 30 * 60 * 1000,
 };
 
-export function getAuthToken(): string | null {
-  if (storedToken) return storedToken;
-  // Fallback for page reload/HMR race in the same tab.
-  return sessionStorage.getItem(TOKEN_STORAGE_KEY);
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(() => {
-    return sessionStorage.getItem(TOKEN_STORAGE_KEY);
-  });
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    return Boolean(sessionStorage.getItem(TOKEN_STORAGE_KEY));
-  });
+  // We can't synchronously know whether the httpOnly session cookie is valid,
+  // so we always start in a loading state and resolve it via `/api/auth/me`.
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [inactivityTimeout, setInactivityTimeoutState] =
     useState<InactivityTimeoutOption>(() => {
       const raw = localStorage.getItem(INACTIVITY_TIMEOUT_STORAGE_KEY);
@@ -286,47 +277,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   const inactivityTimerRef = useRef<number | null>(null);
 
-  const setAuth = useCallback((t: string | null, u: AuthUser | null) => {
-    storedToken = t;
-    if (t) {
-      sessionStorage.setItem(TOKEN_STORAGE_KEY, t);
-    } else {
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    }
-    setToken(t);
-    setUser(u);
-  }, []);
-
+  // Restore the session on load by asking the server who we are. The browser
+  // sends the httpOnly session cookie automatically; a 401 simply means we're
+  // logged out. Runs once on mount.
   useEffect(() => {
-    storedToken = token;
-  }, [token]);
-
-  useEffect(() => {
+    let cancelled = false;
     const bootstrapAuth = async () => {
-      if (!token) return;
       try {
         const res = await fetch("/api/auth/me", {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: "same-origin",
         });
         if (!res.ok) {
-          setAuth(null, null);
+          if (!cancelled) setUser(null);
           return;
         }
         const safeUser = (await res.json()) as AuthUser;
-        setAuth(token, safeUser);
-        await syncPreferencesFromServer(token, safeUser.id);
+        if (cancelled) return;
+        setUser(safeUser);
+        await syncPreferencesFromServer(safeUser.id);
       } catch {
-        setAuth(null, null);
+        if (!cancelled) setUser(null);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     void bootstrapAuth();
-    if (!token) {
-      setIsLoading(false);
-    }
-  }, [token, setAuth]);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = useCallback(
     async (usernameOrEmail: string, password: string): Promise<LoginOutcome> => {
@@ -335,6 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ usernameOrEmail, password }),
+          credentials: "same-origin",
         });
         const data = await res.json();
         if (!res.ok) {
@@ -343,18 +324,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.requiresTwoFactor && data.pendingToken) {
           return { kind: "two_factor", pendingToken: data.pendingToken };
         }
-        if (!data.token || !data.user) {
+        if (!data.user) {
           return { kind: "error", message: "Login failed" };
         }
-        setAuth(data.token, data.user);
+        setUser(data.user);
         localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
-        await syncPreferencesFromServer(data.token, data.user.id);
+        await syncPreferencesFromServer(data.user.id);
         return { kind: "ok", message: "Login successful" };
       } catch {
         return { kind: "error", message: "Network error" };
       }
     },
-    [setAuth],
+    [],
   );
 
   const completeTwoFactor = useCallback(
@@ -364,23 +345,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pendingToken, code }),
+          credentials: "same-origin",
         });
         const data = await res.json();
         if (!res.ok) {
           return { success: false, message: data.message || "Verification failed" };
         }
-        if (!data.token || !data.user) {
+        if (!data.user) {
           return { success: false, message: "Verification failed" };
         }
-        setAuth(data.token, data.user);
+        setUser(data.user);
         localStorage.setItem(LAST_LOGIN_AT_KEY, new Date().toISOString());
-        await syncPreferencesFromServer(data.token, data.user.id);
+        await syncPreferencesFromServer(data.user.id);
         return { success: true, message: "Login successful" };
       } catch {
         return { success: false, message: "Network error" };
       }
     },
-    [setAuth],
+    [],
   );
 
   const signup = useCallback(async (data: SignupData) => {
@@ -434,15 +416,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    if (storedToken) {
-      fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${storedToken}` },
-      }).catch(() => {});
-    }
+    // The cookie is sent automatically so the server can delete the right
+    // session and clear the cookie. CSRF header is harmless here (logout is
+    // not CSRF-gated server-side) but kept for uniformity.
+    fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { ...csrfHeaders() },
+      credentials: "same-origin",
+    }).catch(() => {});
     sessionStorage.removeItem(INACTIVITY_LOGOUT_FLAG_KEY);
-    setAuth(null, null);
-  }, [setAuth]);
+    setUser(null);
+  }, []);
 
   const updateCurrentUser = useCallback(
     (nextUser: SafeUser) => {
@@ -532,7 +516,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    if (!token || !user || inactivityTimeout === "never") {
+    if (!user || inactivityTimeout === "never") {
       clearTimer();
       return;
     }
@@ -565,20 +549,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.removeEventListener(eventName, resetTimer);
       }
     };
-  }, [token, user, inactivityTimeout, logout]);
+  }, [user, inactivityTimeout, logout]);
 
   // When the user closes the tab or navigates away, mark the server session as
-  // away so admin presence shows Offline quickly. Uses fetch keepalive (supports
-  // Authorization). Does not delete the session — a same-tab reload still works.
+  // away so admin presence shows Offline quickly. Uses fetch keepalive; the
+  // session cookie rides along automatically. Does not delete the session — a
+  // same-tab reload still works.
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
 
     const markSessionAway = () => {
-      const t = getAuthToken();
-      if (!t) return;
       fetch("/api/auth/session/away", {
         method: "POST",
-        headers: { Authorization: `Bearer ${t}` },
+        headers: { ...csrfHeaders() },
+        credentials: "same-origin",
         keepalive: true,
       }).catch(() => {});
     };
@@ -590,11 +574,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener("pagehide", onPageHide);
     return () => window.removeEventListener("pagehide", onPageHide);
-  }, [token]);
+  }, [user]);
 
   const value: AuthContextType = {
     user,
-    token,
     isLoading,
     inactivityTimeout,
     setInactivityTimeout,

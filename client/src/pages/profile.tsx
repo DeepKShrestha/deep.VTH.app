@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
-import { useAuth, getAuthToken } from "../lib/auth";
+import { useAuth } from "../lib/auth";
+import { csrfHeaders } from "@/lib/csrf";
 import { apiRequest, apiRequestForm } from "../lib/queryClient";
 import { compressProfilePhotoImage } from "@/lib/compress-case-attachment-image";
 import { useToast } from "../hooks/use-toast";
@@ -247,10 +248,10 @@ export default function ProfilePage() {
   async function handleProfilePhotoRemove() {
     try {
       setPhotoBusy(true);
-      const token = getAuthToken();
       const res = await fetch("/api/users/me/profile-photo", {
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { ...csrfHeaders() },
+        credentials: "same-origin",
       });
       const text = await res.text();
       if (!res.ok) {
@@ -775,17 +776,16 @@ export default function ProfilePage() {
                             variant="outline"
                             disabled={totpBusy}
                             onClick={async () => {
-                              const token = getAuthToken();
-                              if (!token) return;
                               setTotpBusy(true);
                               try {
                                 const res = await fetch("/api/auth/2fa/disable", {
                                   method: "POST",
                                   headers: {
-                                    Authorization: `Bearer ${token}`,
                                     "Content-Type": "application/json",
+                                    ...csrfHeaders(),
                                   },
                                   body: JSON.stringify({ password: totpDisablePassword }),
+                                  credentials: "same-origin",
                                 });
                                 const body = await res.json().catch(() => ({}));
                                 if (!res.ok) {
@@ -826,12 +826,10 @@ export default function ProfilePage() {
                               size="sm"
                               disabled={totpBusy}
                               onClick={async () => {
-                                const token = getAuthToken();
-                                if (!token) return;
                                 setTotpBusy(true);
                                 try {
                                   const res = await fetch("/api/auth/2fa/setup", {
-                                    headers: { Authorization: `Bearer ${token}` },
+                                    credentials: "same-origin",
                                   });
                                   const body = await res.json().catch(() => ({}));
                                   if (!res.ok) {
@@ -925,20 +923,20 @@ export default function ProfilePage() {
                                 type="button"
                                 disabled={totpBusy || totpEnableCode.length !== 6}
                                 onClick={async () => {
-                                  const token = getAuthToken();
-                                  if (!token || !totpDraftSecret) return;
+                                  if (!totpDraftSecret) return;
                                   setTotpBusy(true);
                                   try {
                                     const res = await fetch("/api/auth/2fa/enable", {
                                       method: "POST",
                                       headers: {
-                                        Authorization: `Bearer ${token}`,
                                         "Content-Type": "application/json",
+                                        ...csrfHeaders(),
                                       },
                                       body: JSON.stringify({
                                         secret: totpDraftSecret,
                                         code: totpEnableCode,
                                       }),
+                                      credentials: "same-origin",
                                     });
                                     const body = await res.json().catch(() => ({}));
                                     if (!res.ok) {

@@ -14,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getAuthToken } from "@/lib/auth";
 import { Database, Download, Loader2, Trash2, Upload } from "lucide-react";
 import {
   AlertDialog,
@@ -67,9 +66,8 @@ function formatBytes(n: number): string {
 }
 
 async function downloadBackupFile(filename: string): Promise<void> {
-  const token = getAuthToken();
   const res = await fetch(`/api/admin/backup/download/${encodeURIComponent(filename)}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "same-origin",
   });
   if (!res.ok) {
     const text = await res.text();

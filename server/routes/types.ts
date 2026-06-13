@@ -18,4 +18,10 @@ type ApprovedDownloadRequest = Pick<DownloadRequest, "id" | "status">;
 export type AuthenticatedRequest = Request & {
   currentUser: CurrentUser;
   approvedDownloadRequest?: ApprovedDownloadRequest;
+  /**
+   * How the session token was presented on this request: the httpOnly cookie
+   * (browser) or the Authorization header (tests / non-browser clients). Used
+   * by `requireAuth` to decide whether CSRF protection applies.
+   */
+  authTokenSource?: "cookie" | "header";
 };

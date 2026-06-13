@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { getAuthToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,15 +32,10 @@ export function PasswordResetIdCardPreview({ requestId, hasIdCard, status }: Pro
     let cancelled = false;
 
     const load = async () => {
-      const token = getAuthToken();
-      if (!token) {
-        setLoadError(true);
-        return;
-      }
       try {
         const res = await fetch(
           `${API_BASE}/api/admin/password-reset-requests/${requestId}/id-card`,
-          { headers: { Authorization: `Bearer ${token}` } },
+          { credentials: "same-origin" },
         );
         if (!res.ok) {
           if (!cancelled) setLoadError(true);

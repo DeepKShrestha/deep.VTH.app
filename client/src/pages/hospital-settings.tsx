@@ -15,7 +15,7 @@ import {
   hydrateToggleDefaultsFromServer,
   type HospitalToggleDefaults,
 } from "@/lib/module-toggle-defaults";
-import { getAuthToken } from "@/lib/auth";
+import { csrfHeaders } from "@/lib/csrf";
 import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
 
@@ -30,12 +30,10 @@ export default function HospitalSettingsPage() {
   );
 
   useEffect(() => {
-    const token = getAuthToken();
-    if (!token) return;
     void (async () => {
       try {
         const res = await fetch("/api/users/me/preferences", {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: "same-origin",
         });
         if (!res.ok) return;
         const p = (await res.json()) as {
@@ -55,16 +53,15 @@ export default function HospitalSettingsPage() {
 
   useEffect(() => {
     setHospitalToggleDefaults(toggleDefaults);
-    const token = getAuthToken();
-    if (!token) return;
     const tmr = window.setTimeout(() => {
       void fetch("/api/users/me/preferences", {
         method: "PUT",
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          ...csrfHeaders(),
         },
         body: JSON.stringify({ hospitalToggleDefaults: toggleDefaults }),
+        credentials: "same-origin",
       })
         .then((res) => {
           if (!res.ok) return;

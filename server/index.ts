@@ -68,8 +68,12 @@ app.use(express.urlencoded({ extended: false }));
  * - Origin in allowlist   -> reflect that exact origin (never "*").
  * - Origin NOT allowlisted -> no ACAO header; preflight is rejected with 403.
  *
- * We authenticate with a Bearer token (Authorization header), NOT cookies, so
- * `Access-Control-Allow-Credentials` is intentionally left off.
+ * Sessions are carried in an httpOnly cookie (browser) with an Authorization
+ * Bearer fallback (tests / non-browser callers). For the default same-origin
+ * deployment CORS never fires. For an allowlisted cross-origin SPA we reflect
+ * the exact origin and allow credentials so the session cookie can be sent
+ * (the client must then use `credentials: "include"`); the CSRF header is
+ * whitelisted so the double-submit token can cross.
  */
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
@@ -83,8 +87,12 @@ app.use((req, res, next) => {
   if (isAllowed) {
     res.setHeader("Access-Control-Allow-Origin", origin as string);
     res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Request-Id");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization,Content-Type,X-Request-Id,X-CSRF-Token",
+    );
     res.setHeader("Access-Control-Max-Age", "600");
   }
 

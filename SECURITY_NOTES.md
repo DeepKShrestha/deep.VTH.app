@@ -60,9 +60,23 @@ The following never execute in the browser and never expose their credentials to
 
 - **Auth tokens are opaque, server-side session tokens** (random value → `sessions`
   table row), not JWTs. No secret or PII is embedded in the token itself; revocation is
-  immediate by deleting the session row. Tokens are sent as `Authorization: Bearer <token>`.
-- **`requireAuth`** validates the bearer token on every protected route
-  (`server/routes/context.ts`), backed by a short-lived in-memory user cache
+  immediate by deleting the session row.
+- **The session token is carried in an `httpOnly` cookie** (`vth_session`, set on
+  login / 2FA in `server/routes/auth.ts`, helpers in `server/routes/auth-cookies.ts`).
+  Because it is `httpOnly` + `Secure` (prod) + `SameSite=Lax`, JavaScript cannot read it,
+  so an XSS cannot exfiltrate the session. The browser client no longer stores a token in
+  `sessionStorage` and never sends an `Authorization` header. A `Bearer <token>` header is
+  still **accepted** by the server as a fallback for tests / non-browser callers — this is
+  not a weakness because a forged cross-site request cannot set a custom header.
+- **CSRF protection (double-submit token).** Since the browser attaches the session cookie
+  automatically, cookie-authenticated **mutating** requests (`POST/PUT/PATCH/DELETE`) must
+  echo a readable `vth_csrf` cookie back in the `X-CSRF-Token` header; `requireAuth`
+  rejects a mismatch with `403`. Header-authenticated (Bearer) requests are exempt because
+  they cannot be CSRF'd. `SameSite=Lax` on the session cookie is the first line of defence;
+  the double-submit token is defence-in-depth.
+- **`requireAuth`** resolves the token from the cookie (preferred) or the Bearer header,
+  validates it on every protected route, enforces CSRF for cookie-based mutations
+  (`server/routes/context.ts`), and is backed by a short-lived in-memory user cache
   (`server/current-user-cache.ts`) that is invalidated on user update / session delete.
 - **Authorization is capability-based.** The single source of truth is
   `shared/capabilities.ts`; the server enforces it via `requireRole` /
@@ -123,10 +137,13 @@ to that authenticated user**:
 
 ## 7. Known limitations / things to be aware of
 
-- **Session token lives in `sessionStorage`** (`client/src/lib/auth.tsx`), so it is
-  readable by JavaScript and would be exposed by a successful XSS. This is mitigated by
-  the strict production CSP, but moving to an `httpOnly` cookie + CSRF protection would be
-  a stronger posture. This was intentionally **not** changed in this pass (larger refactor).
+- **Session token is now in an `httpOnly` cookie with CSRF protection** (see §4). JS can no
+  longer read it, so XSS can no longer steal the session. Two operational notes: (1) the
+  session/CSRF cookies are *session cookies* (no `Max-Age`), so fully closing the browser
+  ends the client session — a deploy that wipes `sessions` or a server restart has the same
+  effect, and users simply re-login; (2) `Secure` is only set when `NODE_ENV=production`, so
+  the cookie requires HTTPS in production (already the case behind the reverse proxy) and
+  works over plain HTTP only in local dev.
 - **CORS allowlist is opt-in via env.** If you ever split the frontend onto a different
   origin and forget to set `CORS_ALLOWED_ORIGINS`, cross-origin calls will fail closed
   (safe), not open.

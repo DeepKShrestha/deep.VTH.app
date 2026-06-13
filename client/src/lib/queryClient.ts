@@ -1,5 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { getAuthToken } from "@/lib/auth";
+import { csrfHeaders } from "@/lib/csrf";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
@@ -22,12 +22,6 @@ export class ApiError extends Error {
     this.bodyText = bodyText;
     this.serverMessage = trimmed;
   }
-}
-
-function getAuthHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  if (token) return { Authorization: `Bearer ${token}` };
-  return {};
 }
 
 function parseServerMessageJson(text: string): string | undefined {
@@ -54,7 +48,7 @@ export async function apiRequest(
   data?: unknown | undefined,
 ): Promise<Response> {
   const headers: Record<string, string> = {
-    ...getAuthHeaders(),
+    ...csrfHeaders(),
   };
   if (data) headers["Content-Type"] = "application/json";
 
@@ -62,6 +56,7 @@ export async function apiRequest(
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
+    credentials: "same-origin",
   });
 
   await throwIfResNotOk(res);
@@ -76,9 +71,10 @@ export async function apiRequestForm(
   const res = await fetch(`${API_BASE}${url}`, {
     method,
     headers: {
-      ...getAuthHeaders(),
+      ...csrfHeaders(),
     },
     body: formData,
+    credentials: "same-origin",
   });
 
   await throwIfResNotOk(res);
@@ -97,9 +93,12 @@ export function postFormDataWithProgress<T>(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE}${url}`);
-    const headers = getAuthHeaders();
-    if (headers.Authorization) {
-      xhr.setRequestHeader("Authorization", headers.Authorization);
+    // Same-origin XHR sends the session cookie automatically; we only need to
+    // attach the double-submit CSRF token for this mutating request.
+    xhr.withCredentials = true;
+    const csrf = csrfHeaders();
+    if (csrf["X-CSRF-Token"]) {
+      xhr.setRequestHeader("X-CSRF-Token", csrf["X-CSRF-Token"]);
     }
     xhr.upload.onprogress = (ev) => {
       if (!onProgress) return;
@@ -159,7 +158,7 @@ const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const res = await fetch(`${API_BASE}${queryKey.join("/")}`, {
-      headers: getAuthHeaders(),
+      credentials: "same-origin",
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

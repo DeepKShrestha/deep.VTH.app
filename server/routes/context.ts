@@ -15,6 +15,11 @@ import {
 import { findApprovedDownloadRequest } from "../download-request-auth";
 import { getPgPool } from "../pg-pool";
 import { dbAll, dbGet } from "../db-query";
+import {
+  extractSessionToken,
+  isMutatingMethod,
+  verifyCsrf,
+} from "./auth-cookies";
 
 const NepaliDateClass = (NepaliDateImport as any).default || NepaliDateImport;
 
@@ -51,9 +56,10 @@ export function generateToken(): string {
 }
 
 async function getCurrentUser(req: Request) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.substring(7);
+  const extracted = extractSessionToken(req);
+  if (!extracted) return null;
+  const { token, source } = extracted;
+  (req as AuthenticatedRequest).authTokenSource = source;
 
   // Fast path: cached snapshot avoids re-querying users on every request.
   // We still validate the session in the DB so revocation (logout, ban,
@@ -92,6 +98,15 @@ export async function requireAuth(
   if (!user) return res.status(401).json({ message: MESSAGES.NOT_AUTHENTICATED });
   if (!user.approved)
     return res.status(403).json({ message: MESSAGES.ACCOUNT_NOT_APPROVED });
+  // CSRF: only cookie-authenticated browsers are vulnerable (the browser
+  // attaches the cookie automatically). Header-authenticated callers (tests,
+  // scripts) can't be CSRF'd because a forged cross-site request cannot set a
+  // custom Authorization header. Enforce the double-submit token only for
+  // cookie-based mutating requests.
+  const authSource = (req as AuthenticatedRequest).authTokenSource;
+  if (authSource === "cookie" && isMutatingMethod(req.method) && !verifyCsrf(req)) {
+    return res.status(403).json({ message: MESSAGES.INVALID_CSRF_TOKEN });
+  }
   (req as AuthenticatedRequest).currentUser = user as CurrentUser;
   next();
 }

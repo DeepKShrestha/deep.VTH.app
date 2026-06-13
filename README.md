@@ -65,6 +65,7 @@ This README stays the **map of the whole system**; split only when a section bec
 | [23](#23-recent-hardening-changes-important) | Recent hardening |
 | [24](#24-production-deployment-deployer-handbook) | Production deployment (deployer handbook) |
 | [25](#25-where-the-detailed-server-deployment-guide-lives) | Where the detailed server deployment guide lives |
+| [26](#26-handover--ownership-transfer) | Handover / ownership transfer |
 
 ### Request flow (mental model)
 
@@ -320,14 +321,17 @@ Failure to update all layers causes "shows in register but not in editor" type m
 
 ## 9) Authentication and Sessions
 
-Frontend token persistence:
-- **API bearer token** is kept in **`sessionStorage`** (same-tab reload survives; closing the tab ends the session). A small in-memory cache avoids races during HMR. Other prefs (e.g. inactivity timeout, confirm-before-logout) use `localStorage` — see `client/src/lib/auth.tsx`.
+Frontend session model (httpOnly cookie + CSRF):
+- The session token lives in an **`httpOnly` cookie** (`vth_session`) set by the server — **JavaScript cannot read it**, so an XSS cannot exfiltrate the session. The client no longer stores any token in `sessionStorage`. On load the client calls `GET /api/auth/me` and the browser attaches the cookie automatically (`client/src/lib/auth.tsx`).
+- **CSRF protection (double-submit token):** because the browser sends the session cookie automatically, every cookie-authenticated **mutating** request (`POST/PUT/PATCH/DELETE`) must echo a readable `vth_csrf` cookie back in the `X-CSRF-Token` header. The client helper `client/src/lib/csrf.ts` does this; `requireAuth` rejects a mismatch with `403`. `SameSite=Lax` on the session cookie is the first defence; the token is defence-in-depth.
+- A `Bearer <token>` header is still **accepted** by the server as a fallback for tests / non-browser callers (`server/routes/auth-cookies.ts#extractSessionToken`); Bearer requests are exempt from CSRF because a forged cross-site request cannot set a custom header.
+- The session/CSRF cookies are **session cookies** (no `Max-Age`): closing the browser ends the client session. `Secure` is set only when `NODE_ENV=production` (so it works over plain HTTP in local dev and requires HTTPS in prod). Other prefs (inactivity timeout, confirm-before-logout) still use `localStorage`.
 
 Backend sessions:
-- Tables: `sessions` (token → user_id) + `users` (the user row).
+- Tables: `sessions` (token → user_id) + `users` (the user row). The token is the opaque value carried in the `vth_session` cookie (or Bearer fallback).
 - **On boot, ALL session rows are wiped by default** (`server/session-boot-prune.ts`) — a server restart is effectively a force-logout for everyone (the boot log warns when this happens). Set `WIPE_SESSIONS_ON_BOOT=false` to opt out and keep active sessions across restarts (useful on a dev laptop with nodemon; only expired rows are pruned in that mode).
 - `last_seen_at` writes are **throttled** to one DB write per session every 30 seconds (`server/auth-session-repo.ts#SESSION_LAST_SEEN_THROTTLE_MS`). Prevents a write storm on hot paths while keeping presence accurate within the 3-minute active window.
-- `requireAuth` uses a **short-lived in-memory cache** of the current-user snapshot keyed by bearer token (`server/current-user-cache.ts`). TTL ≈ 30 s, 5 000-entry cap, invalidated explicitly on `updateUser` / session delete. Keeps high-traffic endpoints from re-reading the `users` row on every request.
+- `requireAuth` resolves the token from the `vth_session` cookie (preferred) or the Bearer header, enforces CSRF on cookie-based mutations, and uses a **short-lived in-memory cache** of the current-user snapshot keyed by token (`server/current-user-cache.ts`). TTL ≈ 30 s, 5 000-entry cap, invalidated explicitly on `updateUser` / session delete. Keeps high-traffic endpoints from re-reading the `users` row on every request.
 - Sessions are deleted **explicitly** on logout, password change, user deletion, and bulk admin deletes.
 
 Signed image URLs:
@@ -366,7 +370,7 @@ Backend profile endpoints:
 
 Core domain:
 - `users` — accounts, role, approval, 2FA secrets, profile photo path.
-- `sessions` — bearer-token → user_id, with `created_at`, `expires_at`, `last_seen_at`. FK to `users` with `ON DELETE CASCADE` (Postgres) or trigger-enforced cleanup (SQLite).
+- `sessions` — session-token → user_id, with `created_at`, `expires_at`, `last_seen_at`. The token is delivered to the browser in the `httpOnly` `vth_session` cookie (Bearer header accepted as a fallback). FK to `users` with `ON DELETE CASCADE` (Postgres) or trigger-enforced cleanup (SQLite).
 - `cases` — both hospital and AST cases (distinguished by `case_number` prefix `CASE-` vs `AST-`).
 - `case_attachments` — uploaded images per case. FK to `cases` with `ON DELETE CASCADE`.
 - `case_change_logs` — per-case audit trail of edits. FK to `users` with `ON DELETE RESTRICT` so authorship is never lost.
@@ -814,9 +818,12 @@ Canonical touchpoints:
 - Verify `form_scope` values in DB for affected rows
 
 ### Unexpected 401 loops
-- Session may be expired/cleared (expected on restart)
+- Session may be expired/cleared (expected on restart — sessions are wiped on boot by default)
 - Re-login and recheck
-- Confirm token logic in `client/src/lib/auth.tsx`
+- Confirm the cookie/session flow in `client/src/lib/auth.tsx` (the `GET /api/auth/me` bootstrap) and `server/routes/context.ts`
+
+### `403 Invalid or missing CSRF token` on a save/update
+- A cookie-authenticated mutating request reached the server without a matching `X-CSRF-Token` header. Causes: the `vth_csrf` cookie was cleared/blocked, or a custom `fetch` was added that didn't spread `csrfHeaders()` (`client/src/lib/csrf.ts`) and `credentials`. Reload to re-issue the CSRF cookie (`GET /api/auth/me` refreshes it), and make sure any hand-written mutating fetch includes both `...csrfHeaders()` and `credentials: "same-origin"`.
 
 ### Back button inconsistency
 - Standard reference pattern: `case-list.tsx` header
@@ -914,7 +921,9 @@ These landed together as a production-readiness sweep:
 |--------|------|
 | `server/case-counters.ts` | Atomically allocates `dailyNumber`, `monthlyNumber`, `yearlyNumber`, and `caseNumber` via the `case_counters` table. |
 | `server/case-repo.ts` | Thin data-access layer for cases used by both modules. |
-| `server/current-user-cache.ts` | In-memory cache of CurrentUser snapshots; keyed by bearer token. |
+| `server/current-user-cache.ts` | In-memory cache of CurrentUser snapshots; keyed by session token. |
+| `server/routes/auth-cookies.ts` | httpOnly session-cookie + double-submit CSRF helpers (set/clear cookies, extract token from cookie-or-Bearer, verify CSRF). |
+| `client/src/lib/csrf.ts` | Reads the `vth_csrf` cookie and produces the `X-CSRF-Token` header for mutating requests. |
 | `server/auth-session-repo.ts` | All session and user lifecycle; invalidates the current-user cache on writes. |
 | `server/download-request-auth.ts` + `server/download-request-range.ts` | Server-side authorization for student exports (single-use, range-bound). |
 | `server/sql-statement-splitter.ts` | Migration-aware SQL splitter; understands `BEGIN ... END;` so trigger bodies survive. |
@@ -966,4 +975,31 @@ It covers, in order:
 15. A copy-pasteable cheat sheet at the end.
 
 If anything in that guide goes stale, that file — not this README — is where you update the deployment instructions.
+
+---
+
+## 26) Handover / ownership transfer
+
+When the project changes hands (e.g. handed over to an institution's IT team), the **code is portable and not tied to any single host**. The runtime is a standard Node process + a database (SQLite or Postgres) behind any reverse proxy. There is **no DigitalOcean-specific code** — the DO guide is just one worked example.
+
+### Code / repository
+1. **Transfer the GitHub repo** to the new owner's account/org (Settings → Danger Zone → Transfer), or add the new team as collaborators if the original author stays involved.
+2. **Update the git remote** anywhere the repo is already cloned (e.g. on the server): `git remote set-url origin <new-repo-url>`. The clone URL also appears in `docs/DIGITALOCEAN-DEPLOYMENT.md` §4.1 — update it there.
+3. **Verify no secrets are in git history** (`.env`, signing secret, DB password). `.env*` is gitignored and only created on the server; if anything ever leaked into history, **rotate** it, don't just delete it.
+
+### Server / infrastructure (only if an existing deployment is handed over too)
+- Give the new team their **own SSH access** (add their public key to `~/.ssh/authorized_keys`; don't share private keys), or transfer the hosting account.
+- Hand over the secrets list from a password manager: hosting login + 2FA recovery codes, server IP/hostname, the `.env` contents (especially `ATTACHMENT_SIGNING_SECRET`), and the database connection string / credentials.
+- If they want a **fresh deployment on different infrastructure** instead, point them at `docs/SERVER-DEPLOYMENT-GUIDE.md` (host-agnostic) and §16 (environment variables). See "Host portability" below for the only things that change.
+
+### Host portability (deploying somewhere other than DigitalOcean)
+Nothing in the app assumes DigitalOcean. To run anywhere (university VM, on-prem server, another cloud, or a container) you only need:
+1. **Node** in the supported range (`package.json` `engines`) and the build artifacts (`npm ci && npm run build`).
+2. A **database**: SQLite (a writable file path) or PostgreSQL (`DATABASE_URL`). Postgres site backups need `pg_dump`/`psql` on `PATH` (or `PG_BIN`).
+3. The **required env vars** from §16 (notably `ATTACHMENT_SIGNING_SECRET`, `NODE_ENV=production`, `PORT`, the DB vars) and **absolute** storage paths (`CASE_ATTACHMENTS_DIR`, `BACKUP_LOCAL_DIR`, etc.).
+4. A **reverse proxy that terminates HTTPS** (nginx/Caddy/cloud load balancer) forwarding to `PORT`. The app sets `trust proxy` for one hop. The session cookie is `Secure` in production, so **HTTPS is required** in prod.
+5. A way to keep the process alive (systemd, PM2, a container orchestrator, or a PaaS).
+6. **Off-host backups** of the database **and** the storage paths (uploads/backups) — the app's superadmin backup is in-app convenience, not a substitute for host-level backups.
+
+If a different origin serves the SPA than the API, set `CORS_ALLOWED_ORIGINS` (§16) — otherwise leave it empty for the default same-origin deployment. There is no Dockerfile in the repo; add one if you want containerized releases.
 

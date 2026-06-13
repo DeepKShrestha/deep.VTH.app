@@ -5,7 +5,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { StickyScrollPage } from "@/components/sticky-scroll-page";
-import { getAuthToken } from "@/lib/auth";
 import { filenameFromContentDisposition } from "@/lib/content-disposition-filename";
 import { DownloadFailedError, readDownloadErrorMessage } from "@/lib/download-error";
 import { Button } from "@/components/ui/button";
@@ -131,13 +130,12 @@ export default function HospitalExportDataPage() {
     if (speciesFilter.trim()) params.set("species", speciesFilter.trim());
     if (kind === "xlsx") params.set("output", "xlsx");
 
-    const token = getAuthToken();
     const url = `${API_BASE}/api/export/hospital-cases?${params.toString()}`;
     const fallback = kind === "xlsx" ? "hospital-export.xlsx" : "hospital-cases.csv";
 
     fetch(url, {
       cache: "no-store",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "same-origin",
     })
       .then(async (res) => {
         if (!res.ok) {
