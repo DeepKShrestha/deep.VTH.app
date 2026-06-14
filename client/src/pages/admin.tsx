@@ -1,5 +1,5 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Link, useSearch } from "wouter";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, ApiError } from "@/lib/queryClient";
 import { formatOrdinalBatch } from "@shared/ordinal-batch";
@@ -23,6 +23,8 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  ChevronDown,
+  ChevronRight,
   Download,
   HardDrive,
   Plus,
@@ -176,6 +178,18 @@ function roleBadge(role: string) {
   return <Badge className={`${colors[role] || colors.pending} border-0 text-xs`}>{labels[role] || role}</Badge>;
 }
 
+/** Order role groups appear in the All Users list (top to bottom). */
+const APPROVED_ROLE_ORDER = ["superadmin", "admin", "staff", "intern", "student"] as const;
+
+/** Plural section headings for each role group in the All Users list. */
+const ROLE_GROUP_LABELS: Record<string, string> = {
+  superadmin: "Super Admins",
+  admin: "Admins",
+  staff: "Staff",
+  intern: "Interns",
+  student: "Students",
+};
+
 function csvEscape(value: string | number | null | undefined): string {
   const raw = value == null ? "" : String(value);
   if (/[",\r\n]/.test(raw)) {
@@ -198,10 +212,11 @@ export default function AdminPanel({
   const [openFieldSectionKey, setOpenFieldSectionKey] = useState<string | null>(null);
   const [openCatalogPanel, setOpenCatalogPanel] = useState<"species" | "breeds" | null>(null);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
+  const [location, setLocation] = useLocation();
   const search = useSearch();
   const { toast } = useToast();
   const { user: currentUser, updateCurrentUser, isSuperAdmin } = useAuth();
-  const initialTabFromUrl = useMemo(() => {
+  const tabFromUrl = useMemo(() => {
     if (forcedTab) return forcedTab;
     const rawSearch = (search || "").replace(/^\?/, "");
     if (!rawSearch) return mode === "form-only" ? "form-options" : "pending";
@@ -220,15 +235,28 @@ export default function AdminPanel({
           ];
     return tab && allowed.includes(tab) ? tab : mode === "form-only" ? "form-options" : "pending";
   }, [forcedTab, search, mode, isSuperAdmin]);
-  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
+  /** Keep the tab in the URL so remounts and notification deep-links stay on the right panel. */
+  const setAdminTab = useCallback(
+    (tab: string) => {
+      setActiveTab(tab);
+      if (forcedTab || mode === "form-only") return;
+      const base = location.split("?")[0] || "/admin";
+      const params = new URLSearchParams((search || "").replace(/^\?/, ""));
+      params.set("tab", tab);
+      const qs = params.toString();
+      setLocation(qs ? `${base}?${qs}` : base, { replace: true });
+    },
+    [forcedTab, mode, location, search, setLocation],
+  );
   useEffect(() => {
-    setActiveTab(initialTabFromUrl);
-  }, [initialTabFromUrl]);
+    setActiveTab(tabFromUrl);
+  }, [tabFromUrl]);
   useEffect(() => {
     if (mode !== "full") return;
     if ((activeTab === "backup" || activeTab === "audit-log") && !isSuperAdmin)
-      setActiveTab("pending");
-  }, [activeTab, isSuperAdmin, mode]);
+      setAdminTab("pending");
+  }, [activeTab, isSuperAdmin, mode, setAdminTab]);
   useEffect(() => {
     if (mode !== "form-only") return;
     const onPointerDown = (event: MouseEvent) => {
@@ -276,10 +304,18 @@ export default function AdminPanel({
   const [downloadLogsFilter, setDownloadLogsFilter] = useState("");
   const [downloadSourceFilter, setDownloadSourceFilter] = useState<"all" | "ast_report" | "hospital_case">("all");
   const [usersFilter, setUsersFilter] = useState("");
+  /** Debounced filter for the grouped user list only — keeps typing smooth without thrashing the DOM. */
+  const [debouncedUsersFilter, setDebouncedUsersFilter] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedUsersFilter(usersFilter), 150);
+    return () => window.clearTimeout(timer);
+  }, [usersFilter]);
   const [studentBatchFilter, setStudentBatchFilter] = useState<string>("all");
   const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(() => new Set());
   /** When true, All Users shows row checkboxes and bulk delete controls (works with search and batch filter). */
   const [usersMultiSelectMode, setUsersMultiSelectMode] = useState(false);
+  /** Role-group keys the admin has collapsed in All Users. Empty = all expanded. */
+  const [collapsedUserGroups, setCollapsedUserGroups] = useState<Set<string>>(() => new Set());
   const [editForm, setEditForm] = useState({
     fullName: "",
     address: "",
@@ -522,19 +558,35 @@ export default function AdminPanel({
     ),
   ).sort((a, b) => a - b);
   const normalizedUsersFilter = usersFilter.trim().toLowerCase();
-  const filteredApprovedUsers = approvedUsers.filter((u) => {
-    if (studentBatchFilter !== "all") {
-      const batchNum = Number.parseInt(studentBatchFilter, 10);
-      if (u.designation !== "student" || u.studentBatch !== batchNum) return false;
-    }
-    if (!normalizedUsersFilter) return true;
-    return (
-      u.fullName.toLowerCase().includes(normalizedUsersFilter) ||
-      u.username.toLowerCase().includes(normalizedUsersFilter) ||
-      u.email.toLowerCase().includes(normalizedUsersFilter) ||
-      (u.designation === "student" && `${u.studentBatch ?? ""}`.includes(normalizedUsersFilter))
-    );
-  });
+  const normalizedDebouncedUsersFilter = debouncedUsersFilter.trim().toLowerCase();
+  const filterApprovedUsers = useCallback(
+    (needle: string) => {
+      const normalized = needle.trim().toLowerCase();
+      return approvedUsers.filter((u) => {
+        if (studentBatchFilter !== "all") {
+          const batchNum = Number.parseInt(studentBatchFilter, 10);
+          if (u.designation !== "student" || u.studentBatch !== batchNum) return false;
+        }
+        if (!normalized) return true;
+        return (
+          u.fullName.toLowerCase().includes(normalized) ||
+          u.username.toLowerCase().includes(normalized) ||
+          u.email.toLowerCase().includes(normalized) ||
+          (u.designation === "student" && `${u.studentBatch ?? ""}`.includes(normalized))
+        );
+      });
+    },
+    [approvedUsers, studentBatchFilter],
+  );
+  const filteredApprovedUsers = useMemo(
+    () => filterApprovedUsers(usersFilter),
+    [filterApprovedUsers, usersFilter],
+  );
+  const filteredApprovedUsersForList = useMemo(
+    () => filterApprovedUsers(debouncedUsersFilter),
+    [filterApprovedUsers, debouncedUsersFilter],
+  );
+  const usersListFilterSynced = usersFilter === debouncedUsersFilter;
   const deletableFilteredUsers = useMemo(
     () =>
       filteredApprovedUsers.filter((u) => {
@@ -544,6 +596,87 @@ export default function AdminPanel({
       }),
     [filteredApprovedUsers, currentUser],
   );
+  const toggleUserGroup = (role: string) =>
+    setCollapsedUserGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  /**
+   * Flattened, ordered render list for All Users: role headers, optional
+   * per-batch sub-headers (students only), and the user rows themselves.
+   * Collapsing a role omits its user rows but keeps the header. While a search
+   * or batch filter is active we force every group open so matches are never
+   * hidden behind a collapsed header.
+   */
+  const approvedUserItems = useMemo(() => {
+    type Item =
+      | { kind: "roleHeader"; key: string; role: string; label: string; count: number; collapsed: boolean }
+      | { kind: "batchHeader"; key: string; groupKey: string; label: string; count: number; collapsed: boolean }
+      | { kind: "user"; key: string; user: AdminUser };
+    const byName = (a: AdminUser, b: AdminUser) =>
+      a.fullName.localeCompare(b.fullName);
+    const searchActive =
+      normalizedUsersFilter.length > 0 || studentBatchFilter !== "all";
+    const items: Item[] = [];
+    for (const role of APPROVED_ROLE_ORDER) {
+      const groupUsers = filteredApprovedUsersForList.filter(
+        (u) => (u.role || "pending") === role,
+      );
+      if (groupUsers.length === 0) continue;
+      const collapsed = !searchActive && collapsedUserGroups.has(role);
+      items.push({
+        kind: "roleHeader",
+        key: `role-${role}`,
+        role,
+        label: ROLE_GROUP_LABELS[role] ?? role,
+        count: groupUsers.length,
+        collapsed,
+      });
+      if (collapsed) continue;
+      if (role === "student") {
+        const byBatch = new Map<string, AdminUser[]>();
+        for (const u of groupUsers) {
+          const key = Number.isInteger(u.studentBatch)
+            ? String(u.studentBatch)
+            : "none";
+          if (!byBatch.has(key)) byBatch.set(key, []);
+          byBatch.get(key)!.push(u);
+        }
+        const batchKeys = Array.from(byBatch.keys()).sort((a, b) => {
+          if (a === "none") return 1;
+          if (b === "none") return -1;
+          return Number(a) - Number(b);
+        });
+        for (const bk of batchKeys) {
+          const bUsers = byBatch.get(bk)!.slice().sort(byName);
+          const batchGroupKey = `batch:${bk}`;
+          const batchCollapsed = !searchActive && collapsedUserGroups.has(batchGroupKey);
+          items.push({
+            kind: "batchHeader",
+            key: `batch-${bk}`,
+            groupKey: batchGroupKey,
+            label: bk === "none" ? "No batch assigned" : formatOrdinalBatch(Number(bk)),
+            count: bUsers.length,
+            collapsed: batchCollapsed,
+          });
+          if (batchCollapsed) continue;
+          for (const u of bUsers) items.push({ kind: "user", key: `user-${u.id}`, user: u });
+        }
+      } else {
+        for (const u of groupUsers.slice().sort(byName)) {
+          items.push({ kind: "user", key: `user-${u.id}`, user: u });
+        }
+      }
+    }
+    return items;
+  }, [
+    filteredApprovedUsersForList,
+    collapsedUserGroups,
+    normalizedUsersFilter,
+    studentBatchFilter,
+  ]);
   const sourceMatches = (r: { requestSource?: string }) =>
     downloadSourceFilter === "all" || (r.requestSource || "ast_report") === downloadSourceFilter;
   const pendingDlRequests = downloadRequests.filter((r) => r.status === "pending" && sourceMatches(r));
@@ -1399,7 +1532,7 @@ export default function AdminPanel({
       </div>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={setAdminTab}>
         {mode === "full" && (
         <TabsList className="w-full h-auto flex overflow-x-auto gap-1 whitespace-nowrap p-1">
           <TabsTrigger className="shrink-0 text-xs sm:text-sm" value="pending" data-testid="tab-pending">
@@ -1450,7 +1583,7 @@ export default function AdminPanel({
                 variant="outline"
                 size="sm"
                 className="h-9"
-                onClick={() => setActiveTab("users")}
+                onClick={() => setAdminTab("users")}
               >
                 Go to All Users
               </Button>
@@ -1513,6 +1646,7 @@ export default function AdminPanel({
               <Input
                 value={usersFilter}
                 onChange={(e) => setUsersFilter(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
                 placeholder="Search by name, username, email, or batch"
                 data-testid="input-users-filter"
                 className="h-9 sm:max-w-sm"
@@ -1604,7 +1738,7 @@ export default function AdminPanel({
               Download CSV
             </Button>
           </div>
-          {filteredApprovedUsers.length === 0 ? (
+          {filteredApprovedUsers.length === 0 && usersListFilterSynced ? (
             <div className="flex flex-col items-center justify-center gap-4 px-4 py-12 text-center">
               <p className="text-sm text-muted-foreground max-w-md">
                 {normalizedUsersFilter || studentBatchFilter !== "all"
@@ -1639,14 +1773,58 @@ export default function AdminPanel({
                   variant="outline"
                   size="sm"
                   className="h-9"
-                  onClick={() => setActiveTab("pending")}
+                  onClick={() => setAdminTab("pending")}
                 >
                   View pending signups
                 </Button>
               </div>
             </div>
           ) : (
-            filteredApprovedUsers.map((u) => (
+            approvedUserItems.map((item) => {
+              if (item.kind === "roleHeader") {
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => toggleUserGroup(item.role)}
+                    className="flex w-full items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-left text-sm font-semibold hover:bg-muted mt-3 first:mt-0"
+                    data-testid={`button-toggle-user-group-${item.role}`}
+                    aria-expanded={!item.collapsed}
+                  >
+                    {item.collapsed ? (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span>{item.label}</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({item.count})
+                    </span>
+                  </button>
+                );
+              }
+              if (item.kind === "batchHeader") {
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => toggleUserGroup(item.groupKey)}
+                    className="flex w-full items-center gap-1.5 px-3 pt-1 pb-0.5 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                    data-testid={`button-toggle-user-batch-${item.groupKey}`}
+                    aria-expanded={!item.collapsed}
+                  >
+                    {item.collapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>{item.label}</span>
+                    <span className="normal-case">({item.count})</span>
+                  </button>
+                );
+              }
+              const u = item.user;
+              return (
               <Card key={u.id}>
                 <CardContent className="pt-4 pb-3">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -1865,7 +2043,8 @@ export default function AdminPanel({
                   )}
                 </CardContent>
               </Card>
-            ))
+              );
+            })
           )}
         </TabsContent>
 
@@ -2196,7 +2375,7 @@ export default function AdminPanel({
                   variant="outline"
                   size="sm"
                   className="h-9"
-                  onClick={() => setActiveTab("users")}
+                  onClick={() => setAdminTab("users")}
                 >
                   Go to All Users
                 </Button>
@@ -2205,7 +2384,7 @@ export default function AdminPanel({
                   variant="outline"
                   size="sm"
                   className="h-9"
-                  onClick={() => setActiveTab("pending")}
+                  onClick={() => setAdminTab("pending")}
                 >
                   View pending signups
                 </Button>
