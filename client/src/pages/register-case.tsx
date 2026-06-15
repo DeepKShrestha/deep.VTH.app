@@ -931,7 +931,17 @@ export default function RegisterCase({
     return Array.from(new Set([...cleaned, "Other"]));
   }, [breedOptionsData]);
 
+  // Reset breed when the user changes species, because the breed list is
+  // species-specific. We must NOT do this when a saved draft is being
+  // restored: `applyDraft` sets species and breed together, and without this
+  // guard the species change here would immediately wipe the just-restored
+  // breed. The ref is set in `applyDraft` and consumed on the next run.
+  const skipBreedResetOnSpeciesChangeRef = useRef(false);
   useEffect(() => {
+    if (skipBreedResetOnSpeciesChangeRef.current) {
+      skipBreedResetOnSpeciesChangeRef.current = false;
+      return;
+    }
     setBreedChoice("");
     setCustomBreed("");
     setBreed("");
@@ -1043,6 +1053,14 @@ export default function RegisterCase({
 
   const applyDraft = (draft: Draft) => {
     const f = draft.fields;
+    // Tell the species-change effect to skip its breed reset for this update:
+    // we are restoring species AND breed together and must keep the breed.
+    // Only arm the guard when species actually changes, so the effect that
+    // consumes it is guaranteed to run (otherwise a no-op restore could leave
+    // the flag armed and swallow a later genuine species change).
+    const willSpeciesChange =
+      (f.species ?? "") !== species || (f.customSpecies ?? "") !== customSpecies;
+    skipBreedResetOnSpeciesChangeRef.current = willSpeciesChange;
     setBillNumber(f.billNumber ?? "");
     setOwnerName(f.ownerName ?? "");
     setOwnerAddress(f.ownerAddress ?? "");
@@ -3628,6 +3646,16 @@ export default function RegisterCase({
           const sectionActsAsQuestion =
             section.key !== "ast" &&
             (configuredQuestions.length === 0 || hasDuplicateSectionQuestion);
+          // For single-question sections whose field label is NOT visible (Box
+          // only / hideLabel, or the section renders as one box using the title
+          // as its label), the field's required "*" has nowhere to show. In that
+          // case surface the "*" on the section title instead. Multi-question
+          // sections keep their per-label "*" and never get a title "*".
+          const onlyVisibleQuestion =
+            visibleQuestions.length === 1 ? visibleQuestions[0] : null;
+          const sectionTitleShowsRequiredMark =
+            Boolean(onlyVisibleQuestion?.required) &&
+            (sectionActsAsQuestion || onlyVisibleQuestion?.hideLabel === true);
           if (
             !sectionActsAsQuestion &&
             visibleQuestions.length === 0 &&
@@ -3848,7 +3876,12 @@ export default function RegisterCase({
           return (
             <Card key={section.key} id={`register-section-${section.key}`} className="scroll-mt-28">
           <CardHeader className="pb-4">
-                <CardTitle className="text-base">{section.title}</CardTitle>
+                <CardTitle className="text-base">
+                  {section.title}
+                  {sectionTitleShowsRequiredMark && (
+                    <span className="text-destructive"> *</span>
+                  )}
+                </CardTitle>
           </CardHeader>
               <CardContent className="space-y-4">
                 {mode === "hospital" && section.key === "vaccination_history" ? (
