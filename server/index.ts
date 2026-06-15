@@ -5,8 +5,9 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { DB_FILE, DB_PROVIDER } from "./db";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { sql } from "drizzle-orm";
+import { readCookie, SESSION_COOKIE } from "./routes/auth-cookies";
 import crypto from "crypto";
 import { dbGet } from "./db-query";
 import { getPgPool, closePgPool } from "./pg-pool";
@@ -182,13 +183,33 @@ app.use(
   authLimiter,
 );
 
+/**
+ * Per-key budget for the general API limiter.
+ *
+ * Keyed per *session* (the `vth_session` cookie) rather than per IP, because an
+ * entire campus/hospital is often behind a single NAT public IP. With per-IP
+ * keying everyone there shared one bucket and could trip the limit during busy
+ * periods even though no single person was abusing anything. Keying per session
+ * gives each logged-in device its own budget.
+ *
+ * Requests with no session cookie (logged-out, static-asset fetches, health
+ * checks, and non-browser Bearer callers such as tests) fall back to the
+ * IP-based key via `ipKeyGenerator`, which also normalises IPv6 correctly. The
+ * fallback is mandatory: without it, every cookieless request would collapse
+ * into a single shared bucket and throttle each other.
+ */
 app.use(
   "/api",
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 1000,
+    max: 2000,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => {
+      const token = readCookie(req, SESSION_COOKIE);
+      if (token) return `sess:${token}`;
+      return ipKeyGenerator(req.ip ?? "");
+    },
     message: {
       message: "Too many requests. Please retry later.",
     },
