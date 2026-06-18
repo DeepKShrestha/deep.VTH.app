@@ -8,10 +8,10 @@ import { uniqueStatisticalColumnName } from "@shared/hospital-export-statistical
 import { dbAll } from "./db-query";
 import { mergeOrphanFormSections } from "./hospital-form-definition";
 
-const NON_EXPORTABLE_INPUT_TYPES = new Set([
-  "treatment_prescription",
-  "hospital_veterinarian",
-]);
+/** AST-only sections omitted from hospital CSV/Excel exports. */
+export const HOSPITAL_EXPORT_EXCLUDED_SECTION_KEYS = new Set(["sample", "ast"]);
+
+const NON_EXPORTABLE_INPUT_TYPES = new Set(["astResults"]);
 
 export type HospitalExportHeaderMode = "clinical" | "statistical";
 
@@ -48,7 +48,9 @@ export async function loadHospitalExportFormColumns(): Promise<HospitalExportFor
         WHERE form_scope = 'shared' OR form_scope = ${"hospital"}
         ORDER BY section_key ASC, display_order ASC`,
   );
-  sections = mergeOrphanFormSections(sections, questions);
+  sections = mergeOrphanFormSections(sections, questions).filter(
+    (s) => !HOSPITAL_EXPORT_EXCLUDED_SECTION_KEYS.has(s.key),
+  );
 
   const sectionOrder = new Map(sections.map((s, i) => [s.key, i]));
   const sectionTitleByKey = new Map(sections.map((s) => [s.key, s.title]));
@@ -118,7 +120,7 @@ export function appendLegacyExportColumns(
     }
     legacy.push({ key, header });
   }
-  legacy.sort((a, b) => a.header.localeCompare(b.header));
+  legacy.sort((a, b) => a.key.localeCompare(b.key));
   return [...formColumns, ...legacy];
 }
 

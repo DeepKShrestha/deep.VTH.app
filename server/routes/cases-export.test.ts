@@ -7,6 +7,7 @@ import {
   buildHospitalExportSchema,
   EXPORT_STATISTICAL_AUDIT_ORDER,
   HOSPITAL_CLINICAL_CORE_HEADERS,
+  HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS,
   hospitalExportColumnOrder,
   isStatisticalExportAllowed,
   parseExportLayout,
@@ -201,11 +202,15 @@ describe("cases export helpers", () => {
   });
 
   it("statistical hospital export uses snake_case headers and audit columns", () => {
-    const schema = buildHospitalExportSchema("statistical", [], []);
+    const schema = buildHospitalExportSchema(
+      "statistical",
+      [{ key: "chiefComplaint", header: "ignored" }],
+      [],
+    );
     const rows = toHospitalExportRows([makeCase({ caseNumber: "CASE-1" })], schema);
     const order = hospitalExportColumnOrder(rows, schema);
     expect(order[0]).toBe("case_number");
-    expect(order).toContain("treatment_prescription");
+    expect(order).toContain("chief_complaint");
     for (const header of EXPORT_STATISTICAL_AUDIT_ORDER) {
       expect(order).toContain(header);
     }
@@ -236,7 +241,10 @@ describe("cases export helpers", () => {
   it("hospital export includes vet, treatment, and vaccination columns", () => {
     const schema = buildHospitalExportSchema(
       "clinical",
-      [],
+      [
+        { key: "attendingVeterinarian", header: "Attending veterinarian" },
+        { key: "treatmentPrescription", header: "Treatment / Prescription" },
+      ],
       ["canineRabies", "canineRabiesLastDate", "canineDhppil"],
     );
     const rows = toHospitalExportRows(
@@ -271,15 +279,15 @@ describe("cases export helpers", () => {
       schema,
     );
     const order = hospitalExportColumnOrder(rows, schema);
-    expect(order).toContain("Attending Veterinarian");
+    expect(order).toContain("Attending veterinarian");
     expect(order).toContain("Treatment / Prescription");
     expect(order).toContain("Rabies (vaccination status)");
-    expect(rows[0]["Attending Veterinarian"]).toBe("Dr. A");
+    expect(rows[0]["Attending veterinarian"]).toBe("Dr. A | NVC: 123 | Dept: Surgery");
     expect(rows[0]["Rabies (vaccination status)"]).toBe("Yes");
     expect(rows[0]["Rabies (last vaccination date BS)"]).toBe("2082-01-15");
   });
 
-  it("prunes dynamic columns that are empty for every row", () => {
+  it("pruneEmptyDynamicExportColumns can still drop all-empty dynamic columns", () => {
     const schema = buildHospitalExportSchema(
       "clinical",
       [
@@ -295,9 +303,48 @@ describe("cases export helpers", () => {
     const order = pruneEmptyDynamicExportColumns(rows, schema);
     expect(order).toContain("Diagnosis");
     expect(order).not.toContain("Empty Field");
-    for (const header of HOSPITAL_CLINICAL_CORE_HEADERS) {
+  });
+
+  it("keeps empty form question columns in hospital export", () => {
+    const schema = buildHospitalExportSchema(
+      "clinical",
+      [
+        { key: "diagnosis", header: "Diagnosis" },
+        { key: "emptyField", header: "Empty Field" },
+      ],
+      [],
+    );
+    const rows = toHospitalExportRows(
+      [makeCase({ customFields: JSON.stringify({ diagnosis: "OK" }) })],
+      schema,
+    );
+    const order = hospitalExportColumnOrder(rows, schema);
+    expect(order).toContain("Diagnosis");
+    expect(order).toContain("Empty Field");
+    expect(rows[0]["Empty Field"]).toBe("");
+    for (const header of HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS) {
       expect(order).toContain(header);
     }
+  });
+
+  it("orders vitals after earlier form sections and before later sections", () => {
+    const schema = buildHospitalExportSchema(
+      "clinical",
+      [
+        { key: "ownerName", header: "Owner Name" },
+        { key: "chiefComplaint", header: "Chief Complaint" },
+        { key: "temperature", header: "Temperature" },
+        { key: "weight", header: "Weight" },
+        { key: "diagnosis", header: "Diagnosis" },
+        { key: "remarks", header: "General Remarks" },
+      ],
+      [],
+    );
+    const order = schema.columns;
+    expect(order.indexOf("Weight")).toBeGreaterThan(order.indexOf("Temperature"));
+    expect(order.indexOf("Weight")).toBeGreaterThan(order.indexOf("Chief Complaint"));
+    expect(order.indexOf("Weight")).toBeLessThan(order.indexOf("Diagnosis"));
+    expect(order.indexOf("Owner Name")).toBeGreaterThan(order.indexOf("Case Number"));
   });
 
   it("buildExportCsvFilename includes species slug when set", () => {

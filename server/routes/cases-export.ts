@@ -1,4 +1,9 @@
 import type { Case } from "@shared/schema";
+import {
+  hospitalExportLeadingClinicalRow,
+  hospitalExportLeadingStatisticalRow,
+  resolveHospitalExportFieldValue,
+} from "@shared/hospital-export-values";
 import type { HospitalExportFormColumn } from "../hospital-export-schema";
 import {
   appendLegacyExportColumns,
@@ -109,12 +114,27 @@ export const HOSPITAL_EXPORT_EXTRA_ORDER = [
   "treatment_prescription",
 ] as const;
 
-/** Human-readable headers for hospital clinical export (no AST sample/culture fields). */
-export const HOSPITAL_CLINICAL_CORE_HEADERS = [
+/** Identifier columns always leading the hospital export (not on the registration form). */
+export const HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS = [
   "Case Number",
   "Bill Number",
   "Case Date (BS)",
   "Case Date (AD)",
+] as const;
+
+export const HOSPITAL_EXPORT_LEADING_STATISTICAL_ORDER = [
+  "case_number",
+  "bill_number",
+  "date_bs",
+  "date_ad",
+] as const;
+
+/**
+ * @deprecated Hospital exports now follow form question order after the leading identifiers.
+ * Kept for tests and callers that still reference the old fixed core block.
+ */
+export const HOSPITAL_CLINICAL_CORE_HEADERS = [
+  ...HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS,
   "Owner Name",
   "Owner Address",
   "Owner Phone",
@@ -143,10 +163,7 @@ export const HOSPITAL_AUDIT_HEADERS = [
 
 /** Hospital clinical core columns in snake_case (no AST sample/culture fields). */
 export const HOSPITAL_STATISTICAL_CORE_ORDER = [
-  "case_number",
-  "bill_number",
-  "date_bs",
-  "date_ad",
+  ...HOSPITAL_EXPORT_LEADING_STATISTICAL_ORDER,
   "owner_name",
   "owner_address",
   "owner_phone",
@@ -517,102 +534,11 @@ export function stringifyCustomValue(value: unknown): string {
   return String(value);
 }
 
-function hospitalCaseClinicalRow(c: Case): ExportRow {
-  return {
-    "Case Number": c.caseNumber,
-    "Bill Number": c.billNumber || "",
-    "Case Date (BS)": c.date,
-    "Case Date (AD)": c.dateAd || "",
-    "Owner Name": c.ownerName,
-    "Owner Address": c.ownerAddress,
-    "Owner Phone": c.ownerPhone,
-    Species: c.species,
-    Breed: c.breed,
-    "Animal Name": c.animalName || "",
-    Age: c.age || "",
-    Sex: c.sex || "",
-    "General Remarks": c.remarks || "",
-    "Attending Veterinarian": c.veterinarianName?.trim() ?? "",
-    "Attending Veterinarian NVC": c.veterinarianNvc?.trim() ?? "",
-    "Attending Veterinarian Department": c.veterinarianDepartment?.trim() ?? "",
-    "Treatment / Prescription": formatTreatmentDetailsExport(c.treatmentDetails),
-  };
-}
-
-function hospitalCaseStatisticalRow(c: Case): ExportRow {
-  return {
-    case_number: c.caseNumber,
-    bill_number: c.billNumber || "",
-    date_bs: c.date,
-    date_ad: c.dateAd || "",
-    owner_name: c.ownerName,
-    owner_address: c.ownerAddress,
-    owner_phone: c.ownerPhone,
-    species: c.species,
-    breed: c.breed,
-    animal_name: c.animalName || "",
-    age: c.age || "",
-    sex: c.sex || "",
-    remarks: c.remarks || "",
-    attending_veterinarian_name: c.veterinarianName?.trim() ?? "",
-    attending_veterinarian_nvc: c.veterinarianNvc?.trim() ?? "",
-    attending_veterinarian_department: c.veterinarianDepartment?.trim() ?? "",
-    treatment_prescription: formatTreatmentDetailsExport(c.treatmentDetails),
-  };
-}
-
 function hospitalCaseStatisticalAuditRow(c: Case): ExportRow {
   return exportStatisticalAuditRow(c);
 }
 
-function formatTreatmentDetailsExport(raw: string | null): string {
-  if (!raw?.trim()) return "";
-  try {
-    const parsed = JSON.parse(raw) as Record<
-      string,
-      { medications?: Array<Record<string, string>>; generalInstructions?: string }
-    >;
-    const chunks: string[] = [];
-    for (const block of Object.values(parsed)) {
-      if (!block || typeof block !== "object") continue;
-      if (Array.isArray(block.medications)) {
-        for (const med of block.medications) {
-          if (!med || typeof med !== "object") continue;
-          const line = [
-            med.medication,
-            med.dose,
-            med.doseUnit,
-            med.route,
-            med.frequency,
-            med.duration,
-            med.note,
-          ]
-            .map((x) => String(x ?? "").trim())
-            .filter(Boolean)
-            .join(" ");
-          if (line) chunks.push(line);
-        }
-      }
-      const gi = String(block.generalInstructions ?? "").trim();
-      if (gi) chunks.push(gi);
-    }
-    return chunks.join(" | ");
-  } catch {
-    return raw.trim();
-  }
-}
-
-/** Collect every custom_fields key present in the export batch. */
-export function collectHospitalCustomFieldKeys(casesData: Case[]): Set<string> {
-  const keys = new Set<string>();
-  for (const c of casesData) {
-    const fields = parseCustomFields(c.customFields);
-    for (const key of Object.keys(fields)) keys.add(key);
-  }
-  return keys;
-}
-
-/** Build export schema: clinical core, form-ordered dynamic fields, optional audit tail. */
+/** Build export schema: leading identifiers, form-ordered fields, optional audit tail. */
 export function buildHospitalExportSchema(
   layout: HospitalExportLayout,
   formColumns: HospitalExportFormColumn[],
@@ -620,7 +546,7 @@ export function buildHospitalExportSchema(
 ): HospitalExportSchema {
   if (layout === "statistical") {
     const reserved = new Set<string>([
-      ...HOSPITAL_STATISTICAL_CORE_ORDER,
+      ...HOSPITAL_EXPORT_LEADING_STATISTICAL_ORDER,
       ...HOSPITAL_STATISTICAL_AUDIT_ORDER,
     ]);
     const statisticalForm = toStatisticalFormColumns(formColumns, reserved);
@@ -631,20 +557,20 @@ export function buildHospitalExportSchema(
       "statistical",
     );
     const customKeyToHeader = new Map(dynamicColumns.map((c) => [c.key, c.header]));
-    const core = [...HOSPITAL_STATISTICAL_CORE_ORDER];
+    const leading = [...HOSPITAL_EXPORT_LEADING_STATISTICAL_ORDER];
     const dynamicHeaders = dynamicColumns.map((c) => c.header);
     const audit = [...HOSPITAL_STATISTICAL_AUDIT_ORDER];
-    const columns = [...core, ...dynamicHeaders, ...audit];
+    const columns = [...leading, ...dynamicHeaders, ...audit];
     return {
       layout,
       columns,
       customKeyToHeader,
-      dynamicColumnStart: core.length,
-      dynamicColumnEnd: core.length + dynamicHeaders.length,
+      dynamicColumnStart: leading.length,
+      dynamicColumnEnd: leading.length + dynamicHeaders.length,
     };
   }
 
-  const reserved = new Set<string>([...HOSPITAL_CLINICAL_CORE_HEADERS]);
+  const reserved = new Set<string>([...HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS]);
   const dynamicColumns = appendLegacyExportColumns(
     formColumns,
     dataCustomKeys,
@@ -652,15 +578,15 @@ export function buildHospitalExportSchema(
     "clinical",
   );
   const customKeyToHeader = new Map(dynamicColumns.map((c) => [c.key, c.header]));
-  const clinical = [...HOSPITAL_CLINICAL_CORE_HEADERS];
+  const leading = [...HOSPITAL_EXPORT_LEADING_CLINICAL_HEADERS];
   const dynamicHeaders = dynamicColumns.map((c) => c.header);
-  const columns = [...clinical, ...dynamicHeaders];
+  const columns = [...leading, ...dynamicHeaders];
   return {
     layout,
     columns,
     customKeyToHeader,
-    dynamicColumnStart: clinical.length,
-    dynamicColumnEnd: clinical.length + dynamicHeaders.length,
+    dynamicColumnStart: leading.length,
+    dynamicColumnEnd: leading.length + dynamicHeaders.length,
   };
 }
 
@@ -680,33 +606,49 @@ export function pruneEmptyDynamicExportColumns(
   return [...before, ...keptDynamic, ...after];
 }
 
-/** One row per hospital case with human-readable headers and form-ordered custom fields. */
+/** Collect every custom_fields key present in the export batch. */
+export function collectHospitalCustomFieldKeys(casesData: Case[]): Set<string> {
+  const keys = new Set<string>();
+  for (const c of casesData) {
+    const fields = parseCustomFields(c.customFields);
+    for (const key of Object.keys(fields)) keys.add(key);
+  }
+  return keys;
+}
+
+/** One row per hospital case with form-ordered headers and all configured question columns. */
 export function toHospitalExportRows(
   casesData: Case[],
   schema: HospitalExportSchema,
 ): ExportRow[] {
   return casesData.map((c) => {
+    const customFields = parseCustomFields(c.customFields);
     const row: ExportRow =
       schema.layout === "statistical"
         ? {
-            ...hospitalCaseStatisticalRow(c),
+            ...hospitalExportLeadingStatisticalRow(c),
             ...hospitalCaseStatisticalAuditRow(c),
           }
-        : { ...hospitalCaseClinicalRow(c) };
-    const customFields = parseCustomFields(c.customFields);
+        : { ...hospitalExportLeadingClinicalRow(c) };
+
     for (const [key, header] of Array.from(schema.customKeyToHeader.entries())) {
-      row[header] = stringifyCustomValue(customFields[key]);
+      row[header] = resolveHospitalExportFieldValue(
+        c,
+        key,
+        customFields,
+        stringifyCustomValue,
+      );
     }
     return row;
   });
 }
 
-/** Column order for hospital export; prunes empty dynamic columns when rows are present. */
+/** Column order for hospital export — keeps every configured form column. */
 export function hospitalExportColumnOrder(
-  rows: ExportRow[],
+  _rows: ExportRow[],
   schema: HospitalExportSchema,
 ): string[] {
-  return pruneEmptyDynamicExportColumns(rows, schema);
+  return [...schema.columns];
 }
 
 /**
