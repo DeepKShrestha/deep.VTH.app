@@ -52,13 +52,18 @@ import {
   astLongExportColumnOrder,
   astWideExportColumnOrder,
   buildExportCsvFilename,
+  buildHospitalExportSchema,
+  collectHospitalCustomFieldKeys,
   hospitalExportColumnOrder,
+  isStatisticalExportAllowed,
+  parseExportLayout,
   parseExportQueryFilters,
   rowsToCsv,
   toAstLongExportRows,
   toAstWideExportRows,
   toHospitalExportRows,
 } from "./cases-export";
+import { loadHospitalExportFormColumns } from "../hospital-export-schema";
 import {
   computeHospitalDashboard,
   resolvePeriodWindow,
@@ -2030,19 +2035,31 @@ export function registerExportRoutes(app: Express) {
     console.info(
       `[export] scope=ast user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species || "*"} matched=${casesData.length}`,
     );
+    const layout = parseExportLayout((req.query as { layout?: string }).layout);
+    if (!isStatisticalExportAllowed(currentUser.role) && layout === "statistical") {
+      return res.status(403).json({
+        message:
+          "Statistical export is available to staff and admins only. Students can download the clinical export after approval.",
+      });
+    }
     const format =
       typeof (req.query as { format?: string }).format === "string"
         ? String((req.query as { format?: string }).format).toLowerCase()
         : "wide";
     const rows =
-      format === "long" ? toAstLongExportRows(casesData) : toAstWideExportRows(casesData);
+      format === "long"
+        ? toAstLongExportRows(casesData, layout)
+        : toAstWideExportRows(casesData, layout);
     const columnOrder =
-      format === "long" ? astLongExportColumnOrder() : astWideExportColumnOrder();
+      format === "long"
+        ? astLongExportColumnOrder(layout)
+        : astWideExportColumnOrder(layout);
 
     const baseName = buildExportCsvFilename({
       scope: "ast",
       dateFrom,
       dateTo,
+      exportLayout: layout,
       astLayout: format === "long" ? "long" : "wide",
       species,
     }).replace(/\.csv$/i, "");
@@ -2055,7 +2072,13 @@ export function registerExportRoutes(app: Express) {
       const buf = await rowsToXlsxBuffer(
         rows,
         columnOrder,
-        format === "long" ? "AST cases (long)" : "AST cases (wide)",
+        format === "long"
+          ? layout === "statistical"
+            ? "AST cases (statistical long)"
+            : "AST cases (clinical long)"
+          : layout === "statistical"
+            ? "AST cases (statistical wide)"
+            : "AST cases (clinical wide)",
       );
       res.setHeader(
         "Content-Type",
@@ -2097,13 +2120,29 @@ export function registerExportRoutes(app: Express) {
       console.info(
         `[export] scope=hospital user=${currentUser.id} role=${currentUser.role} dateFrom=${dateFrom || "*"} dateTo=${dateTo || "*"} species=${species || "*"} matched=${casesData.length}`,
       );
-      const rows = toHospitalExportRows(casesData);
-      const columnOrder = hospitalExportColumnOrder(rows);
+      const layout = parseExportLayout(
+        (req.query as { layout?: string }).layout,
+      );
+      if (!isStatisticalExportAllowed(currentUser.role) && layout === "statistical") {
+        return res.status(403).json({
+          message:
+            "Statistical export is available to staff and admins only. Students can download the clinical export after approval.",
+        });
+      }
+      const formColumns = await loadHospitalExportFormColumns();
+      const schema = buildHospitalExportSchema(
+        layout,
+        formColumns,
+        collectHospitalCustomFieldKeys(casesData),
+      );
+      const rows = toHospitalExportRows(casesData, schema);
+      const columnOrder = hospitalExportColumnOrder(rows, schema);
 
       const baseName = buildExportCsvFilename({
         scope: "hospital",
         dateFrom,
         dateTo,
+        exportLayout: layout,
         species,
       }).replace(/\.csv$/i, "");
 
@@ -2112,7 +2151,11 @@ export function registerExportRoutes(app: Express) {
 
       if (output === "xlsx") {
         const { rowsToXlsxBuffer } = await import("./cases-export-xlsx");
-        const buf = await rowsToXlsxBuffer(rows, columnOrder, "Hospital cases");
+        const buf = await rowsToXlsxBuffer(
+          rows,
+          columnOrder,
+          layout === "statistical" ? "Hospital cases (statistical)" : "Hospital cases (clinical)",
+        );
         res.setHeader(
           "Content-Type",
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

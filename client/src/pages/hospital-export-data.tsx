@@ -19,6 +19,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { BsDateInput } from "@/components/bs-date-input";
 import { getTodayBsAd } from "@/lib/nepali-date";
 import {
@@ -30,11 +38,15 @@ import { useEffect } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronDown,
   Download,
-  FileText,
   FileSpreadsheet,
+  FileText,
 } from "lucide-react";
 import type { DownloadRequest } from "@shared/schema";
+
+type HospitalExportLayout = "clinical" | "statistical";
+type HospitalExportFormat = "csv" | "xlsx";
 
 export default function HospitalExportDataPage() {
   const { isStudent } = useAuth();
@@ -111,7 +123,7 @@ export default function HospitalExportDataPage() {
     },
   });
 
-  const handleDownload = (kind: "csv" | "xlsx") => {
+  const handleDownload = (layout: HospitalExportLayout, kind: HospitalExportFormat) => {
     if (exportDisabled) {
       toast({
         title: rangeCheck.reason || "Download access is not available.",
@@ -124,14 +136,19 @@ export default function HospitalExportDataPage() {
     if (dateTo) params.set("dateTo", dateTo);
     if (speciesFilter.trim()) params.set("species", speciesFilter.trim());
     if (kind === "xlsx") params.set("output", "xlsx");
+    params.set("layout", layout);
 
     const path = `/api/export/hospital-cases?${params.toString()}`;
-    const fallback = kind === "xlsx" ? "hospital-export.xlsx" : "hospital-cases.csv";
+    const fallback =
+      kind === "xlsx"
+        ? `hospital-export-${layout}.xlsx`
+        : `hospital-export-${layout}.csv`;
 
     runExportDownload({ path, fallbackName: fallback })
       .then(({ rowCount }) => {
+        const layoutLabel = layout === "clinical" ? "Clinical" : "Statistical";
         toast({
-          title: kind === "xlsx" ? "Excel download started" : "CSV download started",
+          title: `${layoutLabel} ${kind === "xlsx" ? "Excel" : "CSV"} download started`,
           description:
             rowCount != null ? `${rowCount} row${rowCount === 1 ? "" : "s"}` : undefined,
         });
@@ -168,7 +185,7 @@ export default function HospitalExportDataPage() {
               Hospital Export Data
             </h1>
             <p className="text-sm text-muted-foreground">
-              Pick a Bikram Sambat date range, then download CSV for offline analysis.
+              Export hospital cases for reports or statistical analysis.
             </p>
           </div>
         </div>
@@ -231,11 +248,28 @@ export default function HospitalExportDataPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-base">Download</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              One row per case: stable <code className="text-[10px]">snake_case</code> core columns,
-              then extra columns named like the registration form. CSV is UTF-8 with BOM; Excel adds
-              a frozen header row and filters. Nested values stay as JSON in the cell.
-            </p>
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <p>
+                <span className="font-medium text-foreground">Clinical export</span> uses plain
+                English column names (for example, &quot;Case Number&quot;, &quot;Chief
+                Complaint&quot;). Best for reading in Excel, printing, and sharing reports. No
+                system or audit fields are included.
+              </p>
+              <p>
+                <span className="font-medium text-foreground">Statistical export</span> uses
+                technical <code className="text-[10px]">snake_case</code> column names (for
+                example, <code className="text-[10px]">case_number</code>,{" "}
+                <code className="text-[10px]">chief_complaint</code>) and adds audit fields such
+                as case ID, counters, and timestamps. Best for R, Python, SPSS, and other analysis
+                tools.
+              </p>
+              {isStudent && (
+                <p className="text-amber-800 dark:text-amber-200">
+                  As a student, your approved download is clinical only. Ask staff or an admin if
+                  you need a statistical export.
+                </p>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {isStudent && activeApproval && (
@@ -249,7 +283,8 @@ export default function HospitalExportDataPage() {
                   dateTo: activeApproval.dateTo,
                 })}
                 <span className="text-emerald-700 dark:text-emerald-300">
-                  {" "}— single use; the approval is consumed when you download.
+                  {" "}
+                  — single use; the approval is consumed when you download.
                 </span>
               </div>
             )}
@@ -262,27 +297,56 @@ export default function HospitalExportDataPage() {
                 <span>{rangeCheck.reason}</span>
               </div>
             )}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Button
-                onClick={() => handleDownload("csv")}
-                className="gap-2 w-full sm:flex-1"
-                data-testid="button-download-csv"
-                disabled={exportDisabled}
-              >
-                <FileText className="w-4 h-4" />
-                Download CSV
-              </Button>
-              <Button
-                onClick={() => handleDownload("xlsx")}
-                variant="secondary"
-                className="gap-2 w-full sm:flex-1"
-                data-testid="button-download-xlsx"
-                disabled={exportDisabled}
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Download Excel
-              </Button>
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="gap-2 w-full sm:w-auto"
+                  data-testid="button-download"
+                  disabled={exportDisabled}
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                  <ChevronDown className="w-4 h-4 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel>Clinical export</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => handleDownload("clinical", "csv")}
+                  data-testid="button-download-clinical-csv"
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Clinical — CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleDownload("clinical", "xlsx")}
+                  data-testid="button-download-clinical-xlsx"
+                >
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Clinical — Excel
+                </DropdownMenuItem>
+                {!isStudent && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Statistical export</DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onClick={() => handleDownload("statistical", "csv")}
+                      data-testid="button-download-statistical-csv"
+                    >
+                      <FileText className="w-4 h-4 mr-2" />
+                      Statistical — CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleDownload("statistical", "xlsx")}
+                      data-testid="button-download-statistical-xlsx"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 mr-2" />
+                      Statistical — Excel
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </CardContent>
         </Card>
       )}
@@ -295,7 +359,9 @@ export default function HospitalExportDataPage() {
               Request Download Access
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              As a student, you need admin approval to download data. Submit a request below.
+              As a student, you need admin approval to download clinical hospital data (readable
+              Excel/CSV for your approved date range). Statistical exports are available to staff
+              and admins.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">

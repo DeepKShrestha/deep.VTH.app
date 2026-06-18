@@ -44,14 +44,14 @@ function minimalCase(overrides: Partial<Case> = {}): Case {
 
 describe("cases-export-xlsx", () => {
   it("writes an xlsx ZIP (PK header)", async () => {
-    const buf = await rowsToXlsxBuffer([], astWideExportColumnOrder(), "Empty");
+    const buf = await rowsToXlsxBuffer([], astWideExportColumnOrder("statistical"), "Empty");
     expect(buf[0]).toBe(0x50);
     expect(buf[1]).toBe(0x4b);
   });
 
   it("writes a workbook with a data row", async () => {
-    const rows = toAstWideExportRows([minimalCase()]);
-    const order = astWideExportColumnOrder();
+    const rows = toAstWideExportRows([minimalCase()], "statistical");
+    const order = astWideExportColumnOrder("statistical");
     const buf = await rowsToXlsxBuffer(rows, order, "AST");
     expect(buf.length).toBeGreaterThan(2000);
     expect(buf[0]).toBe(0x50);

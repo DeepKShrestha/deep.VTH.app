@@ -1,5 +1,9 @@
 import type { Case } from "@shared/schema";
-import { resolveHospitalExportFieldLabel } from "@shared/hospital-export-field-labels";
+import type { HospitalExportFormColumn } from "../hospital-export-schema";
+import {
+  appendLegacyExportColumns,
+  toStatisticalFormColumns,
+} from "../hospital-export-schema";
 
 /** Normalize Express query values (string | string[] | undefined) to a trimmed string. */
 export function parseOptionalExportQueryString(value: unknown): string | undefined {
@@ -26,6 +30,26 @@ export function parseExportQueryFilters(query: Record<string, unknown>): {
     species: parseOptionalExportQueryString(query.species),
   };
 }
+
+export type HospitalExportLayout = "clinical" | "statistical";
+
+/** Shared export layout parser (hospital + AST). */
+export function parseExportLayout(value: unknown): HospitalExportLayout {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "statistical" || raw === "full") return "statistical";
+  return "clinical";
+}
+
+/** @deprecated Use parseExportLayout */
+export const parseHospitalExportLayout = parseExportLayout;
+
+/** Students may only download the clinical layout (Option C). */
+export function isStatisticalExportAllowed(role: string): boolean {
+  return role !== "student";
+}
+
+/** @deprecated Use isStatisticalExportAllowed */
+export const isHospitalStatisticalExportAllowed = isStatisticalExportAllowed;
 
 type AstItem = {
   antibiotic?: string;
@@ -85,10 +109,137 @@ export const HOSPITAL_EXPORT_EXTRA_ORDER = [
   "treatment_prescription",
 ] as const;
 
-const CORE_HEADER_RESERVED = new Set<string>([
-  ...CORE_CASE_SNAKE_ORDER,
-  ...HOSPITAL_EXPORT_EXTRA_ORDER,
-]);
+/** Human-readable headers for hospital clinical export (no AST sample/culture fields). */
+export const HOSPITAL_CLINICAL_CORE_HEADERS = [
+  "Case Number",
+  "Bill Number",
+  "Case Date (BS)",
+  "Case Date (AD)",
+  "Owner Name",
+  "Owner Address",
+  "Owner Phone",
+  "Species",
+  "Breed",
+  "Animal Name",
+  "Age",
+  "Sex",
+  "General Remarks",
+  "Attending Veterinarian",
+  "Attending Veterinarian NVC",
+  "Attending Veterinarian Department",
+  "Treatment / Prescription",
+] as const;
+
+/** Audit/metadata headers appended only for layout=statistical (clinical labels). */
+export const HOSPITAL_AUDIT_HEADERS = [
+  "Case ID",
+  "Daily Number",
+  "Monthly Number",
+  "Yearly Number",
+  "Record Created At",
+  "Record Updated At",
+  "Last Updated By",
+] as const;
+
+/** Hospital clinical core columns in snake_case (no AST sample/culture fields). */
+export const HOSPITAL_STATISTICAL_CORE_ORDER = [
+  "case_number",
+  "bill_number",
+  "date_bs",
+  "date_ad",
+  "owner_name",
+  "owner_address",
+  "owner_phone",
+  "species",
+  "breed",
+  "animal_name",
+  "age",
+  "sex",
+  "remarks",
+  "attending_veterinarian_name",
+  "attending_veterinarian_nvc",
+  "attending_veterinarian_department",
+  "treatment_prescription",
+] as const;
+
+/** Audit/metadata columns for statistical export (hospital + AST). */
+export const EXPORT_STATISTICAL_AUDIT_ORDER = [
+  "case_id",
+  "daily_number",
+  "monthly_number",
+  "yearly_number",
+  "record_created_at",
+  "record_updated_at",
+  "last_updated_by_name",
+] as const;
+
+/** @deprecated Use EXPORT_STATISTICAL_AUDIT_ORDER */
+export const HOSPITAL_STATISTICAL_AUDIT_ORDER = EXPORT_STATISTICAL_AUDIT_ORDER;
+
+/** Human-readable AST case columns (clinical export). */
+export const AST_CLINICAL_CORE_HEADERS = [
+  "Case Number",
+  "Bill Number",
+  "Case Date (BS)",
+  "Case Date (AD)",
+  "Owner Name",
+  "Owner Address",
+  "Owner Phone",
+  "Species",
+  "Breed",
+  "Animal Name",
+  "Age",
+  "Sex",
+  "Sample Type",
+  "Sample Date (BS)",
+  "Sample Date (AD)",
+  "Culture Organism",
+  "General Remarks",
+] as const;
+
+/** AST clinical core in snake_case (statistical export; no audit fields). */
+export const AST_STATISTICAL_CORE_ORDER = [
+  "case_number",
+  "bill_number",
+  "date_bs",
+  "date_ad",
+  "owner_name",
+  "owner_address",
+  "owner_phone",
+  "species",
+  "breed",
+  "animal_name",
+  "age",
+  "sex",
+  "sample_type",
+  "sample_date_bs",
+  "sample_date_ad",
+  "culture_organism",
+  "remarks",
+] as const;
+
+export const AST_CLINICAL_WIDE_COUNT_HEADER = "AST Result Count";
+
+export function astClinicalWideSlotHeader(index: number): string {
+  return `AST Result ${String(index + 1).padStart(2, "0")}`;
+}
+
+const AST_CLINICAL_LONG_HEADERS = {
+  ast_row_index: "AST Row",
+  ast_antibiotic: "Antibiotic",
+  ast_symbol: "Symbol",
+  ast_disc_content: "Disc Content",
+  ast_zone_mm: "Zone (mm)",
+  ast_sensitivity: "Sensitivity",
+} as const;
+
+export type HospitalExportSchema = {
+  layout: HospitalExportLayout;
+  columns: string[];
+  customKeyToHeader: Map<string, string>;
+  dynamicColumnStart: number;
+  dynamicColumnEnd: number;
+};
 
 export type CoreCaseSnakeKey = (typeof CORE_CASE_SNAKE_ORDER)[number];
 
@@ -139,20 +290,88 @@ export function formatAstSlot(a: AstItem): string {
 
 /**
  * Wide AST export: one row per case, fixed columns (easy filters / pivot in Excel).
- * Extra AST rows beyond {@link AST_WIDE_SLOT_COUNT} are omitted (use `format=long`).
+ * Extra AST rows beyond {@link AST_WIDE_SLOT_COUNT} are omitted (use long format).
  */
-export function toAstWideExportRows(casesData: Case[]): ExportRow[] {
-  return casesData.map((c) => {
-    const core = caseCoreSnake(c);
-    const astData = parseAstResults(c.astResults);
-    const row: ExportRow = { ...core };
-    row.ast_result_count = String(astData.length);
+export function toAstWideExportRows(
+  casesData: Case[],
+  layout: HospitalExportLayout = "clinical",
+): ExportRow[] {
+  return casesData.map((c) => buildAstWideRow(c, layout));
+}
+
+function astCaseClinicalCore(c: Case): ExportRow {
+  return {
+    "Case Number": c.caseNumber,
+    "Bill Number": c.billNumber || "",
+    "Case Date (BS)": c.date,
+    "Case Date (AD)": c.dateAd || "",
+    "Owner Name": c.ownerName,
+    "Owner Address": c.ownerAddress,
+    "Owner Phone": c.ownerPhone,
+    Species: c.species,
+    Breed: c.breed,
+    "Animal Name": c.animalName || "",
+    Age: c.age || "",
+    Sex: c.sex || "",
+    "Sample Type": c.sampleType || "",
+    "Sample Date (BS)": c.sampleDate || "",
+    "Sample Date (AD)": c.sampleDateAd || "",
+    "Culture Organism": c.cultureResult || "",
+    "General Remarks": c.remarks || "",
+  };
+}
+
+function astCaseStatisticalCore(c: Case): ExportRow {
+  return {
+    case_number: c.caseNumber,
+    bill_number: c.billNumber || "",
+    date_bs: c.date,
+    date_ad: c.dateAd || "",
+    owner_name: c.ownerName,
+    owner_address: c.ownerAddress,
+    owner_phone: c.ownerPhone,
+    species: c.species,
+    breed: c.breed,
+    animal_name: c.animalName || "",
+    age: c.age || "",
+    sex: c.sex || "",
+    sample_type: c.sampleType || "",
+    sample_date_bs: c.sampleDate || "",
+    sample_date_ad: c.sampleDateAd || "",
+    culture_organism: c.cultureResult || "",
+    remarks: c.remarks || "",
+  };
+}
+
+function exportStatisticalAuditRow(c: Case): ExportRow {
+  return {
+    case_id: String(c.id),
+    daily_number: c.dailyNumber != null ? String(c.dailyNumber) : "",
+    monthly_number: c.monthlyNumber != null ? String(c.monthlyNumber) : "",
+    yearly_number: c.yearlyNumber != null ? String(c.yearlyNumber) : "",
+    record_created_at: c.createdAt ?? "",
+    record_updated_at: c.updatedAt ?? "",
+    last_updated_by_name: c.lastUpdatedByName ?? "",
+  };
+}
+
+function buildAstWideRow(c: Case, layout: HospitalExportLayout): ExportRow {
+  const astData = parseAstResults(c.astResults);
+  if (layout === "clinical") {
+    const row: ExportRow = { ...astCaseClinicalCore(c) };
+    row[AST_CLINICAL_WIDE_COUNT_HEADER] = String(astData.length);
     for (let i = 0; i < AST_WIDE_SLOT_COUNT; i++) {
-      const key = `ast_result_slot_${String(i + 1).padStart(2, "0")}`;
-      row[key] = astData[i] ? formatAstSlot(astData[i]) : "";
+      row[astClinicalWideSlotHeader(i)] = astData[i] ? formatAstSlot(astData[i]) : "";
     }
     return row;
-  });
+  }
+  const row: ExportRow = { ...astCaseStatisticalCore(c) };
+  row.ast_result_count = String(astData.length);
+  for (let i = 0; i < AST_WIDE_SLOT_COUNT; i++) {
+    const key = `ast_result_slot_${String(i + 1).padStart(2, "0")}`;
+    row[key] = astData[i] ? formatAstSlot(astData[i]) : "";
+  }
+  return { ...row, ...exportStatisticalAuditRow(c) };
 }
 
 const AST_LONG_TAIL = [
@@ -166,52 +385,103 @@ const AST_LONG_TAIL = [
 
 /**
  * Long-format AST export: one row per antibiotic (case metadata repeated).
- * Best for statistical tools; use query `format=long` on the export endpoint.
  */
-export function toAstLongExportRows(casesData: Case[]): ExportRow[] {
+export function toAstLongExportRows(
+  casesData: Case[],
+  layout: HospitalExportLayout = "clinical",
+): ExportRow[] {
   const out: ExportRow[] = [];
   for (const c of casesData) {
     const astData = parseAstResults(c.astResults);
-    const core = caseCoreSnake(c);
+    const clinicalCore = astCaseClinicalCore(c);
+    const statisticalCore = astCaseStatisticalCore(c);
+    const audit = exportStatisticalAuditRow(c);
 
     if (astData.length === 0) {
-      out.push({
-        ...core,
-        ast_row_index: "",
-        ast_antibiotic: "",
-        ast_symbol: "",
-        ast_disc_content: "",
-        ast_zone_mm: "",
-        ast_sensitivity: "",
-      });
+      if (layout === "clinical") {
+        out.push({
+          ...clinicalCore,
+          [AST_CLINICAL_LONG_HEADERS.ast_row_index]: "",
+          [AST_CLINICAL_LONG_HEADERS.ast_antibiotic]: "",
+          [AST_CLINICAL_LONG_HEADERS.ast_symbol]: "",
+          [AST_CLINICAL_LONG_HEADERS.ast_disc_content]: "",
+          [AST_CLINICAL_LONG_HEADERS.ast_zone_mm]: "",
+          [AST_CLINICAL_LONG_HEADERS.ast_sensitivity]: "",
+        });
+      } else {
+        out.push({
+          ...statisticalCore,
+          ast_row_index: "",
+          ast_antibiotic: "",
+          ast_symbol: "",
+          ast_disc_content: "",
+          ast_zone_mm: "",
+          ast_sensitivity: "",
+          ...audit,
+        });
+      }
       continue;
     }
 
     astData.forEach((a, i) => {
-      out.push({
-        ...core,
-        ast_row_index: String(i + 1),
-        ast_antibiotic: String(a.antibiotic ?? "").trim(),
-        ast_symbol: String(a.symbol ?? "").trim(),
-        ast_disc_content: String(a.discContent ?? "").trim(),
-        ast_zone_mm:
-          a.zoneSize === null || a.zoneSize === undefined ? "" : String(a.zoneSize).trim(),
-        ast_sensitivity: String(a.sensitivity ?? "").trim(),
-      });
+      if (layout === "clinical") {
+        out.push({
+          ...clinicalCore,
+          [AST_CLINICAL_LONG_HEADERS.ast_row_index]: String(i + 1),
+          [AST_CLINICAL_LONG_HEADERS.ast_antibiotic]: String(a.antibiotic ?? "").trim(),
+          [AST_CLINICAL_LONG_HEADERS.ast_symbol]: String(a.symbol ?? "").trim(),
+          [AST_CLINICAL_LONG_HEADERS.ast_disc_content]: String(a.discContent ?? "").trim(),
+          [AST_CLINICAL_LONG_HEADERS.ast_zone_mm]:
+            a.zoneSize === null || a.zoneSize === undefined ? "" : String(a.zoneSize).trim(),
+          [AST_CLINICAL_LONG_HEADERS.ast_sensitivity]: String(a.sensitivity ?? "").trim(),
+        });
+      } else {
+        out.push({
+          ...statisticalCore,
+          ast_row_index: String(i + 1),
+          ast_antibiotic: String(a.antibiotic ?? "").trim(),
+          ast_symbol: String(a.symbol ?? "").trim(),
+          ast_disc_content: String(a.discContent ?? "").trim(),
+          ast_zone_mm:
+            a.zoneSize === null || a.zoneSize === undefined ? "" : String(a.zoneSize).trim(),
+          ast_sensitivity: String(a.sensitivity ?? "").trim(),
+          ...audit,
+        });
+      }
     });
   }
   return out;
 }
 
-export function astWideExportColumnOrder(): readonly string[] {
+export function astWideExportColumnOrder(
+  layout: HospitalExportLayout = "clinical",
+): readonly string[] {
   const slots = Array.from({ length: AST_WIDE_SLOT_COUNT }, (_, i) => {
-    return `ast_result_slot_${String(i + 1).padStart(2, "0")}`;
+    return layout === "clinical"
+      ? astClinicalWideSlotHeader(i)
+      : `ast_result_slot_${String(i + 1).padStart(2, "0")}`;
   });
-  return [...CORE_CASE_SNAKE_ORDER, "ast_result_count", ...slots];
+  if (layout === "clinical") {
+    return [...AST_CLINICAL_CORE_HEADERS, AST_CLINICAL_WIDE_COUNT_HEADER, ...slots];
+  }
+  return [
+    ...AST_STATISTICAL_CORE_ORDER,
+    "ast_result_count",
+    ...slots,
+    ...EXPORT_STATISTICAL_AUDIT_ORDER,
+  ];
 }
 
-export function astLongExportColumnOrder(): readonly string[] {
-  return [...CORE_CASE_SNAKE_ORDER, ...AST_LONG_TAIL];
+export function astLongExportColumnOrder(
+  layout: HospitalExportLayout = "clinical",
+): readonly string[] {
+  if (layout === "clinical") {
+    return [
+      ...AST_CLINICAL_CORE_HEADERS,
+      ...Object.values(AST_CLINICAL_LONG_HEADERS),
+    ];
+  }
+  return [...AST_STATISTICAL_CORE_ORDER, ...AST_LONG_TAIL, ...EXPORT_STATISTICAL_AUDIT_ORDER];
 }
 
 /** @deprecated Use toAstWideExportRows or toAstLongExportRows */
@@ -247,17 +517,52 @@ export function stringifyCustomValue(value: unknown): string {
   return String(value);
 }
 
-/**
- * CSV column header for a hospital custom field: use the JSON key (form label) as the header.
- * If it collides with a core column name or another custom label, append " (2)", " (3)", …
- */
-function hospitalCaseExtras(c: Case): Record<(typeof HOSPITAL_EXPORT_EXTRA_ORDER)[number], string> {
+function hospitalCaseClinicalRow(c: Case): ExportRow {
   return {
+    "Case Number": c.caseNumber,
+    "Bill Number": c.billNumber || "",
+    "Case Date (BS)": c.date,
+    "Case Date (AD)": c.dateAd || "",
+    "Owner Name": c.ownerName,
+    "Owner Address": c.ownerAddress,
+    "Owner Phone": c.ownerPhone,
+    Species: c.species,
+    Breed: c.breed,
+    "Animal Name": c.animalName || "",
+    Age: c.age || "",
+    Sex: c.sex || "",
+    "General Remarks": c.remarks || "",
+    "Attending Veterinarian": c.veterinarianName?.trim() ?? "",
+    "Attending Veterinarian NVC": c.veterinarianNvc?.trim() ?? "",
+    "Attending Veterinarian Department": c.veterinarianDepartment?.trim() ?? "",
+    "Treatment / Prescription": formatTreatmentDetailsExport(c.treatmentDetails),
+  };
+}
+
+function hospitalCaseStatisticalRow(c: Case): ExportRow {
+  return {
+    case_number: c.caseNumber,
+    bill_number: c.billNumber || "",
+    date_bs: c.date,
+    date_ad: c.dateAd || "",
+    owner_name: c.ownerName,
+    owner_address: c.ownerAddress,
+    owner_phone: c.ownerPhone,
+    species: c.species,
+    breed: c.breed,
+    animal_name: c.animalName || "",
+    age: c.age || "",
+    sex: c.sex || "",
+    remarks: c.remarks || "",
     attending_veterinarian_name: c.veterinarianName?.trim() ?? "",
     attending_veterinarian_nvc: c.veterinarianNvc?.trim() ?? "",
     attending_veterinarian_department: c.veterinarianDepartment?.trim() ?? "",
     treatment_prescription: formatTreatmentDetailsExport(c.treatmentDetails),
   };
+}
+
+function hospitalCaseStatisticalAuditRow(c: Case): ExportRow {
+  return exportStatisticalAuditRow(c);
 }
 
 function formatTreatmentDetailsExport(raw: string | null): string {
@@ -297,56 +602,118 @@ function formatTreatmentDetailsExport(raw: string | null): string {
   }
 }
 
-function uniqueHospitalCustomHeader(originalKey: string, used: Set<string>): string {
-  const raw = resolveHospitalExportFieldLabel(originalKey).slice(0, 200);
-  let candidate = raw;
-  let n = 2;
-  while (CORE_HEADER_RESERVED.has(candidate) || used.has(candidate)) {
-    candidate = `${raw} (${n})`;
-    n += 1;
-  }
-  used.add(candidate);
-  return candidate;
-}
-
-/** Map each custom JSON key to its unique CSV column header (same characters when unambiguous). */
-function buildHospitalCustomHeaderMap(orderedLabels: string[]): Map<string, string> {
-  const used = new Set<string>();
-  const labelToHeader = new Map<string, string>();
-  for (const label of orderedLabels) {
-    labelToHeader.set(label, uniqueHospitalCustomHeader(label, used));
-  }
-  return labelToHeader;
-}
-
-/** One row per hospital case; core columns match AST export; extra columns use form field labels as headers. */
-export function toHospitalExportRows(casesData: Case[]): ExportRow[] {
-  const customFieldLabels = new Set<string>();
-  const parsedCustomFields = casesData.map((c) => {
+/** Collect every custom_fields key present in the export batch. */
+export function collectHospitalCustomFieldKeys(casesData: Case[]): Set<string> {
+  const keys = new Set<string>();
+  for (const c of casesData) {
     const fields = parseCustomFields(c.customFields);
-    Object.keys(fields).forEach((key) => customFieldLabels.add(key));
-    return fields;
-  });
-  const orderedLabels = Array.from(customFieldLabels).sort((a, b) => a.localeCompare(b));
-  const labelToHeader = buildHospitalCustomHeaderMap(orderedLabels);
+    for (const key of Object.keys(fields)) keys.add(key);
+  }
+  return keys;
+}
 
-  return casesData.map((c, index) => {
-    const row: ExportRow = { ...caseCoreSnake(c), ...hospitalCaseExtras(c) };
-    const customFields = parsedCustomFields[index] ?? {};
-    for (const label of orderedLabels) {
-      const header = labelToHeader.get(label)!;
-      row[header] = stringifyCustomValue(customFields[label]);
+/** Build export schema: clinical core, form-ordered dynamic fields, optional audit tail. */
+export function buildHospitalExportSchema(
+  layout: HospitalExportLayout,
+  formColumns: HospitalExportFormColumn[],
+  dataCustomKeys: Iterable<string>,
+): HospitalExportSchema {
+  if (layout === "statistical") {
+    const reserved = new Set<string>([
+      ...HOSPITAL_STATISTICAL_CORE_ORDER,
+      ...HOSPITAL_STATISTICAL_AUDIT_ORDER,
+    ]);
+    const statisticalForm = toStatisticalFormColumns(formColumns, reserved);
+    const dynamicColumns = appendLegacyExportColumns(
+      statisticalForm,
+      dataCustomKeys,
+      reserved,
+      "statistical",
+    );
+    const customKeyToHeader = new Map(dynamicColumns.map((c) => [c.key, c.header]));
+    const core = [...HOSPITAL_STATISTICAL_CORE_ORDER];
+    const dynamicHeaders = dynamicColumns.map((c) => c.header);
+    const audit = [...HOSPITAL_STATISTICAL_AUDIT_ORDER];
+    const columns = [...core, ...dynamicHeaders, ...audit];
+    return {
+      layout,
+      columns,
+      customKeyToHeader,
+      dynamicColumnStart: core.length,
+      dynamicColumnEnd: core.length + dynamicHeaders.length,
+    };
+  }
+
+  const reserved = new Set<string>([...HOSPITAL_CLINICAL_CORE_HEADERS]);
+  const dynamicColumns = appendLegacyExportColumns(
+    formColumns,
+    dataCustomKeys,
+    reserved,
+    "clinical",
+  );
+  const customKeyToHeader = new Map(dynamicColumns.map((c) => [c.key, c.header]));
+  const clinical = [...HOSPITAL_CLINICAL_CORE_HEADERS];
+  const dynamicHeaders = dynamicColumns.map((c) => c.header);
+  const columns = [...clinical, ...dynamicHeaders];
+  return {
+    layout,
+    columns,
+    customKeyToHeader,
+    dynamicColumnStart: clinical.length,
+    dynamicColumnEnd: clinical.length + dynamicHeaders.length,
+  };
+}
+
+/** Drop dynamic columns that are empty for every row in the batch. */
+export function pruneEmptyDynamicExportColumns(
+  rows: ExportRow[],
+  schema: HospitalExportSchema,
+): string[] {
+  if (rows.length === 0) return [...schema.columns];
+  const { columns, dynamicColumnStart, dynamicColumnEnd } = schema;
+  const before = columns.slice(0, dynamicColumnStart);
+  const dynamic = columns.slice(dynamicColumnStart, dynamicColumnEnd);
+  const after = columns.slice(dynamicColumnEnd);
+  const keptDynamic = dynamic.filter((header) =>
+    rows.some((row) => String(row[header] ?? "").trim() !== ""),
+  );
+  return [...before, ...keptDynamic, ...after];
+}
+
+/** One row per hospital case with human-readable headers and form-ordered custom fields. */
+export function toHospitalExportRows(
+  casesData: Case[],
+  schema: HospitalExportSchema,
+): ExportRow[] {
+  return casesData.map((c) => {
+    const row: ExportRow =
+      schema.layout === "statistical"
+        ? {
+            ...hospitalCaseStatisticalRow(c),
+            ...hospitalCaseStatisticalAuditRow(c),
+          }
+        : { ...hospitalCaseClinicalRow(c) };
+    const customFields = parseCustomFields(c.customFields);
+    for (const [key, header] of Array.from(schema.customKeyToHeader.entries())) {
+      row[header] = stringifyCustomValue(customFields[key]);
     }
     return row;
   });
 }
 
-/** Deterministic column order: fixed core + sorted dynamic headers (form labels). */
-export function hospitalExportColumnOrder(rows: ExportRow[]): string[] {
-  // Always emit core headers so the CSV is a valid (header-only) file
-  // even when no rows match. The previous behavior returned [], which
-  // produced a completely empty download and made empty filters look
-  // like a server failure to end users.
+/** Column order for hospital export; prunes empty dynamic columns when rows are present. */
+export function hospitalExportColumnOrder(
+  rows: ExportRow[],
+  schema: HospitalExportSchema,
+): string[] {
+  return pruneEmptyDynamicExportColumns(rows, schema);
+}
+
+/**
+ * @deprecated Legacy snake_case hospital export column list.
+ * Prefer buildHospitalExportSchema + hospitalExportColumnOrder.
+ */
+export function legacyHospitalExportColumnOrder(rows: ExportRow[]): string[] {
   if (rows.length === 0) {
     return [...CORE_CASE_SNAKE_ORDER, ...HOSPITAL_EXPORT_EXTRA_ORDER];
   }
@@ -368,6 +735,8 @@ export function buildExportCsvFilename(options: {
   dateFrom?: string;
   dateTo?: string;
   astLayout?: "wide" | "long";
+  exportLayout?: HospitalExportLayout;
+  hospitalLayout?: HospitalExportLayout;
   species?: string;
 }): string {
   const sanitizeDate = (s: string | undefined) => {
@@ -384,12 +753,14 @@ export function buildExportCsvFilename(options: {
       .replace(/^-+|-+$/g, "");
     return t ? `_species-${t}` : "";
   };
+  const clinicalStat =
+    options.exportLayout ?? options.hospitalLayout ?? "clinical";
   const layout =
     options.scope === "ast"
-      ? options.astLayout === "long"
-        ? "-long"
-        : "-wide"
-      : "";
+      ? `${clinicalStat === "statistical" ? "-statistical" : "-clinical"}${options.astLayout === "long" ? "-long" : "-wide"}`
+      : clinicalStat === "statistical"
+        ? "-statistical"
+        : "-clinical";
   return `${options.scope}-export${layout}_${sanitizeDate(options.dateFrom)}_to_${sanitizeDate(options.dateTo)}${sanitizeSpecies(options.species)}.csv`;
 }
 
