@@ -215,7 +215,7 @@ export default function AdminPanel({
   const [location, setLocation] = useLocation();
   const search = useSearch();
   const { toast } = useToast();
-  const { user: currentUser, updateCurrentUser, isSuperAdmin } = useAuth();
+  const { user: currentUser, isSuperAdmin, refreshSessionUser } = useAuth();
   const tabFromUrl = useMemo(() => {
     if (forcedTab) return forcedTab;
     const rawSearch = (search || "").replace(/^\?/, "");
@@ -335,6 +335,12 @@ export default function AdminPanel({
       setSelectedUserIds(new Set());
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "access-control" && mode === "full") {
+      void refreshSessionUser();
+    }
+  }, [activeTab, mode, refreshSessionUser]);
 
   const { data: allUsers = [] } = useQuery<AdminUser[]>({
     queryKey: ["/api/admin/users"],
@@ -765,8 +771,11 @@ export default function AdminPanel({
     mutationFn: async ({ id, role }: { id: number; role: string }) => {
       await apiRequest("PATCH", `/api/admin/users/${id}/role`, { role });
     },
-    onSuccess: () => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      if (vars.id === currentUser?.id) {
+        await refreshSessionUser();
+      }
       toast({ title: "Role updated" });
     },
   });
@@ -1053,16 +1062,12 @@ export default function AdminPanel({
         { dashboardVisible: payload.dashboardVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/dashboard"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          dashboardVisible: vars.dashboardVisible,
-          astDashboardVisible: vars.dashboardVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "Dashboard visibility updated" });
     },
@@ -1081,15 +1086,12 @@ export default function AdminPanel({
         { dashboardVisible: payload.dashboardVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/vth-dashboard"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          vthDashboardVisible: vars.dashboardVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "VTH dashboard visibility updated" });
     },
@@ -1108,15 +1110,12 @@ export default function AdminPanel({
         { exportVisible: payload.exportVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/ast-export"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          astExportVisible: vars.exportVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "AST export visibility updated" });
     },
@@ -1135,15 +1134,12 @@ export default function AdminPanel({
         { exportVisible: payload.exportVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/hospital-export"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          hospitalExportVisible: vars.exportVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "Hospital export visibility updated" });
     },
@@ -1162,15 +1158,12 @@ export default function AdminPanel({
         { printVisible: payload.printVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/ast-print"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          astPrintVisible: vars.printVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "AST print visibility updated" });
     },
@@ -1189,15 +1182,12 @@ export default function AdminPanel({
         { printVisible: payload.printVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/hospital-print"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          hospitalPrintVisible: vars.printVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "Hospital print visibility updated" });
     },
@@ -1224,15 +1214,12 @@ export default function AdminPanel({
         { registerVisible: payload.registerVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/ast-register"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          astRegisterVisible: vars.registerVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "AST registration visibility updated" });
     },
@@ -1251,15 +1238,12 @@ export default function AdminPanel({
         { registerVisible: payload.registerVisible },
       );
     },
-    onSuccess: (_data, vars) => {
+    onSuccess: async (_data, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/hospital-register"],
       });
-      if (currentUser?.role === vars.role && currentUser) {
-        updateCurrentUser({
-          ...currentUser,
-          hospitalRegisterVisible: vars.registerVisible,
-        } as typeof currentUser);
+      if (currentUser?.role === vars.role) {
+        await refreshSessionUser();
       }
       toast({ title: "Hospital registration visibility updated" });
     },
@@ -1278,10 +1262,13 @@ export default function AdminPanel({
         { registerVisible: payload.registerVisible },
       );
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/register-batches", "ast"],
       });
+      if (currentUser?.role === "student") {
+        await refreshSessionUser();
+      }
       toast({ title: "AST batch override updated" });
     },
     onError: (err: unknown) => {
@@ -1299,10 +1286,13 @@ export default function AdminPanel({
         { registerVisible: payload.registerVisible },
       );
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/feature-visibility/register-batches", "hospital"],
       });
+      if (currentUser?.role === "student") {
+        await refreshSessionUser();
+      }
       toast({ title: "Hospital batch override updated" });
     },
     onError: (err: unknown) => {
@@ -2494,6 +2484,11 @@ export default function AdminPanel({
         </TabsContent>
 
         <TabsContent value="access-control" className="space-y-3 mt-4">
+          <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/20 px-3 py-2">
+            AST and Hospital each have their own Dashboard toggle. Users pick up changes when
+            they open this tab or reload; promoting someone to admin also requires a reload if
+            they were already signed in.
+          </p>
           {/*
             The Access Control panel groups settings by MODULE (AST vs.
             Hospital) rather than by FEATURE so an admin configuring one

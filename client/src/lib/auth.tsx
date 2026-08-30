@@ -189,6 +189,8 @@ interface AuthContextType {
   signup: (data: SignupData) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   updateCurrentUser: (nextUser: SafeUser) => void;
+  /** Re-fetch `/api/auth/me` so role and access-control flags match the database. */
+  refreshSessionUser: () => Promise<void>;
   isSuperAdmin: boolean;
   isAdmin: boolean;
   isStaff: boolean;
@@ -435,6 +437,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setUser],
   );
 
+  const refreshSessionUser = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/me", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const safeUser = (await res.json()) as AuthUser;
+      setUser(safeUser);
+      await syncPreferencesFromServer(safeUser.id);
+    } catch {
+      // ignore — caller may retry on next navigation
+    }
+  }, []);
+
   const isSuperAdmin = user?.role === "superadmin";
   const isAdmin = user?.role === "admin" || isSuperAdmin;
   const isStaff = user?.role === "staff";
@@ -464,12 +478,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canManageAstAdmin = capabilities.has("ast.admin");
   const canRegisterCase = canRegisterAstCase;
   const canDownload = canDownloadAst;
-  const canViewDashboard = Boolean(
-    user?.astDashboardVisible ?? user?.dashboardVisible ?? false,
-  );
-  const canViewVthDashboard = Boolean(
-    user?.vthDashboardVisible ?? user?.dashboardVisible ?? false,
-  );
+  // Match server: missing visibility flags mean "visible" until an admin turns
+  // them off. Export/print already defaulted to true; dashboard did not — that
+  // mismatch hid tiles for sessions created before flags were issued.
+  const canViewDashboard =
+    user?.astDashboardVisible ?? user?.dashboardVisible ?? true;
+  const canViewVthDashboard =
+    user?.vthDashboardVisible ?? user?.dashboardVisible ?? true;
   // Admin-driven per-role export visibility acts as an EXTRA gate on top of
   // capability + student-approval. Mirrors server `canDownloadBySource`:
   //   eligible = staff/intern/admin with `ast.download`, or any student
@@ -588,6 +603,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signup,
     logout,
     updateCurrentUser,
+    refreshSessionUser,
     isSuperAdmin,
     isAdmin,
     isStaff,
