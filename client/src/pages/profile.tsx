@@ -107,6 +107,10 @@ export default function ProfilePage() {
   const [totpEnableCode, setTotpEnableCode] = useState("");
   const [totpDisablePassword, setTotpDisablePassword] = useState("");
   const [totpBusy, setTotpBusy] = useState(false);
+  const [totpSetupLogin, setTotpSetupLogin] = useState(false);
+  const [totpSetupRecovery, setTotpSetupRecovery] = useState(true);
+  const [totpModeLogin, setTotpModeLogin] = useState(false);
+  const [totpModeRecovery, setTotpModeRecovery] = useState(true);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [compressingProfilePhoto, setCompressingProfilePhoto] = useState(false);
   const profilePhotoBusy = photoBusy || compressingProfilePhoto;
@@ -165,6 +169,8 @@ export default function ProfilePage() {
     setEmail(user.email || "");
     setUsername(user.username || "");
     setDesignation(user.designation || "");
+    setTotpModeLogin(Boolean(user.totpLoginEnabled));
+    setTotpModeRecovery(user.totpRecoveryEnabled !== false);
   }, [user]);
 
   useEffect(() => {
@@ -742,40 +748,165 @@ export default function ProfilePage() {
                 </AccordionItem>
                 <AccordionItem value="twofactor">
                   <AccordionTrigger className="text-sm py-2">
-                    {isAdmin || isSuperAdmin
-                      ? "Two-factor authentication (Google Authenticator)"
-                      : "Authenticator recovery (Google Authenticator)"}
+                    Google Authenticator
                   </AccordionTrigger>
                   <AccordionContent className="space-y-3 pt-2 text-sm">
                     <p className="text-xs text-muted-foreground">
-                      {isAdmin || isSuperAdmin
-                        ? "Adds a second step at sign-in when enabled. You can also reset your password from the login screen with a code from your authenticator app."
-                        : "Optional password recovery only — you will not be asked for a code when signing in. If enabled, you can reset your password yourself from the login screen; otherwise recovery goes through admin approval."}
+                      Choose how your authenticator app is used: at sign-in, for
+                      forgot-password recovery, or both. Recovery-only keeps normal
+                      logins password-only while still letting you reset your password
+                      yourself from the login screen.
                     </p>
                       {user?.totpEnabled ? (
-                        user?.totpEnforced ? (
-                          <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2.5">
-                            <p className="text-xs font-medium">Two-factor is enabled.</p>
-                            <p className="text-xs text-muted-foreground">
-                              Your administrator account is required to use two-factor authentication. It
-                              cannot be turned off here. Contact a Super Admin if you need an exception.
+                        user?.totpEnforced && user?.totpLoginEnabled ? (
+                          <div className="space-y-3">
+                            <p className="text-xs font-medium text-emerald-700">
+                              Authenticator is enabled.
                             </p>
+                            <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-medium">Sign-in verification</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Required for your administrator account.
+                                </p>
+                              </div>
+                              <Switch checked disabled />
+                            </div>
+                            <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-medium">Password recovery</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Use on the forgot-password screen.
+                                </p>
+                              </div>
+                              <Switch
+                                checked={totpModeRecovery}
+                                disabled={totpBusy}
+                                onCheckedChange={setTotpModeRecovery}
+                              />
+                            </div>
+                            {totpModeRecovery !== Boolean(user.totpRecoveryEnabled) && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={totpBusy}
+                                onClick={async () => {
+                                  setTotpBusy(true);
+                                  try {
+                                    const res = await fetch("/api/auth/2fa/modes", {
+                                      method: "PATCH",
+                                      headers: {
+                                        "Content-Type": "application/json",
+                                        ...csrfHeaders(),
+                                      },
+                                      body: JSON.stringify({
+                                        loginEnabled: true,
+                                        recoveryEnabled: totpModeRecovery,
+                                      }),
+                                      credentials: "same-origin",
+                                    });
+                                    const body = await res.json().catch(() => ({}));
+                                    if (!res.ok) {
+                                      toast({
+                                        title:
+                                          (body as { message?: string }).message ||
+                                          "Could not update options",
+                                        variant: "destructive",
+                                      });
+                                      return;
+                                    }
+                                    if ((body as { user?: typeof user }).user) {
+                                      updateCurrentUser((body as { user: typeof user }).user);
+                                    }
+                                    toast({ title: "Authenticator options updated" });
+                                  } finally {
+                                    setTotpBusy(false);
+                                  }
+                                }}
+                              >
+                                Save recovery option
+                              </Button>
+                            )}
                           </div>
                         ) : (
                         <div className="space-y-3">
                           <p className="text-xs font-medium text-emerald-700">
-                            {isAdmin || isSuperAdmin
-                              ? "Two-factor is enabled."
-                              : "Authenticator recovery is enabled."}
+                            Authenticator is enabled.
                           </p>
-                          {!(isAdmin || isSuperAdmin) && (
-                            <p className="text-xs text-muted-foreground">
-                              Sign-in still uses only your password. This app is used when you
-                              choose &quot;Authenticator&quot; on the forgot-password screen.
-                            </p>
+                          <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                            <div className="space-y-0.5">
+                              <p className="text-xs font-medium">Sign-in verification</p>
+                              <p className="text-xs text-muted-foreground">
+                                Ask for a code each time you sign in.
+                              </p>
+                            </div>
+                            <Switch
+                              checked={totpModeLogin}
+                              disabled={totpBusy || Boolean(user?.totpEnforced)}
+                              onCheckedChange={setTotpModeLogin}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                            <div className="space-y-0.5">
+                              <p className="text-xs font-medium">Password recovery</p>
+                              <p className="text-xs text-muted-foreground">
+                                Use on the forgot-password screen.
+                              </p>
+                            </div>
+                            <Switch
+                              checked={totpModeRecovery}
+                              disabled={totpBusy}
+                              onCheckedChange={setTotpModeRecovery}
+                            />
+                          </div>
+                          {(totpModeLogin !== Boolean(user?.totpLoginEnabled) ||
+                            totpModeRecovery !== Boolean(user?.totpRecoveryEnabled)) && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={
+                                totpBusy || (!totpModeLogin && !totpModeRecovery)
+                              }
+                              onClick={async () => {
+                                setTotpBusy(true);
+                                try {
+                                  const res = await fetch("/api/auth/2fa/modes", {
+                                    method: "PATCH",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      ...csrfHeaders(),
+                                    },
+                                    body: JSON.stringify({
+                                      loginEnabled: totpModeLogin,
+                                      recoveryEnabled: totpModeRecovery,
+                                    }),
+                                    credentials: "same-origin",
+                                  });
+                                  const body = await res.json().catch(() => ({}));
+                                  if (!res.ok) {
+                                    toast({
+                                      title:
+                                        (body as { message?: string }).message ||
+                                        "Could not update options",
+                                      variant: "destructive",
+                                    });
+                                    return;
+                                  }
+                                  if ((body as { user?: typeof user }).user) {
+                                    updateCurrentUser((body as { user: typeof user }).user);
+                                  }
+                                  toast({ title: "Authenticator options updated" });
+                                } finally {
+                                  setTotpBusy(false);
+                                }
+                              }}
+                            >
+                              Save options
+                            </Button>
                           )}
-                          <div className="space-y-1.5">
-                            <Label htmlFor="totpDisablePw">Account password (to turn off 2FA)</Label>
+                          {!user?.totpEnforced && (
+                          <div className="space-y-1.5 pt-1">
+                            <Label htmlFor="totpDisablePw">Account password (to remove authenticator)</Label>
                             <Input
                               id="totpDisablePw"
                               type="password"
@@ -784,6 +915,8 @@ export default function ProfilePage() {
                               placeholder="Current password"
                             />
                           </div>
+                          )}
+                          {!user?.totpEnforced && (
                           <Button
                             type="button"
                             variant="outline"
@@ -814,22 +947,56 @@ export default function ProfilePage() {
                                 setTotpDisablePassword("");
                                 setTotpDraftSecret(null);
                                 setTotpDraftUrl(null);
-                                toast({ title: "Two-factor authentication disabled" });
+                                toast({ title: "Authenticator removed" });
                               } finally {
                                 setTotpBusy(false);
                               }
                             }}
                           >
-                            Disable 2FA
+                            Remove authenticator
                           </Button>
+                          )}
                         </div>
                         )
                       ) : (
                         <div className="space-y-3">
                           {user?.totpEnforced && (
                             <p className="text-xs font-medium text-amber-900 dark:text-amber-100/90 rounded-md border border-amber-200/80 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-3 py-2">
-                              A Super Admin requires two-factor authentication for your administrator
-                              account. Enable it below to sign in.
+                              A Super Admin requires sign-in verification for your administrator
+                              account. Turn on sign-in verification below when you finish setup.
+                            </p>
+                          )}
+                          <div className="space-y-2 rounded-md border border-border px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-medium">Sign-in verification</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Code required each time you sign in.
+                                </p>
+                              </div>
+                              <Switch
+                                checked={user?.totpEnforced ? true : totpSetupLogin}
+                                disabled={Boolean(user?.totpEnforced) || totpBusy}
+                                onCheckedChange={setTotpSetupLogin}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-medium">Password recovery</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Reset password from the login screen.
+                                </p>
+                              </div>
+                              <Switch
+                                checked={totpSetupRecovery}
+                                disabled={totpBusy}
+                                onCheckedChange={setTotpSetupRecovery}
+                              />
+                            </div>
+                          </div>
+                          {!totpSetupLogin && !totpSetupRecovery && (
+                            <p className="text-xs text-destructive">
+                              Turn on at least one option before continuing.
                             </p>
                           )}
                           {!totpDraftSecret ? (
@@ -837,7 +1004,9 @@ export default function ProfilePage() {
                               type="button"
                               variant="secondary"
                               size="sm"
-                              disabled={totpBusy}
+                              disabled={
+                                totpBusy || (!totpSetupLogin && !totpSetupRecovery)
+                              }
                               onClick={async () => {
                                 setTotpBusy(true);
                                 try {
@@ -934,7 +1103,11 @@ export default function ProfilePage() {
                               </div>
                               <Button
                                 type="button"
-                                disabled={totpBusy || totpEnableCode.length !== 6}
+                                disabled={
+                                  totpBusy ||
+                                  totpEnableCode.length !== 6 ||
+                                  (!totpSetupLogin && !totpSetupRecovery)
+                                }
                                 onClick={async () => {
                                   if (!totpDraftSecret) return;
                                   setTotpBusy(true);
@@ -948,6 +1121,8 @@ export default function ProfilePage() {
                                       body: JSON.stringify({
                                         secret: totpDraftSecret,
                                         code: totpEnableCode,
+                                        loginEnabled: user?.totpEnforced || totpSetupLogin,
+                                        recoveryEnabled: totpSetupRecovery,
                                       }),
                                       credentials: "same-origin",
                                     });
@@ -965,7 +1140,7 @@ export default function ProfilePage() {
                                     setTotpDraftSecret(null);
                                     setTotpDraftUrl(null);
                                     setTotpEnableCode("");
-                                    toast({ title: "Two-factor authentication enabled" });
+                                    toast({ title: "Authenticator enabled" });
                                   } finally {
                                     setTotpBusy(false);
                                   }

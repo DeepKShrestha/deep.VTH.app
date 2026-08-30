@@ -167,7 +167,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
   )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    actor_user_id INTEGER NOT NULL,
+    actor_user_id INTEGER,
     actor_role TEXT NOT NULL,
     action TEXT NOT NULL,
     target_key TEXT,
@@ -279,7 +279,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     case_number TEXT NOT NULL,
     case_scope TEXT NOT NULL,
     action TEXT NOT NULL,
-    actor_user_id INTEGER NOT NULL,
+    actor_user_id INTEGER,
     actor_role TEXT NOT NULL,
     actor_name TEXT NOT NULL,
     actor_username TEXT NOT NULL,
@@ -661,7 +661,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
     )`);
     await dbRun(sql`CREATE TABLE IF NOT EXISTS form_edit_audit_logs (
       id SERIAL PRIMARY KEY,
-      actor_user_id INTEGER NOT NULL,
+      actor_user_id INTEGER,
       actor_role TEXT NOT NULL,
       action TEXT NOT NULL,
       target_key TEXT,
@@ -728,7 +728,7 @@ export async function registerRoutes(_httpServer: Server, app: Express) {
       case_number TEXT NOT NULL,
       case_scope TEXT NOT NULL,
       action TEXT NOT NULL,
-      actor_user_id INTEGER NOT NULL,
+      actor_user_id INTEGER,
       actor_role TEXT NOT NULL,
       actor_name TEXT NOT NULL,
       actor_username TEXT NOT NULL,

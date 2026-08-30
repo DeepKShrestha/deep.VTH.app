@@ -726,6 +726,11 @@ export default function AdminPanel({
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       toast({ title: "User removed" });
     },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof ApiError ? err.serverMessage || err.message : "Could not remove user";
+      toast({ title: msg, variant: "destructive" });
+    },
   });
   const bulkDeleteUsersMutation = useMutation({
     mutationFn: async (ids: number[]) => {
@@ -1995,7 +2000,7 @@ export default function AdminPanel({
                               checked={Boolean(u.totpEnforced)}
                               disabled={
                                 totpEnforcementMutation.isPending ||
-                                (!u.totpEnforced && !u.totpEnabled)
+                                (!u.totpEnforced && !u.totpLoginEnabled)
                               }
                               onCheckedChange={(enforced) => {
                                 totpEnforcementMutation.mutate({ id: u.id, enforced });

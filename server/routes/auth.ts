@@ -43,7 +43,7 @@ import {
   verifyTotpToken,
   generateTotpSecret,
   buildTotpAuthUrl,
-  saveTotpSecret,
+  saveTotpConfiguration,
 } from "../login-security";
 import { getUserPreferences, upsertUserPreferences } from "../user-preferences-store";
 import { verifyProfilePhotoSignature } from "../services/attachment-signing";
@@ -180,6 +180,18 @@ function signupMultipartMaybe(req: Request, res: Response, next: NextFunction) {
  * still being well above the per-2016 NIST baseline.
  */
 const BCRYPT_COST = 10;
+
+function isTotpLoginActive(user: User): boolean {
+  return Boolean(user.totpSecret && user.totpLoginEnabled);
+}
+
+function isTotpRecoveryActive(user: User): boolean {
+  return Boolean(user.totpSecret && user.totpRecoveryEnabled);
+}
+
+function isTotpConfigured(user: User): boolean {
+  return isTotpLoginActive(user) || isTotpRecoveryActive(user);
+}
 
 export function registerAuthRoutes(app: Express) {
   /**
@@ -348,7 +360,7 @@ export function registerAuthRoutes(app: Express) {
 
     await clearLoginFailures(user.id);
 
-    if (user.role === "admin" && user.totpEnforced && !user.totpEnabled) {
+    if (user.role === "admin" && user.totpEnforced && !isTotpLoginActive(user)) {
       return res.status(403).json({
         message:
           "Two-factor authentication is required for this administrator account but is not set up yet. Ask a Super Admin to turn off the requirement temporarily, then sign in and enable 2FA in your Profile.",
@@ -361,10 +373,7 @@ export function registerAuthRoutes(app: Express) {
         .json({ message: "Your account is pending admin approval" });
     }
 
-    if (
-      (user.role === "admin" || user.role === "superadmin") &&
-      user.totpEnabled
-    ) {
+    if (isTotpLoginActive(user)) {
       const pendingToken = await createPendingTwoFactorToken(user.id);
       return res.json({
         requiresTwoFactor: true,
@@ -402,12 +411,12 @@ export function registerAuthRoutes(app: Express) {
       });
     }
     const user = await authSessionRepo.getUserById(userId);
-    if (!user?.totpEnabled || !user.totpSecret) {
+    if (!user || !isTotpLoginActive(user)) {
       return res.status(401).json({
         message: "Two-factor authentication is not active for this account.",
       });
     }
-    if (!verifyTotpToken(user.totpSecret, code)) {
+    if (!verifyTotpToken(user.totpSecret!, code)) {
       await recordLoginFailure(userId);
       return res.status(401).json({ message: "Invalid verification code" });
     }
@@ -430,10 +439,10 @@ export function registerAuthRoutes(app: Express) {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const user = await authSessionRepo.getUserById(currentUser.id);
     if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
-    if (user.totpEnabled) {
+    if (isTotpConfigured(user)) {
       return res.status(400).json({
         message:
-          "Two-factor authentication is already enabled. Disable it before generating a new secret.",
+          "Authenticator is already set up. Change sign-in or recovery options below, or disable it first to generate a new secret.",
       });
     }
     const secret = generateTotpSecret();
@@ -447,7 +456,12 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/2fa/enable", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    const { secret, code } = req.body as { secret?: string; code?: string };
+    const { secret, code, loginEnabled, recoveryEnabled } = req.body as {
+      secret?: string;
+      code?: string;
+      loginEnabled?: boolean;
+      recoveryEnabled?: boolean;
+    };
     if (!secret?.trim() || !code?.trim()) {
       return res.status(400).json({ message: "Secret and verification code are required" });
     }
@@ -456,16 +470,83 @@ export function registerAuthRoutes(app: Express) {
         message: "The code does not match this authenticator secret",
       });
     }
-    await saveTotpSecret(currentUser.id, secret.trim(), true);
     const user = await authSessionRepo.getUserById(currentUser.id);
-    return res.json({ success: true, user: user ? publicAuthUser(user) : undefined });
+    if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
+
+    const useLogin = loginEnabled === true;
+    const useRecovery = recoveryEnabled !== false;
+    if (!useLogin && !useRecovery) {
+      return res.status(400).json({
+        message: "Enable sign-in verification, password recovery, or both.",
+      });
+    }
+    if (user.totpEnforced && !useLogin) {
+      return res.status(400).json({
+        message:
+          "Your account must use authenticator codes at sign-in. Turn on sign-in verification or ask a Super Admin to remove the requirement.",
+      });
+    }
+
+    await saveTotpConfiguration(currentUser.id, secret.trim(), {
+      loginEnabled: useLogin,
+      recoveryEnabled: useRecovery,
+    });
+    const next = await authSessionRepo.getUserById(currentUser.id);
+    return res.json({ success: true, user: next ? publicAuthUser(next) : undefined });
+  });
+
+  app.patch("/api/auth/2fa/modes", requireAuth, async (req, res) => {
+    const currentUser = (req as AuthenticatedRequest).currentUser;
+    const { loginEnabled, recoveryEnabled } = req.body as {
+      loginEnabled?: boolean;
+      recoveryEnabled?: boolean;
+    };
+    if (typeof loginEnabled !== "boolean" && typeof recoveryEnabled !== "boolean") {
+      return res.status(400).json({
+        message: "Provide loginEnabled and/or recoveryEnabled as booleans",
+      });
+    }
+
+    const user = await authSessionRepo.getUserById(currentUser.id);
+    if (!user?.totpSecret) {
+      return res.status(400).json({
+        message: "Set up an authenticator app in Profile before changing these options.",
+      });
+    }
+
+    const nextLogin =
+      typeof loginEnabled === "boolean" ? loginEnabled : Boolean(user.totpLoginEnabled);
+    const nextRecovery =
+      typeof recoveryEnabled === "boolean"
+        ? recoveryEnabled
+        : Boolean(user.totpRecoveryEnabled);
+
+    if (!nextLogin && !nextRecovery) {
+      return res.status(400).json({
+        message:
+          "At least one option must stay on. Use Disable authenticator to remove it completely.",
+      });
+    }
+    if (user.totpEnforced && !nextLogin) {
+      return res.status(403).json({
+        message:
+          "Sign-in verification is required for your account and cannot be turned off. Contact a Super Admin if you need an exception.",
+      });
+    }
+
+    await saveTotpConfiguration(user.id, user.totpSecret, {
+      loginEnabled: nextLogin,
+      recoveryEnabled: nextRecovery,
+    });
+    const next = await authSessionRepo.getUserById(currentUser.id);
+    return res.json({ success: true, user: next ? publicAuthUser(next) : undefined });
   });
 
   app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
     const { password, code } = req.body as { password?: string; code?: string };
     const user = await authSessionRepo.getUserById(currentUser.id);
-    if (!user?.totpEnabled) {
+    if (!user || !isTotpConfigured(user)) {
       return res.status(400).json({ message: "Two-factor authentication is not enabled" });
     }
     if (user.totpEnforced) {
@@ -488,7 +569,10 @@ export function registerAuthRoutes(app: Express) {
           "Provide your current account password or a valid authenticator code to disable 2FA",
       });
     }
-    await saveTotpSecret(currentUser.id, null, false);
+    await saveTotpConfiguration(currentUser.id, null, {
+      loginEnabled: false,
+      recoveryEnabled: false,
+    });
     const next = await authSessionRepo.getUserById(currentUser.id);
     return res.json({ success: true, user: next ? publicAuthUser(next) : undefined });
   });
@@ -835,10 +919,10 @@ export function registerAuthRoutes(app: Express) {
     if (!user) {
       return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
-    if (!user.totpEnabled || !user.totpSecret) {
+    if (!isTotpRecoveryActive(user)) {
       return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
-    if (!verifyTotpToken(user.totpSecret, code)) {
+    if (!verifyTotpToken(user.totpSecret!, code)) {
       return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
 

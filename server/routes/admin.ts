@@ -45,6 +45,7 @@ import {
   deletePasswordResetIdCardFile,
   resolvePasswordResetIdCardAbsolutePath,
 } from "../services/password-reset-id-card-store";
+import { deleteUsersByIds, userDeleteBlockedMessage } from "../services/user-deletion";
 import {
   isBuiltinTestsSuggestedQuestionKey,
   isTestsSuggestedSectionKey,
@@ -3036,11 +3037,15 @@ export function registerAdminRoutes(app: Express) {
       }
 
       const ids = usersInBatch.map((user) => user.id);
-      await dbRun(sql`DELETE FROM users WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
-      // Revoke any active sessions held by the deleted users; without
-      // this they could keep using the app until their token expires.
-      for (const id of ids) {
-        await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      try {
+        await deleteUsersByIds(ids);
+      } catch (error) {
+        const blocked = userDeleteBlockedMessage(error);
+        return res.status(409).json({
+          message:
+            blocked ??
+            "Could not delete accounts in this batch. Try again after deploying the latest update.",
+        });
       }
 
       await logAdminAction({
@@ -3107,14 +3112,15 @@ export function registerAdminRoutes(app: Express) {
         });
       }
 
-      await dbRun(
-        sql`DELETE FROM users WHERE id IN (${sql.join(
-          toDelete.map((id) => sql`${id}`),
-          sql`, `,
-        )})`,
-      );
-      for (const id of toDelete) {
-        await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      try {
+        await deleteUsersByIds(toDelete);
+      } catch (error) {
+        const blocked = userDeleteBlockedMessage(error);
+        return res.status(409).json({
+          message:
+            blocked ??
+            "Bulk delete failed partway through. Some accounts may still exist — refresh and retry.",
+        });
       }
 
       await logAdminAction({
@@ -3155,8 +3161,16 @@ export function registerAdminRoutes(app: Express) {
           .status(403)
           .json({ message: "Only Super Admin can remove admins" });
       }
-      await dbRun(sql`DELETE FROM users WHERE id = ${id}`);
-      await authSessionRepo.deleteSessionsByUserId(id).catch(() => {});
+      try {
+        await deleteUsersByIds([id]);
+      } catch (error) {
+        const blocked = userDeleteBlockedMessage(error);
+        return res.status(409).json({
+          message:
+            blocked ??
+            "Could not remove this account. It may be linked to case history or other records.",
+        });
+      }
       // Audit the single-user delete. Bulk and batch delete already
       // wrote audit rows; this endpoint (the trash icon on a single
       // row in the Users tab) used to silently delete an account with
@@ -3241,10 +3255,10 @@ export function registerAdminRoutes(app: Express) {
       if (typeof enforced !== "boolean") {
         return res.status(400).json({ message: "Body must include enforced: boolean" });
       }
-      if (enforced && !targetUser.totpEnabled) {
+      if (enforced && !targetUser.totpLoginEnabled) {
         return res.status(400).json({
           message:
-            "This administrator must enable two-factor authentication in their Profile before it can be required.",
+            "This administrator must enable sign-in verification in their Profile before it can be required.",
         });
       }
       const updated = await authSessionRepo.updateUser(id, { totpEnforced: enforced });

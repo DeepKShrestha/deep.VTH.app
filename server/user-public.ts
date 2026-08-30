@@ -12,6 +12,8 @@ export function toClientSafeUser(user: User): SafeUser {
   return {
     ...rest,
     totpEnabled: Boolean(user.totpEnabled),
+    totpLoginEnabled: Boolean(user.totpLoginEnabled),
+    totpRecoveryEnabled: Boolean(user.totpRecoveryEnabled),
     profilePhotoUrl: stored ? signProfilePhotoViewUrl(user.id) : null,
   };
 }

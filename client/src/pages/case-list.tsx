@@ -342,7 +342,7 @@ export default function CaseList({
     caseNumber: string;
     caseScope: "ast" | "hospital";
     action: "created" | "deleted";
-    actorUserId: number;
+    actorUserId: number | null;
     actorRole: string;
     actorName: string;
     actorUsername: string;
@@ -682,7 +682,12 @@ export default function CaseList({
                         <td className="px-2 py-1.5">
                           {row.action === "created" ? "Created" : "Deleted"}
                         </td>
-                        <td className="px-2 py-1.5">{row.actorName}</td>
+                        <td className="px-2 py-1.5">
+                          {row.actorName}
+                          {row.actorUserId == null ? (
+                            <span className="text-muted-foreground"> (account removed)</span>
+                          ) : null}
+                        </td>
                         <td className="px-2 py-1.5">
                           {row.actorUsername ? `@${row.actorUsername}` : "-"}
                         </td>

@@ -126,6 +126,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     lockedUntil: null,
     totpSecret: null,
     totpEnabled: false,
+    totpLoginEnabled: false,
+    totpRecoveryEnabled: false,
     totpEnforced: false,
     profilePhotoPath: null,
     ...overrides,
@@ -353,7 +355,7 @@ describe("auth routes", () => {
     expect(res.json).toHaveBeenCalledWith({ message: "No changes provided" });
   });
 
-  it("login requires 2FA only for admin roles when authenticator is enabled", async () => {
+  it("login requires 2FA only when sign-in verification is enabled", async () => {
     const app = new MockApp();
     registerAuthRoutes(app as unknown as any);
     vi.spyOn(bcrypt, "compare").mockImplementation(async () => true);
@@ -362,6 +364,8 @@ describe("auth routes", () => {
       id: 12,
       role: "admin",
       totpEnabled: true,
+      totpLoginEnabled: true,
+      totpRecoveryEnabled: true,
       totpSecret: "SECRET",
       passwordHash: "mocked-hash",
     });
@@ -379,10 +383,34 @@ describe("auth routes", () => {
     expect(adminPayload.requiresTwoFactor).toBe(true);
     expect(typeof adminPayload.pendingToken).toBe("string");
 
+    const recoveryOnlyUser = makeUser({
+      id: 14,
+      role: "superadmin",
+      totpEnabled: true,
+      totpLoginEnabled: false,
+      totpRecoveryEnabled: true,
+      totpSecret: "SECRET",
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(recoveryOnlyUser);
+
+    const recoveryReq = {
+      body: { usernameOrEmail: "admin", password: "Secret12" },
+    } as Request;
+    const recoveryRes = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](recoveryReq, recoveryRes);
+
+    const recoveryPayload = (recoveryRes.json as any).mock.calls[0][0];
+    expect(recoveryPayload.requiresTwoFactor).toBeUndefined();
+    expect(typeof recoveryPayload.token).toBe("string");
+
     const studentUser = makeUser({
       id: 13,
       role: "student",
       totpEnabled: true,
+      totpLoginEnabled: false,
+      totpRecoveryEnabled: true,
       totpSecret: "SECRET",
       passwordHash: "mocked-hash",
     });
@@ -411,6 +439,8 @@ describe("auth routes", () => {
     const user = makeUser({
       id: 15,
       totpEnabled: true,
+      totpLoginEnabled: false,
+      totpRecoveryEnabled: true,
       totpSecret: "SECRET",
     });
     vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(user);
@@ -464,7 +494,7 @@ describe("auth routes", () => {
     registerAuthRoutes(app as unknown as any);
 
     vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(
-      makeUser({ totpEnabled: false, totpSecret: null }),
+      makeUser({ totpEnabled: false, totpLoginEnabled: false, totpRecoveryEnabled: false, totpSecret: null }),
     );
 
     const req = {

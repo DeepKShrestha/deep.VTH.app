@@ -24,7 +24,11 @@ export const users = sqliteTable("users", {
   /** Base32 TOTP secret (RFC 6238); never expose to client JSON. */
   totpSecret: text("totp_secret"),
   totpEnabled: integer("totp_enabled", { mode: "boolean" }).notNull().default(false),
-  /** When true (admin role only), user cannot disable TOTP; login requires TOTP once enabled. Set by Super Admin. */
+  /** When true, sign-in requires a code from the authenticator app. */
+  totpLoginEnabled: integer("totp_login_enabled", { mode: "boolean" }).notNull().default(false),
+  /** When true, forgot-password can be completed with an authenticator code. */
+  totpRecoveryEnabled: integer("totp_recovery_enabled", { mode: "boolean" }).notNull().default(false),
+  /** When true (admin role only), user cannot disable sign-in TOTP. Set by Super Admin. */
   totpEnforced: integer("totp_enforced", { mode: "boolean" }).notNull().default(false),
   /** Stored filename only (e.g. `12.jpg`) under the profile-photos upload directory. */
   profilePhotoPath: text("profile_photo_path"),
@@ -95,9 +99,9 @@ const caseChangeLogs = sqliteTable("case_change_logs", {
   caseNumber: text("case_number").notNull(),
   caseScope: text("case_scope").notNull(), // ast, hospital
   action: text("action").notNull(), // created, deleted
-  actorUserId: integer("actor_user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "restrict" }),
+  actorUserId: integer("actor_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   actorRole: text("actor_role").notNull(),
   actorName: text("actor_name").notNull(),
   actorUsername: text("actor_username").notNull(),

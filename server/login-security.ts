@@ -152,21 +152,34 @@ export async function recordLoginFailure(userId: number): Promise<number> {
   return c;
 }
 
+export async function saveTotpConfiguration(
+  userId: number,
+  secret: string | null,
+  modes: { loginEnabled: boolean; recoveryEnabled: boolean },
+): Promise<void> {
+  const enabled = secret != null && (modes.loginEnabled || modes.recoveryEnabled);
+  if (DB_PROVIDER === "postgres") {
+    await getPgPool().query(
+      `UPDATE users SET totp_secret = $1, totp_enabled = $2, totp_login_enabled = $3, totp_recovery_enabled = $4 WHERE id = $5`,
+      [secret, enabled, modes.loginEnabled, modes.recoveryEnabled, userId],
+    );
+    return;
+  }
+  await dbRun(
+    sql`UPDATE users SET totp_secret = ${secret}, totp_enabled = ${enabled ? 1 : 0}, totp_login_enabled = ${modes.loginEnabled ? 1 : 0}, totp_recovery_enabled = ${modes.recoveryEnabled ? 1 : 0} WHERE id = ${userId}`,
+  );
+}
+
+/** @deprecated Use saveTotpConfiguration */
 export async function saveTotpSecret(
   userId: number,
   secret: string | null,
   enabled: boolean,
 ): Promise<void> {
-  if (DB_PROVIDER === "postgres") {
-    await getPgPool().query(
-      `UPDATE users SET totp_secret = $1, totp_enabled = $2 WHERE id = $3`,
-      [secret, enabled, userId],
-    );
-    return;
-  }
-  await dbRun(
-    sql`UPDATE users SET totp_secret = ${secret}, totp_enabled = ${enabled ? 1 : 0} WHERE id = ${userId}`,
-  );
+  await saveTotpConfiguration(userId, secret, {
+    loginEnabled: enabled,
+    recoveryEnabled: enabled,
+  });
 }
 
 export async function createPendingTwoFactorToken(userId: number): Promise<string> {

@@ -50,6 +50,8 @@ function mapPgUser(row: Record<string, unknown>): User {
     lockedUntil: row.locked_until == null ? null : String(row.locked_until),
     totpSecret: row.totp_secret == null ? null : String(row.totp_secret),
     totpEnabled: Boolean(row.totp_enabled),
+    totpLoginEnabled: Boolean(row.totp_login_enabled),
+    totpRecoveryEnabled: Boolean(row.totp_recovery_enabled),
     totpEnforced: Boolean(row.totp_enforced),
     profilePhotoPath:
       row.profile_photo_path == null || row.profile_photo_path === ""
@@ -351,6 +353,9 @@ export const authSessionRepo = {
     if (data.lockedUntil !== undefined) set("locked_until", data.lockedUntil);
     if (data.totpSecret !== undefined) set("totp_secret", data.totpSecret);
     if (data.totpEnabled !== undefined) set("totp_enabled", data.totpEnabled);
+    if (data.totpLoginEnabled !== undefined) set("totp_login_enabled", data.totpLoginEnabled);
+    if (data.totpRecoveryEnabled !== undefined)
+      set("totp_recovery_enabled", data.totpRecoveryEnabled);
     if (data.totpEnforced !== undefined) set("totp_enforced", data.totpEnforced);
     if (data.profilePhotoPath !== undefined) set("profile_photo_path", data.profilePhotoPath);
 
