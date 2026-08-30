@@ -32,6 +32,9 @@ import {
 import { authSessionRepo } from "../auth-session-repo";
 import {
   isUserLocked,
+  accountLockMessage,
+  ACCOUNT_JUST_LOCKED_MESSAGE,
+  resetLoginFailureWindowIfUnlocked,
   clearLoginFailures,
   recordLoginFailure,
   createPendingTwoFactorToken,
@@ -296,17 +299,21 @@ export function registerAuthRoutes(app: Express) {
 
     if (isUserLocked(user.lockedUntil)) {
       return res.status(403).json({
-        message:
-          "This account is temporarily locked after too many failed sign-in attempts. Please try again later.",
+        message: accountLockMessage(user.lockedUntil!),
       });
     }
+
+    await resetLoginFailureWindowIfUnlocked(
+      user.id,
+      user.lockedUntil,
+      user.failedLoginAttempts,
+    );
 
     if (!(await bcrypt.compare(password, user.passwordHash))) {
       const fails = await recordLoginFailure(user.id);
       if (fails >= LOCKOUT_MAX_ATTEMPTS) {
         return res.status(403).json({
-          message:
-            "Too many failed attempts. This account is now locked for 15 minutes. You can retry after that window or contact an administrator.",
+          message: ACCOUNT_JUST_LOCKED_MESSAGE,
         });
       }
       return res.status(401).json({ message: "Invalid credentials" });

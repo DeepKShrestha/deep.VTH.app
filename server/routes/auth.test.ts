@@ -29,6 +29,9 @@ vi.mock("../db", () => ({
 
 vi.mock("../login-security", () => ({
   isUserLocked: vi.fn(() => false),
+  accountLockMessage: vi.fn(() => "locked"),
+  ACCOUNT_JUST_LOCKED_MESSAGE: "locked now",
+  resetLoginFailureWindowIfUnlocked: vi.fn(async () => {}),
   clearLoginFailures: vi.fn(async () => {}),
   recordLoginFailure: vi.fn(async () => 1),
   createPendingTwoFactorToken: vi.fn(async () => "pendingtok"),

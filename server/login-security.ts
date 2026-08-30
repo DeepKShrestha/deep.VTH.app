@@ -46,6 +46,36 @@ export function isUserLocked(lockedUntil: string | null | undefined): boolean {
   return Number.isFinite(t) && t > Date.now();
 }
 
+/** User-facing message while an active account lock is in effect. */
+export function accountLockMessage(lockedUntil: string): string {
+  const remainingMs = Date.parse(lockedUntil) - Date.now();
+  const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+  const unit = minutes === 1 ? "minute" : "minutes";
+  return `This account is temporarily locked after too many failed sign-in attempts. Try again in about ${minutes} ${unit}.`;
+}
+
+/** Message shown exactly when the 5th failed attempt in a window triggers a new lock. */
+export const ACCOUNT_JUST_LOCKED_MESSAGE =
+  "Too many failed attempts. This account is now locked for 15 minutes. You can retry after that window or contact an administrator.";
+
+/**
+ * If the account is not actively locked, clear a stale failure window so the
+ * next wrong password shows "Invalid credentials" instead of instantly re-locking.
+ */
+export async function resetLoginFailureWindowIfUnlocked(
+  userId: number,
+  lockedUntil: string | null | undefined,
+  failedAttempts: number,
+): Promise<void> {
+  if (isUserLocked(lockedUntil)) return;
+  const lockExpired = Boolean(lockedUntil) && !isUserLocked(lockedUntil);
+  const staleHighCount =
+    failedAttempts >= LOCKOUT_MAX_ATTEMPTS && !isUserLocked(lockedUntil);
+  if (lockExpired || staleHighCount) {
+    await clearLoginFailures(userId);
+  }
+}
+
 export async function clearLoginFailures(userId: number): Promise<void> {
   if (DB_PROVIDER === "postgres") {
     await getPgPool().query(
@@ -65,16 +95,26 @@ export async function clearLoginFailures(userId: number): Promise<void> {
  */
 export async function recordLoginFailure(userId: number): Promise<number> {
   if (DB_PROVIDER === "postgres") {
+    const before = await getPgPool().query<{
+      locked_until: string | null;
+      failed_login_attempts: number;
+    }>(`SELECT locked_until, failed_login_attempts FROM users WHERE id = $1`, [userId]);
+    const row = before.rows[0];
+    await resetLoginFailureWindowIfUnlocked(
+      userId,
+      row?.locked_until ?? null,
+      Number(row?.failed_login_attempts ?? 0),
+    );
+
     await getPgPool().query(
       `UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = $1`,
       [userId],
     );
-    const r = await getPgPool().query<{ c: number; locked_until: string | null }>(
-      `SELECT failed_login_attempts AS c, locked_until FROM users WHERE id = $1`,
+    const r = await getPgPool().query<{ c: number }>(
+      `SELECT failed_login_attempts AS c FROM users WHERE id = $1`,
       [userId],
     );
-    const row = r.rows[0];
-    const c = Number(row?.c ?? 0);
+    const c = Number(r.rows[0]?.c ?? 0);
     if (c >= LOCKOUT_MAX_ATTEMPTS) {
       const until = new Date(Date.now() + LOCKOUT_DURATION_MS).toISOString();
       await getPgPool().query(`UPDATE users SET locked_until = $1 WHERE id = $2`, [
@@ -84,11 +124,21 @@ export async function recordLoginFailure(userId: number): Promise<number> {
     }
     return c;
   }
+
+  const before = await dbGet<{ locked_until: string | null; failed_login_attempts: number }>(
+    sql`SELECT locked_until, failed_login_attempts FROM users WHERE id = ${userId}`,
+  );
+  await resetLoginFailureWindowIfUnlocked(
+    userId,
+    before?.locked_until ?? null,
+    Number(before?.failed_login_attempts ?? 0),
+  );
+
   await dbRun(
     sql`UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = ${userId}`,
   );
-  const row = await dbGet<{ c: number; locked_until: string | null }>(
-    sql`SELECT failed_login_attempts AS c, locked_until FROM users WHERE id = ${userId}`,
+  const row = await dbGet<{ c: number }>(
+    sql`SELECT failed_login_attempts AS c FROM users WHERE id = ${userId}`,
   );
   const c = Number(row?.c ?? 0);
   if (c >= LOCKOUT_MAX_ATTEMPTS) {

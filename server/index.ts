@@ -168,7 +168,7 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true,
   message: {
     message:
-      "Too many credential attempts. Please wait 15 minutes and try again.",
+      "Too many login attempts from your network. Please wait about 15 minutes before trying again.",
   },
 });
 
