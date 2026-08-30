@@ -16,6 +16,7 @@ vi.mock("../auth-session-repo", () => ({
     createUser: vi.fn(),
     updateUser: vi.fn(),
     createPasswordResetRequest: vi.fn(),
+    supersedePendingPasswordResetRequests: vi.fn(),
   },
 }));
 vi.mock("../db", () => ({
@@ -53,6 +54,7 @@ vi.mock("../user-preferences-store", () => ({
 
 import { authSessionRepo } from "../auth-session-repo";
 import { db } from "../db";
+import { verifyTotpToken } from "../login-security";
 import { registerAuthRoutes } from "./auth";
 
 type Handler = (req: Request, res: Response, next?: () => void) => void | Promise<void>;
@@ -344,5 +346,112 @@ describe("auth routes", () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ message: "No changes provided" });
+  });
+
+  it("login requires 2FA only for admin roles when authenticator is enabled", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+    vi.spyOn(bcrypt, "compare").mockImplementation(async () => true);
+
+    const adminUser = makeUser({
+      id: 12,
+      role: "admin",
+      totpEnabled: true,
+      totpSecret: "SECRET",
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(adminUser);
+    vi.mocked(authSessionRepo.setSession).mockResolvedValue();
+
+    const adminReq = {
+      body: { usernameOrEmail: "admin", password: "Secret12" },
+    } as Request;
+    const adminRes = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](adminReq, adminRes);
+
+    const adminPayload = (adminRes.json as any).mock.calls[0][0];
+    expect(adminPayload.requiresTwoFactor).toBe(true);
+    expect(typeof adminPayload.pendingToken).toBe("string");
+
+    const studentUser = makeUser({
+      id: 13,
+      role: "student",
+      totpEnabled: true,
+      totpSecret: "SECRET",
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(studentUser);
+
+    const studentReq = {
+      body: { usernameOrEmail: "admin", password: "Secret12" },
+    } as Request;
+    const studentRes = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](studentReq, studentRes);
+
+    const studentPayload = (studentRes.json as any).mock.calls[0][0];
+    expect(studentPayload.requiresTwoFactor).toBeUndefined();
+    expect(typeof studentPayload.token).toBe("string");
+  });
+
+  it("password reset via totp updates password and clears lockout", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+    vi.mocked(verifyTotpToken).mockReturnValue(true);
+    vi.spyOn(bcrypt, "hash").mockImplementation(async () => "new-hash");
+    vi.mocked(authSessionRepo.updateUser).mockResolvedValue(makeUser());
+    vi.mocked(authSessionRepo.supersedePendingPasswordResetRequests).mockResolvedValue();
+
+    const user = makeUser({
+      id: 15,
+      totpEnabled: true,
+      totpSecret: "SECRET",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(user);
+
+    const req = {
+      body: {
+        usernameOrEmail: "admin",
+        newPassword: "NewSecret1",
+        totpCode: "123456",
+      },
+    } as Request;
+    const res = makeRes();
+
+    await app.routes.post.get("/api/auth/password-reset/totp")?.[0](req, res);
+
+    expect(authSessionRepo.updateUser).toHaveBeenCalledWith(15, {
+      passwordHash: "new-hash",
+    });
+    expect(res.json).toHaveBeenCalledWith({
+      message:
+        "Password updated. You can sign in with your new password and authenticator app.",
+    });
+  });
+
+  it("password reset via totp rejects accounts without authenticator", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(
+      makeUser({ totpEnabled: false, totpSecret: null }),
+    );
+
+    const req = {
+      body: {
+        usernameOrEmail: "admin",
+        newPassword: "NewSecret1",
+        totpCode: "123456",
+      },
+    } as Request;
+    const res = makeRes();
+
+    await app.routes.post.get("/api/auth/password-reset/totp")?.[0](req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect((res.json as any).mock.calls[0][0].message).toContain(
+      "Authenticator recovery is not enabled",
+    );
   });
 });

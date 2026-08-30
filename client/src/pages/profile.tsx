@@ -740,15 +740,18 @@ export default function ProfilePage() {
                     </p>
                   </AccordionContent>
                 </AccordionItem>
-                {(isAdmin || isSuperAdmin) && (
-                  <AccordionItem value="twofactor">
-                    <AccordionTrigger className="text-sm py-2">
-                      Two-factor authentication (TOTP)
-                    </AccordionTrigger>
-                    <AccordionContent className="space-y-3 pt-2 text-sm">
-                      <p className="text-xs text-muted-foreground">
-                        Adds a second step at login using a time-based code from an authenticator app.
-                      </p>
+                <AccordionItem value="twofactor">
+                  <AccordionTrigger className="text-sm py-2">
+                    {isAdmin || isSuperAdmin
+                      ? "Two-factor authentication (Google Authenticator)"
+                      : "Authenticator recovery (Google Authenticator)"}
+                  </AccordionTrigger>
+                  <AccordionContent className="space-y-3 pt-2 text-sm">
+                    <p className="text-xs text-muted-foreground">
+                      {isAdmin || isSuperAdmin
+                        ? "Adds a second step at sign-in when enabled. You can also reset your password from the login screen with a code from your authenticator app."
+                        : "Optional password recovery only — you will not be asked for a code when signing in. If enabled, you can reset your password yourself from the login screen; otherwise recovery goes through admin approval."}
+                    </p>
                       {user?.totpEnabled ? (
                         user?.totpEnforced ? (
                           <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2.5">
@@ -760,7 +763,17 @@ export default function ProfilePage() {
                           </div>
                         ) : (
                         <div className="space-y-3">
-                          <p className="text-xs font-medium text-emerald-700">Two-factor is enabled.</p>
+                          <p className="text-xs font-medium text-emerald-700">
+                            {isAdmin || isSuperAdmin
+                              ? "Two-factor is enabled."
+                              : "Authenticator recovery is enabled."}
+                          </p>
+                          {!(isAdmin || isSuperAdmin) && (
+                            <p className="text-xs text-muted-foreground">
+                              Sign-in still uses only your password. This app is used when you
+                              choose &quot;Authenticator&quot; on the forgot-password screen.
+                            </p>
+                          )}
                           <div className="space-y-1.5">
                             <Label htmlFor="totpDisablePw">Account password (to turn off 2FA)</Label>
                             <Input
@@ -966,7 +979,6 @@ export default function ProfilePage() {
                       )}
                     </AccordionContent>
                   </AccordionItem>
-                )}
               </Accordion>
 
               <div className="pt-2 border-t space-y-2">

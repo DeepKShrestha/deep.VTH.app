@@ -178,6 +178,7 @@ app.use(
     "/api/auth/login/2fa",
     "/api/auth/signup",
     "/api/auth/password-reset-requests",
+    "/api/auth/password-reset/totp",
     "/api/auth/totp/verify",
   ],
   authLimiter,

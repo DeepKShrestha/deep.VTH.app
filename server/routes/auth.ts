@@ -419,9 +419,6 @@ export function registerAuthRoutes(app: Express) {
 
   app.get("/api/auth/2fa/setup", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
-      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
-    }
     const user = await authSessionRepo.getUserById(currentUser.id);
     if (!user) return res.status(404).json({ message: MESSAGES.USER_NOT_FOUND });
     if (user.totpEnabled) {
@@ -441,9 +438,6 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/2fa/enable", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
-      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
-    }
     const { secret, code } = req.body as { secret?: string; code?: string };
     if (!secret?.trim() || !code?.trim()) {
       return res.status(400).json({ message: "Secret and verification code are required" });
@@ -460,9 +454,6 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
     const currentUser = (req as AuthenticatedRequest).currentUser;
-    if (currentUser.role !== "admin" && currentUser.role !== "superadmin") {
-      return res.status(403).json({ message: MESSAGES.INSUFFICIENT_PERMISSIONS });
-    }
     const { password, code } = req.body as { password?: string; code?: string };
     const user = await authSessionRepo.getUserById(currentUser.id);
     if (!user?.totpEnabled) {
@@ -804,6 +795,54 @@ export function registerAuthRoutes(app: Express) {
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "private, max-age=300");
     return res.sendFile(abs);
+  });
+
+  app.post("/api/auth/password-reset/totp", async (req, res) => {
+    const { usernameOrEmail, newPassword, totpCode } = req.body as {
+      usernameOrEmail?: string;
+      newPassword?: string;
+      totpCode?: string;
+    };
+    const identifier = (usernameOrEmail || "").trim();
+    const code = (totpCode || "").replace(/\s/g, "");
+    if (!identifier || !newPassword || !code) {
+      return res.status(400).json({
+        message: "Username/email, new password, and authenticator code are required",
+      });
+    }
+    const passwordError = validateStrongPassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
+
+    let user = await authSessionRepo.getUserByUsername(identifier);
+    if (!user) user = await authSessionRepo.getUserByEmail(identifier);
+    if (!user) {
+      return res.status(401).json({
+        message: "Invalid account, authenticator code, or recovery is not enabled.",
+      });
+    }
+    if (!user.totpEnabled || !user.totpSecret) {
+      return res.status(400).json({
+        message:
+          "Authenticator recovery is not enabled on this account. Submit an admin approval request instead.",
+      });
+    }
+    if (!verifyTotpToken(user.totpSecret, code)) {
+      return res.status(401).json({
+        message: "Invalid account, authenticator code, or recovery is not enabled.",
+      });
+    }
+
+    const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
+    await authSessionRepo.updateUser(user.id, { passwordHash: hash });
+    await clearLoginFailures(user.id);
+    await authSessionRepo.supersedePendingPasswordResetRequests(user.id, -1);
+
+    return res.json({
+      message:
+        "Password updated. You can sign in with your new password and authenticator app.",
+    });
   });
 
   app.post(

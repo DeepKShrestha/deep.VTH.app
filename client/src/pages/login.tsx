@@ -11,10 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Microscope, LogIn, Eye, EyeOff } from "lucide-react";
+import { Microscope, LogIn, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { DeepASTAttribution } from "@/components/DeepASTAttribution";
 import { isPasswordPolicyMet, PASSWORD_MIN_LENGTH } from "@shared/schema";
 import { PasswordPolicyChecklist } from "@/components/password-policy-checklist";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function LoginPage() {
   const { login, completeTwoFactor } = useAuth();
@@ -32,6 +34,8 @@ export default function LoginPage() {
   const [forgotIdCardInputKey, setForgotIdCardInputKey] = useState(0);
   const [forgotCompressingIdCard, setForgotCompressingIdCard] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotTotpCode, setForgotTotpCode] = useState("");
+  const [forgotTotpLoading, setForgotTotpLoading] = useState(false);
   const [twoFactorPendingToken, setTwoFactorPendingToken] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [twoFactorLoading, setTwoFactorLoading] = useState(false);
@@ -84,6 +88,47 @@ export default function LoginPage() {
     setTwoFactorLoading(false);
     if (!result.success) {
       toast({ title: result.message, variant: "destructive" });
+    }
+  };
+
+  const submitForgotTotpPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotIdentifier || !forgotNewPassword || !forgotTotpCode.trim()) {
+      toast({
+        title: "Please fill in username/email, new password, and authenticator code",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!isPasswordPolicyMet(forgotNewPassword)) {
+      toast({
+        title: "New password does not meet requirements",
+        description: "Check the rules below the password field.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setForgotTotpLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/auth/password-reset/totp", {
+        usernameOrEmail: forgotIdentifier,
+        newPassword: forgotNewPassword,
+        totpCode: forgotTotpCode.replace(/\s/g, ""),
+      });
+      const body = await res.json();
+      toast({ title: body?.message || "Password updated" });
+      setForgotIdentifier("");
+      setForgotNewPassword("");
+      setForgotTotpCode("");
+      setShowForgot(false);
+    } catch (error: unknown) {
+      toast({
+        title: error instanceof Error ? error.message : "Could not reset password",
+        variant: "destructive",
+      });
+    } finally {
+      setForgotTotpLoading(false);
     }
   };
 
@@ -272,11 +317,76 @@ export default function LoginPage() {
                 </Button>
               </form>
               {showForgot && (
-                <form onSubmit={submitForgotPassword} className="mt-4 space-y-3 border-t pt-4">
+                <div className="mt-4 space-y-3 border-t pt-4">
+                  <Tabs defaultValue="authenticator" className="w-full">
+                    <TabsList className="grid w-full grid-cols-2 h-auto">
+                      <TabsTrigger value="authenticator" className="text-xs sm:text-sm py-2">
+                        Authenticator
+                      </TabsTrigger>
+                      <TabsTrigger value="admin" className="text-xs sm:text-sm py-2">
+                        Admin approval
+                      </TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="authenticator">
+                      <form onSubmit={submitForgotTotpPassword} className="space-y-3">
+                        <p className="text-xs text-muted-foreground">
+                          If you set up Google Authenticator (or another TOTP app) in your
+                          Profile, enter a current 6-digit code to reset your password
+                          immediately. Works even if your account is locked from failed
+                          sign-in attempts.
+                        </p>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="forgotIdentifierTotp">Username or Email</Label>
+                          <Input
+                            id="forgotIdentifierTotp"
+                            value={forgotIdentifier}
+                            onChange={(e) => setForgotIdentifier(e.target.value)}
+                            placeholder="Enter your username or email"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="forgotNewPasswordTotp">New Password</Label>
+                          <Input
+                            id="forgotNewPasswordTotp"
+                            type="password"
+                            value={forgotNewPassword}
+                            onChange={(e) => setForgotNewPassword(e.target.value)}
+                            placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
+                          />
+                          <PasswordPolicyChecklist password={forgotNewPassword} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="forgotTotpCode">Authenticator code</Label>
+                          <Input
+                            id="forgotTotpCode"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            maxLength={8}
+                            value={forgotTotpCode}
+                            onChange={(e) =>
+                              setForgotTotpCode(e.target.value.replace(/[^\d\s]/g, ""))
+                            }
+                            placeholder="000000"
+                            data-testid="input-forgot-totp-code"
+                          />
+                        </div>
+                        <Button
+                          type="submit"
+                          className="w-full gap-2"
+                          disabled={forgotTotpLoading}
+                          data-testid="button-forgot-totp-submit"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          {forgotTotpLoading ? "Resetting…" : "Reset password with authenticator"}
+                        </Button>
+                      </form>
+                    </TabsContent>
+                    <TabsContent value="admin">
+                <form onSubmit={submitForgotPassword} className="space-y-3">
                   <p className="text-xs text-muted-foreground">
-                    Submit a reset request with a photo of your university ID card for
-                    verification. An admin will review it. Your ID photo is deleted once
-                    the request is approved or rejected.
+                    If you have not set up an authenticator app, submit a reset request with a
+                    photo of your university ID card for verification. An admin will review it.
+                    Your ID photo is deleted once the request is approved or rejected.
                   </p>
                   <div className="space-y-1.5">
                     <Label htmlFor="forgotIdentifier">Username or Email</Label>
@@ -355,6 +465,9 @@ export default function LoginPage() {
                         : "Submit Reset Request"}
                   </Button>
                 </form>
+                    </TabsContent>
+                  </Tabs>
+                </div>
               )}
                 </>
               )}
