@@ -31,6 +31,8 @@ vi.mock("../login-security", () => ({
   isUserLocked: vi.fn(() => false),
   accountLockMessage: vi.fn(() => "locked"),
   ACCOUNT_JUST_LOCKED_MESSAGE: "locked now",
+  LOGIN_FAILURE_MESSAGE:
+    "Sign-in failed. Check your username and password. If you tried too many times, wait about 15 minutes or use Forgot password.",
   resetLoginFailureWindowIfUnlocked: vi.fn(async () => {}),
   clearLoginFailures: vi.fn(async () => {}),
   recordLoginFailure: vi.fn(async () => 1),
@@ -57,7 +59,7 @@ vi.mock("../user-preferences-store", () => ({
 
 import { authSessionRepo } from "../auth-session-repo";
 import { db } from "../db";
-import { verifyTotpToken } from "../login-security";
+import { verifyTotpToken, LOGIN_FAILURE_MESSAGE } from "../login-security";
 import { registerAuthRoutes } from "./auth";
 
 type Handler = (req: Request, res: Response, next?: () => void) => void | Promise<void>;
@@ -433,6 +435,30 @@ describe("auth routes", () => {
     });
   });
 
+  it("login returns generic failure for locked accounts", async () => {
+    const app = new MockApp();
+    registerAuthRoutes(app as unknown as any);
+
+    const future = new Date(Date.now() + 10 * 60_000).toISOString();
+    const user = makeUser({
+      id: 20,
+      lockedUntil: future,
+      passwordHash: "mocked-hash",
+    });
+    vi.mocked(authSessionRepo.getUserByUsername).mockResolvedValue(user);
+    vi.spyOn(bcrypt, "compare").mockImplementation(async () => false);
+
+    const req = {
+      body: { usernameOrEmail: "admin", password: "wrong" },
+    } as Request;
+    const res = makeRes();
+
+    await app.routes.post.get("/api/auth/login")?.[0](req, res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect((res.json as any).mock.calls[0][0].message).toBe(LOGIN_FAILURE_MESSAGE);
+  });
+
   it("password reset via totp rejects accounts without authenticator", async () => {
     const app = new MockApp();
     registerAuthRoutes(app as unknown as any);
@@ -452,9 +478,7 @@ describe("auth routes", () => {
 
     await app.routes.post.get("/api/auth/password-reset/totp")?.[0](req, res);
 
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect((res.json as any).mock.calls[0][0].message).toContain(
-      "Authenticator recovery is not enabled",
-    );
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect((res.json as any).mock.calls[0][0].message).toContain("Password reset failed");
   });
 });

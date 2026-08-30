@@ -46,7 +46,11 @@ export function isUserLocked(lockedUntil: string | null | undefined): boolean {
   return Number.isFinite(t) && t > Date.now();
 }
 
-/** User-facing message while an active account lock is in effect. */
+/** Unified login failure text — same for wrong password, active lock, and fresh lockout. */
+export const LOGIN_FAILURE_MESSAGE =
+  "Sign-in failed. Check your username and password. If you tried too many times, wait about 15 minutes or use Forgot password.";
+
+/** User-facing message while an active account lock is in effect (internal/admin use). */
 export function accountLockMessage(lockedUntil: string): string {
   const remainingMs = Date.parse(lockedUntil) - Date.now();
   const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));

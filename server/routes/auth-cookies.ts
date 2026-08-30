@@ -141,3 +141,25 @@ export function verifyCsrf(req: Request): boolean {
     return false;
   }
 }
+
+/**
+ * Reject cross-origin credential POSTs in production (login CSRF). Same-origin
+ * fetches from the login page send an Origin that matches Host.
+ */
+export function isAllowedAuthOrigin(req: Request): boolean {
+  if (!isProd()) return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const host = req.headers.host;
+  if (!host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+/** Session bearer token is omitted from JSON in production; browser uses httpOnly cookie. */
+export function shouldIncludeSessionTokenInBody(): boolean {
+  return process.env.NODE_ENV !== "production";
+}

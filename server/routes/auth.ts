@@ -26,14 +26,15 @@ import {
   clearCsrfCookie,
   clearSessionCookie,
   extractSessionToken,
+  isAllowedAuthOrigin,
   issueCsrfToken,
   setSessionCookie,
+  shouldIncludeSessionTokenInBody,
 } from "./auth-cookies";
 import { authSessionRepo } from "../auth-session-repo";
 import {
   isUserLocked,
-  accountLockMessage,
-  ACCOUNT_JUST_LOCKED_MESSAGE,
+  LOGIN_FAILURE_MESSAGE,
   resetLoginFailureWindowIfUnlocked,
   clearLoginFailures,
   recordLoginFailure,
@@ -43,7 +44,6 @@ import {
   generateTotpSecret,
   buildTotpAuthUrl,
   saveTotpSecret,
-  LOCKOUT_MAX_ATTEMPTS,
 } from "../login-security";
 import { getUserPreferences, upsertUserPreferences } from "../user-preferences-store";
 import { verifyProfilePhotoSignature } from "../services/attachment-signing";
@@ -63,6 +63,35 @@ import {
 
 function publicAuthUser(user: User) {
   return toClientSafeUser(user);
+}
+
+async function buildAuthenticatedUserPayload(user: User) {
+  const base = publicAuthUser(user);
+  return {
+    ...base,
+    dashboardVisible: await isDashboardVisibleForRole(user.role),
+    astDashboardVisible: await isDashboardVisibleForRole(user.role),
+    vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
+    astExportVisible: await isAstExportVisibleForRole(user.role),
+    hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
+    astPrintVisible: await isAstPrintVisibleForRole(user.role),
+    hospitalPrintVisible: await isHospitalPrintVisibleForRole(user.role),
+    astRegisterVisible: await canCreateCaseInScope(user, "ast"),
+    hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
+    capabilities: resolveCapabilitiesForRole(user.role),
+  };
+}
+
+function jsonWithOptionalSessionToken(
+  res: Response,
+  token: string,
+  body: Record<string, unknown>,
+) {
+  if (shouldIncludeSessionTokenInBody()) {
+    res.json({ token, ...body });
+    return;
+  }
+  res.json(body);
 }
 
 const PROFILE_PHOTO_MAX_UPLOAD_BYTES = 1024 * 1024;
@@ -280,6 +309,9 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.post("/api/auth/login", async (req, res) => {
+    if (!isAllowedAuthOrigin(req)) {
+      return res.status(403).json({ message: "Invalid request origin" });
+    }
     const { usernameOrEmail, password } = req.body as {
       usernameOrEmail?: string;
       password?: string;
@@ -294,13 +326,7 @@ export function registerAuthRoutes(app: Express) {
     let user = await authSessionRepo.getUserByUsername(identifier);
     if (!user) user = await authSessionRepo.getUserByEmail(identifier);
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    if (isUserLocked(user.lockedUntil)) {
-      return res.status(403).json({
-        message: accountLockMessage(user.lockedUntil!),
-      });
+      return res.status(401).json({ message: LOGIN_FAILURE_MESSAGE });
     }
 
     await resetLoginFailureWindowIfUnlocked(
@@ -309,14 +335,15 @@ export function registerAuthRoutes(app: Express) {
       user.failedLoginAttempts,
     );
 
-    if (!(await bcrypt.compare(password, user.passwordHash))) {
-      const fails = await recordLoginFailure(user.id);
-      if (fails >= LOCKOUT_MAX_ATTEMPTS) {
-        return res.status(403).json({
-          message: ACCOUNT_JUST_LOCKED_MESSAGE,
-        });
-      }
-      return res.status(401).json({ message: "Invalid credentials" });
+    const passwordOk = await bcrypt.compare(password, user.passwordHash);
+
+    if (isUserLocked(user.lockedUntil)) {
+      return res.status(401).json({ message: LOGIN_FAILURE_MESSAGE });
+    }
+
+    if (!passwordOk) {
+      await recordLoginFailure(user.id);
+      return res.status(401).json({ message: LOGIN_FAILURE_MESSAGE });
     }
 
     await clearLoginFailures(user.id);
@@ -350,26 +377,15 @@ export function registerAuthRoutes(app: Express) {
     setSessionCookie(res, token);
     issueCsrfToken(res);
 
-    const base = publicAuthUser(user);
-    res.json({
-      token,
-      user: {
-        ...base,
-        dashboardVisible: await isDashboardVisibleForRole(user.role),
-        astDashboardVisible: await isDashboardVisibleForRole(user.role),
-        vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
-        astExportVisible: await isAstExportVisibleForRole(user.role),
-        hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
-        astPrintVisible: await isAstPrintVisibleForRole(user.role),
-        hospitalPrintVisible: await isHospitalPrintVisibleForRole(user.role),
-        astRegisterVisible: await canCreateCaseInScope(user, "ast"),
-        hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
-        capabilities: resolveCapabilitiesForRole(user.role),
-      },
+    jsonWithOptionalSessionToken(res, token, {
+      user: await buildAuthenticatedUserPayload(user),
     });
   });
 
   app.post("/api/auth/login/2fa", async (req, res) => {
+    if (!isAllowedAuthOrigin(req)) {
+      return res.status(403).json({ message: "Invalid request origin" });
+    }
     const { pendingToken, code } = req.body as {
       pendingToken?: string;
       code?: string;
@@ -405,22 +421,8 @@ export function registerAuthRoutes(app: Express) {
     await sessions.set(token, user.id);
     setSessionCookie(res, token);
     issueCsrfToken(res);
-    const base = publicAuthUser(user);
-    res.json({
-      token,
-      user: {
-        ...base,
-        dashboardVisible: await isDashboardVisibleForRole(user.role),
-        astDashboardVisible: await isDashboardVisibleForRole(user.role),
-        vthDashboardVisible: await isVthDashboardVisibleForRole(user.role),
-        astExportVisible: await isAstExportVisibleForRole(user.role),
-        hospitalExportVisible: await isHospitalExportVisibleForRole(user.role),
-        astPrintVisible: await isAstPrintVisibleForRole(user.role),
-        hospitalPrintVisible: await isHospitalPrintVisibleForRole(user.role),
-        astRegisterVisible: await canCreateCaseInScope(user, "ast"),
-        hospitalRegisterVisible: await canCreateCaseInScope(user, "hospital"),
-        capabilities: resolveCapabilitiesForRole(user.role),
-      },
+    jsonWithOptionalSessionToken(res, token, {
+      user: await buildAuthenticatedUserPayload(user),
     });
   });
 
@@ -805,6 +807,12 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.post("/api/auth/password-reset/totp", async (req, res) => {
+    if (!isAllowedAuthOrigin(req)) {
+      return res.status(403).json({ message: "Invalid request origin" });
+    }
+    const PASSWORD_RESET_TOTP_FAILURE =
+      "Password reset failed. Check your username, authenticator code, and that recovery is enabled in Profile — or use Admin approval on the login screen.";
+
     const { usernameOrEmail, newPassword, totpCode } = req.body as {
       usernameOrEmail?: string;
       newPassword?: string;
@@ -825,20 +833,13 @@ export function registerAuthRoutes(app: Express) {
     let user = await authSessionRepo.getUserByUsername(identifier);
     if (!user) user = await authSessionRepo.getUserByEmail(identifier);
     if (!user) {
-      return res.status(401).json({
-        message: "Invalid account, authenticator code, or recovery is not enabled.",
-      });
+      return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
     if (!user.totpEnabled || !user.totpSecret) {
-      return res.status(400).json({
-        message:
-          "Authenticator recovery is not enabled on this account. Submit an admin approval request instead.",
-      });
+      return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
     if (!verifyTotpToken(user.totpSecret, code)) {
-      return res.status(401).json({
-        message: "Invalid account, authenticator code, or recovery is not enabled.",
-      });
+      return res.status(401).json({ message: PASSWORD_RESET_TOTP_FAILURE });
     }
 
     const hash = await bcrypt.hash(newPassword, BCRYPT_COST);
@@ -856,6 +857,9 @@ export function registerAuthRoutes(app: Express) {
     "/api/auth/password-reset-requests",
     passwordResetMultipart,
     async (req, res) => {
+      if (!isAllowedAuthOrigin(req)) {
+        return res.status(403).json({ message: "Invalid request origin" });
+      }
       const body = req.body as Record<string, string | undefined>;
       const identifier = (body.usernameOrEmail || "").trim();
       const newPassword = body.newPassword || "";
